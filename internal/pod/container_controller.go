@@ -375,7 +375,17 @@ func resolveContainerRecord(id string, spec *corev1.Container, status *corev1.Co
 	}
 	record, err := containerMemoryBinding(container)
 	if err != nil {
-		return &containerRecord{container: container, ref: ContainerRef{Key: ContainerKey{ID: id}, InitPID: container.InitPid}}, err
+		if record != nil {
+			return record, err
+		}
+		workload := podFromContainer(container)
+		workload.Cgroups = CgroupBinding{}
+		workload.Process = nil
+		workload.Network = nil
+		return &containerRecord{
+			container: container, pod: workload,
+			ref: ContainerRef{Key: ContainerKey{ID: id}, InitPID: container.InitPid},
+		}, err
 	}
 	return record, nil
 }

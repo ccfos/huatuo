@@ -478,3 +478,27 @@ func TestPodSuccessfulRefreshPreservesLegacyView(t *testing.T) {
 		t.Errorf("successful refresh emitted lifecycle: %+v, %v", update, err)
 	}
 }
+
+// TestPodPublicationKeepsBoundCgroups 验证已绑定的公共控制器路径不会被旧容器
+// 的共享路径覆盖，兼容视图仍保留原字段，且来源修改不会影响已发布目录。
+func TestPodPublicationKeepsBoundCgroups(t *testing.T) {
+	store := newTestContainerStore()
+	record := containerRecordForTest("checkout-container")
+	record.container.CgroupPath = "/legacy-checkout"
+	record.pod = podFromContainer(record.container)
+	record.pod.Cgroups = CgroupBinding{
+		Controllers: map[string]string{"cpu": "/checkout-cpu", "memory": "/checkout-memory"},
+		directories: map[string]string{"cpu": "/mounted-cpu/checkout-cpu"},
+	}
+	source := record.pod
+	store.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: record}, isComplete: true}, nil)
+	published := store.records[source.ID]
+	if published.pod.Cgroups.Controllers["memory"] != "/checkout-memory" ||
+		published.container.CgroupPath != "/legacy-checkout" {
+		t.Error("legacy and public cgroup paths were conflated")
+	}
+	source.Cgroups.directories["cpu"] = "/changed-at-source"
+	if published.pod.Cgroups.directories["cpu"] != "/mounted-cpu/checkout-cpu" {
+		t.Error("source mutation changed a published directory")
+	}
+}

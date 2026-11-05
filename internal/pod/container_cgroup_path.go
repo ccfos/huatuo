@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -186,20 +185,26 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	path, err := paths.PathForMemory()
+	mounts, err := cgroupMounts()
 	if err != nil {
 		return nil, err
 	}
-	root, err := cgroups.MemoryRoot()
-	if err != nil {
-		return nil, err
+	locations := CgroupBinding{Unified: paths.Unified, Controllers: paths.Controllers}
+	workload := podFromContainer(container)
+	record := &containerRecord{
+		container: container, pod: workload, cgroupLocations: locations,
+		ref:       ContainerRef{Key: ContainerKey{ID: container.ID}, InitPID: container.InitPid},
+		startTime: before.Starttime,
 	}
-	info, err := os.Lstat(filepath.Join(root, path))
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("memory cgroup %q is not a directory", path)
+	workload.Cgroups = bindCgroups(record.cgroupLocations, mounts)
+	path, memoryErr := paths.PathForMemory()
+	var info os.FileInfo
+	if memoryErr == nil {
+		controller := "memory"
+		if paths.Controllers[controller] == "" {
+			controller = ""
+		}
+		_, info, memoryErr = resolveCgroupDirectory(mounts, controller, path)
 	}
 	after, err := process.Stat()
 	if err != nil {
@@ -208,16 +213,18 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 	if before.Starttime != after.Starttime {
 		return nil, fmt.Errorf("container %q init process was replaced", container.ID)
 	}
+
+	if memoryErr != nil {
+		return record, memoryErr
+	}
 	// A hypervisor's memory cgroup describes the shared VM, not each Guest
 	// application. Guest discovery supplies application memory bindings.
 	if container.HostKataSandboxID() != "" {
 		path = ""
 	}
-	return &containerRecord{
-		container: container,
-		ref:       ContainerRef{Key: ContainerKey{ID: container.ID}, InitPID: container.InitPid, MemoryCgroupPath: path},
-		startTime: before.Starttime, directory: info,
-	}, nil
+	record.ref.MemoryCgroupPath = path
+	record.directory = info
+	return record, nil
 }
 
 // ValidateContainerRef verifies the published generation and the live process

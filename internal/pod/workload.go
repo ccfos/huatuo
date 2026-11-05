@@ -50,6 +50,8 @@ type CgroupBinding struct {
 	Unified     string            `json:"unified,omitempty"`
 	Controllers map[string]string `json:"controllers,omitempty"`
 	CSS         map[string]uint64 `json:"css,omitempty"`
+
+	directories map[string]string
 }
 
 type HostProcess struct {
@@ -145,6 +147,7 @@ func (p *Pod) copyMetadata() *Pod {
 	view.Labels = maps.Clone(p.Labels)
 	view.Cgroups.Controllers = maps.Clone(p.Cgroups.Controllers)
 	view.Cgroups.CSS = maps.Clone(p.Cgroups.CSS)
+	view.Cgroups.directories = maps.Clone(p.Cgroups.directories)
 	if p.Process != nil {
 		process := *p.Process
 		view.Process = &process

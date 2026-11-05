@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"testing"
 
+	promprocfs "github.com/prometheus/procfs"
+
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -100,4 +102,61 @@ func TestCgroupCPUCSS(t *testing.T) {
 			t.Error("missing CPU CSS must fail even while the directory still exists")
 		}
 	})
+}
+
+// TestWorkloadCgroupCSSBinding 验证数字目录按控制器和 inode 绑定 CSS，忽略
+// 来源自带的地址；CSS 冲突只禁用对应控制器，目录不可用时不发布缓存地址。
+func TestWorkloadCgroupCSSBinding(t *testing.T) {
+	root := t.TempDir()
+	membership := "/cube_sandbox/sandbox/8"
+	mounts := []*promprocfs.MountInfo{
+		{FSType: "cgroup", Root: "/", MountPoint: filepath.Join(root, "cpu"), SuperOptions: map[string]string{"cpu": ""}},
+		{FSType: "cgroup", Root: "/", MountPoint: filepath.Join(root, "memory"), SuperOptions: map[string]string{"memory": ""}},
+	}
+	locations := CgroupBinding{
+		Controllers: map[string]string{"cpu": membership, "memory": membership},
+		CSS:         map[string]uint64{"cpu": 8800},
+	}
+	metadata := make(map[string]*containerCssMetaData)
+	for index, controller := range []string{"cpu", "memory"} {
+		directory := filepath.Join(mounts[index].MountPoint, membership)
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Errorf("create %s directory: %v", controller, err)
+			return
+		}
+		var stat syscall.Stat_t
+		if err := syscall.Stat(directory, &stat); err != nil {
+			t.Errorf("stat %s directory: %v", controller, err)
+			return
+		}
+		entry := &containerCssMetaData{CSS: uint64(8100 + index), Inode: stat.Ino, SubSys: controller}
+		metadata[controller] = entry
+		cgroupCssMetaDataMap.Store(entry.CSS, entry)
+		t.Cleanup(func() { cgroupCssMetaDataMap.Delete(entry.CSS) })
+	}
+	binding := bindCgroups(locations, mounts)
+	for controller, entry := range metadata {
+		if got := binding.CSS[controller]; got != entry.CSS {
+			t.Errorf("%s CSS=%d, want %d", controller, got, entry.CSS)
+		}
+	}
+	conflict := *metadata["cpu"]
+	conflict.CSS = 8900
+	cgroupCssMetaDataMap.Store(conflict.CSS, &conflict)
+	t.Cleanup(func() { cgroupCssMetaDataMap.Delete(conflict.CSS) })
+	binding = bindCgroups(locations, mounts)
+	if binding.CSS["cpu"] != 0 || binding.CSS["memory"] != metadata["memory"].CSS {
+		t.Errorf("ambiguous CPU affected independent memory binding: %v", binding.CSS)
+	}
+	if _, err := binding.Directory("cpu"); err != nil {
+		t.Errorf("CSS conflict disabled file collection: %v", err)
+	}
+	if err := os.Remove(filepath.Join(mounts[1].MountPoint, membership)); err != nil {
+		t.Errorf("remove memory directory: %v", err)
+		return
+	}
+	binding = bindCgroups(locations, mounts)
+	if len(binding.CSS) != 0 {
+		t.Errorf("unavailable directories published cached CSS: %v", binding.CSS)
+	}
 }

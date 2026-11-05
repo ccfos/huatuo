@@ -23,7 +23,8 @@ import (
 )
 
 type containerRecord struct {
-	pod *Pod
+	pod             *Pod
+	cgroupLocations CgroupBinding
 	// container is the read-only compatibility view of the same instance.
 	container *Container
 	ref       ContainerRef
@@ -78,7 +79,11 @@ func (r *containerRecord) prepareView(now time.Time) {
 			view.memoryCgroupPath = &memory
 		}
 		r.container = &view
-		r.pod = podFromContainer(&view)
+		if r.pod == nil {
+			r.pod = podFromContainer(&view)
+		} else {
+			r.pod = r.pod.copyMetadata()
+		}
 	} else {
 		r.pod = r.pod.copyMetadata()
 		r.container = nil
