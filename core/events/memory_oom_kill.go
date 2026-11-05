@@ -94,6 +94,8 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 
 	mutex.Lock()
 
+	pruneOOMCounterContainers(containers)
+
 	metrics = append(metrics, metric.NewCounterData("host_total", outOfMemoryCounterHost, "host oom counter", nil))
 	for _, container := range containers {
 		if val, exists := outOfMemoryCounterContainer[container.ID]; exists {
@@ -224,4 +226,15 @@ func containerCounterUpdate(containerID, comm string) {
 	}
 
 	outOfMemoryCounterContainer[containerID] = &oomMetric{count: 1, latestVictimComm: comm}
+}
+
+// pruneOOMCounterContainers drops counters for containers that are no longer
+// present in containers, so IDs of exited containers do not accumulate.
+// The caller must hold mutex.
+func pruneOOMCounterContainers(containers map[string]*pod.Container) {
+	for containerID := range outOfMemoryCounterContainer {
+		if _, exists := containers[containerID]; !exists {
+			delete(outOfMemoryCounterContainer, containerID)
+		}
+	}
 }
