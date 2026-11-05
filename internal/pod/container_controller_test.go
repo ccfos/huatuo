@@ -17,6 +17,7 @@ package pod
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -477,6 +478,7 @@ func TestContainerControllerKataRefreshRecovery(t *testing.T) {
 		t.Fatalf("initial discovery: %v", err)
 	}
 	store.commit(snapshot, nil)
+	previous := store.records[id]
 	isUnavailable = true
 	for range 5 {
 		var retry bool
@@ -488,6 +490,9 @@ func TestContainerControllerKataRefreshRecovery(t *testing.T) {
 			t.Fatal("runtime outage was not observed")
 		}
 		store.commit(snapshot, err)
+		if store.records[id] != previous || !store.records[id].pod.SyncedAt.Equal(previous.pod.SyncedAt) {
+			t.Error("failed runtime query advanced successful sync or replaced cached metadata")
+		}
 	}
 	isUnavailable = false
 	beforeRecovery := calls
@@ -564,5 +569,69 @@ func TestWorkloadManagerSerialRefresh(t *testing.T) {
 	if calls != 2 || store.revision != revision || len(store.records) != 0 || store.isActive {
 		t.Errorf("canceled discovery changed state: calls=%d, revision=%d/%d, records=%d, active=%t",
 			calls, store.revision, revision, len(store.records), store.isActive)
+	}
+}
+
+// TestContainerControllerDuplicateMembers 验证同一列表内和跨 Pod 的重复 ID
+// 都保留为 nil 成员，不用冲突元数据覆盖旧视图，也不据此删除其他成员。
+func TestContainerControllerDuplicateMembers(t *testing.T) {
+	useContainerdForTest(t)
+	duplicate, retained, fresh := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	for _, separatePods := range []bool{false, true} {
+		t.Run(fmt.Sprintf("separate_pods=%t", separatePods), func(t *testing.T) {
+			store := newTestContainerStore()
+			previous := containerRecordForTest(duplicate)
+			store.commit(containerSnapshot{records: map[string]*containerRecord{
+				duplicate: previous, retained: containerRecordForTest(retained),
+			}, isComplete: true}, nil)
+			list := runningPodListForTest(duplicate, duplicate, fresh)
+			if separatePods {
+				list = runningPodListForTest(duplicate)
+				other := runningPodListForTest(duplicate, fresh)
+				list.Items = append(list.Items, other.Items...)
+			}
+			controller := newContainerController(store)
+			controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
+			controller.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+				record := containerRecordForTest(id)
+				record.container.Name = "conflicting-metadata"
+				return record, nil
+			}
+			snapshot, err, retry := controller.refresh(t.Context(), nil, true)
+			member, exists := snapshot.records[duplicate]
+			if err == nil || !strings.Contains(err.Error(), "duplicate") || snapshot.isComplete || !retry || !exists || member != nil {
+				t.Errorf("duplicate result: complete=%t retry=%t member=%+v exists=%t err=%v", snapshot.isComplete, retry, member, exists, err)
+			}
+			store.commit(snapshot, err)
+			if store.records[duplicate] != previous || store.records[retained] == nil || store.records[fresh] == nil {
+				t.Error("duplicate list replaced old metadata, deleted an absent member, or lost a valid new member")
+			}
+		})
+	}
+}
+
+// TestContainerControllerPendingMetadataKeepsSyncTime 验证有限重试耗尽后仍保留
+// 上次成功视图；成员列表完整时，其他已消失对象不受详情失败影响。
+func TestContainerControllerPendingMetadataKeepsSyncTime(t *testing.T) {
+	useContainerdForTest(t)
+	id, removed := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	store := newTestContainerStore()
+	previous := containerRecordForTest(id)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{id: previous, removed: containerRecordForTest(removed)}, isComplete: true}, nil)
+	controller := newContainerController(store)
+	controller.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
+	controller.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+		return nil, errors.New("runtime temporarily unavailable")
+	}
+	for attempt := range 4 {
+		snapshot, err, _ := controller.refresh(t.Context(), nil, attempt == 0)
+		member, exists := snapshot.records[id]
+		if err == nil || !snapshot.isComplete || !exists || member != nil {
+			t.Errorf("pending metadata result: complete=%t exists=%t member=%+v err=%v", snapshot.isComplete, exists, member, err)
+		}
+		store.commit(snapshot, err)
+		if store.records[id] != previous || store.records[removed] != nil {
+			t.Error("metadata outage advanced successful sync or blocked confirmed deletion")
+		}
 	}
 }

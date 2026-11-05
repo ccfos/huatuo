@@ -152,11 +152,18 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 					malformed = true
 					continue
 				}
+				if _, exists := records[id]; exists {
+					// Conflicting rows cannot choose metadata or authorize deletion.
+					records[id] = nil
+					syncErr = fmt.Errorf("duplicate running container ID %q in kubelet list", id)
+					malformed = true
+					continue
+				}
 				c.store.mu.RLock()
 				previous := c.store.records[id]
 				c.store.mu.RUnlock()
-				// Retain membership even when metadata cannot be resolved yet.
-				records[id] = previous
+				// Nil retains membership without advancing the last successful sync.
+				records[id] = nil
 				pending := c.retries[id]
 				removing := pending != nil && pending.awaitingRemoval
 				retry = retry || removing
@@ -168,6 +175,7 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 					previous.container.StartedAt.Equal(
 						status.State.Running.StartedAt.Time,
 					) {
+					records[id] = previous
 					continue
 				}
 				if pending == nil {
