@@ -230,6 +230,29 @@ func bindHostNetwork(location *HostNetwork, root string) *HostNetwork {
 	}
 }
 
+// sameResources ignores labels and addresses that do not grant collection
+// capabilities. It compares published metadata without kernel I/O under the lock.
+func (p *Pod) sameResources(other *Pod) bool {
+	if !maps.Equal(p.Cgroups.directories, other.Cgroups.directories) || !maps.Equal(p.Cgroups.CSS, other.Cgroups.CSS) {
+		return false
+	}
+	if (p.Process == nil) != (other.Process == nil) {
+		return false
+	}
+	if p.Process != nil && *p.Process != *other.Process {
+		return false
+	}
+	var network, nextNetwork HostNetwork
+	if p.Network != nil {
+		network = *p.Network
+	}
+	if other.Network != nil {
+		nextNetwork = *other.Network
+	}
+	network.IPAddress, nextNetwork.IPAddress = "", ""
+	return network == nextNetwork
+}
+
 // podFromContainer is a migration boundary for the existing discovery producer.
 // It preserves the legacy shared path until discovery provides controller paths.
 func podFromContainer(c *Container) *Pod {

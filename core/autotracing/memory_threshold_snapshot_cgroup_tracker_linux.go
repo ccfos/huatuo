@@ -100,8 +100,9 @@ func (c *cgroupTracker) ProcessContainerEvents(ctx context.Context, containers p
 		unchanged := len(containers.Events) == len(c.containers)
 		if unchanged {
 			for i := range containers.Events {
-				key := containers.Events[i].Container.Key
-				if entry := c.containers[key.ID]; entry == nil || entry.container.Key != key {
+				ref := containers.Events[i].Container
+				if entry := c.containers[ref.Key.ID]; entry == nil || entry.container != ref ||
+					(entry.cgroup.Path != "" && entry.cgroup.directory == nil) {
 					unchanged = false
 					break
 				}
@@ -227,7 +228,8 @@ func (c *cgroupTracker) Close() {
 
 func (c *cgroupTracker) createContainer(ctx context.Context, ref pod.ContainerRef) error {
 	old := c.containers[ref.Key.ID]
-	if old != nil && old.container.Key.Generation >= ref.Key.Generation {
+	if old != nil && (old.container.Key.Generation > ref.Key.Generation ||
+		(old.container == ref && (old.cgroup.Path == "" || old.cgroup.directory != nil))) {
 		return nil
 	}
 

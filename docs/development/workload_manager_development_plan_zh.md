@@ -538,3 +538,28 @@ Container Host 的公共资源校验增加进程和网络部分，旧 Container 
 本次验证记录在 `logs/step02c-*`：pod race 测试、Container/Kata 绑定回归、真实 v1/v2 挂载和进程/netns 集成测试、`make build` 通过；提交检查使用 `make check`，日志为 `step02c-check.log`。Guest 扫描使用已有 proc/cgroup fixture 补测分控制器及 v1/v2 私有命名空间，本次没有宣称真实 Kata VM 端到端验收完成。
 
 步骤 02 的公共绑定与已有发现适配已完成。下一步处理公共生命周期订阅和资源首次就绪通知；CubeSandbox 来源及其采集链路尚未开放。
+
+### 步骤 03a：资源首次就绪保持实例状态
+
+Store 不再将原来未知的 PID、进程启动时间、内存路径或目录首次补齐视为重启。公共 cgroup、CSS、进程和网络能力变化复用全量通知，保持原实例代次与采集基线；重复同步和仅名称/IP 更新不产生额外通知。
+
+内存监视器同时适配同代次的完整引用变化，以及目录尚未就绪的记录。已注册的监视和待处理压力事件在重复通知时保留；既有注册失败和容量限制策略不变。本次尚未更换公共订阅入口或 cgroup 事件归属索引。
+
+测试机 `172.16.135.140` 的 `logs/step03a-*` 保存验证：pod/autotracing race 测试及完整构建通过，原生内存阈值内核通知集成测试通过。该集成测试加 `-race` 时，其子进程触发测试自身的 128 MiB cgroup 限制而被 OOM 杀死，内核日志已确认；按原生方式运行通过，单测继续使用 race。提交检查使用 `make check`。
+
+同机三次 benchmark 中位数对比：
+
+| 用例 | 原 ns/op → 新 ns/op | 原/新 allocs/op |
+| --- | --- | --- |
+| ControllerRefresh / 1024 | 8414988 → 8420203 | 3094 / 3094 |
+| ContainerEvents / 4096 / 8 订阅者 | 1622 → 1614 | 0 / 0 |
+| ContainerFullUpdate / 4096 | 152943 → 151815 | 0 / 0 |
+| MemorySnapshotContainerFullUpdate / 4096 | 181844 → 219396 | 0 / 0 |
+
+内存监视器全量核对增加 PID、路径和待绑定状态比较，4096 个对象约增加 38 μs，仍为零分配；不改变内存压力事件处理循环。其余耗时差异视为环境波动。
+
+### CubeSandbox 实机环境补充
+
+已直接免密连接 `172.16.134.96`，内核为 Linux 5.10、使用 cgroup v2。cubelet socket 为 `/data/cubelet/cubelet.sock`，现有 `cubecli inspect` 确认详情包含 `CGroupPath=/cube_sandbox/sandbox/8`、shim PID 和纳秒时间戳；对应目录包含 CPU、memory 和进程文件。代码参考 `/Users/didi/code/CubeSandbox`，未修改该仓库。
+
+检查时现有沙箱为 Paused，运行中列表为空，因此尚未完成运行中沙箱的采集验证；后续接入仍严格按运行状态筛选。本次仅查询现有环境，没有启动、恢复或删除现有沙箱。

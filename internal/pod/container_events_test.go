@@ -502,3 +502,73 @@ func TestPodPublicationKeepsBoundCgroups(t *testing.T) {
 		t.Error("source mutation changed a published directory")
 	}
 }
+
+// TestPodFirstResourceReadiness 验证 PID、启动时间、内存目录、CSS、公共 cgroup、
+// 进程及网络首次补齐时保留代次和采集基线，发送一次全量通知；重复提交、
+// 名称或 IP 元数据更新不产生额外通知，已发布的旧视图保持不变。
+func TestPodFirstResourceReadiness(t *testing.T) {
+	directory, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Errorf("stat ready directory: %v", err)
+		return
+	}
+	cases := []struct {
+		name    string
+		prepare func(*containerRecord, *containerRecord)
+		notify  bool
+	}{
+		{name: "init PID", notify: true, prepare: func(before, after *containerRecord) { before.ref.InitPID = 0 }},
+		{name: "process identity", notify: true, prepare: func(before, after *containerRecord) { before.startTime = 0 }},
+		{name: "memory membership", notify: true, prepare: func(before, after *containerRecord) { before.ref.MemoryCgroupPath = "" }},
+		{name: "memory directory", notify: true, prepare: func(before, after *containerRecord) { after.directory = directory }},
+		{name: "CSS", notify: true, prepare: func(before, after *containerRecord) { after.pod.Cgroups.CSS = map[string]uint64{"memory": 7500} }},
+		{name: "cgroup directory", notify: true, prepare: func(before, after *containerRecord) {
+			after.pod.Cgroups.directories = map[string]string{"memory": "/bound-checkout"}
+		}},
+		{name: "process binding", notify: true, prepare: func(before, after *containerRecord) { before.pod.Process = nil }},
+		{name: "network binding", notify: true, prepare: func(before, after *containerRecord) { after.pod.Network = &HostNetwork{PID: 42, NamespaceInum: 6500} }},
+		{name: "IP metadata", prepare: func(before, after *containerRecord) { after.pod.Network = &HostNetwork{IPAddress: "172.16.0.2"} }},
+		{name: "name metadata", prepare: func(before, after *containerRecord) { after.pod.Name = "checkout-worker" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestContainerStore()
+			before, after := containerRecordForTest("checkout-container"), containerRecordForTest("checkout-container")
+			before.pod, after.pod = podFromContainer(before.container), podFromContainer(after.container)
+			tc.prepare(before, after)
+			store.commit(containerSnapshot{records: map[string]*containerRecord{before.container.ID: before}, isComplete: true}, nil)
+			baseline := &struct{ total uint64 }{total: 6400}
+			before.pod.lifeResources["readiness-baseline"] = baseline
+			subscriber := subscribeForTest(t, store)
+			initial, err := subscriber.DrainEvents()
+			if err != nil {
+				t.Errorf("initial snapshot: %v", err)
+				return
+			}
+			oldView := before.pod
+			store.commit(containerSnapshot{records: map[string]*containerRecord{after.container.ID: after}, isComplete: true}, nil)
+			if after.ref.Key != before.ref.Key || after.pod.LifeResources("readiness-baseline") != baseline {
+				t.Error("first resource readiness replaced instance state")
+			}
+			if oldView == after.pod {
+				t.Error("resource completion mutated the published view")
+			}
+			update, err := subscriber.DrainEvents()
+			if err != nil {
+				t.Errorf("resource readiness notification: %v", err)
+				return
+			}
+			if tc.notify {
+				if update.Mode != ContainerUpdateFull || len(update.Events) != 1 || update.Events[0].Container != after.ref || update.Revision <= initial.Revision {
+					t.Errorf("readiness must produce a current full view: %+v", update)
+				}
+			} else if update.Mode != ContainerUpdateIncremental || len(update.Events) != 0 {
+				t.Errorf("metadata emitted lifecycle notification: %+v", update)
+			}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{after.container.ID: after}, isComplete: true}, nil)
+			if duplicate, err := subscriber.DrainEvents(); err != nil || len(duplicate.Events) != 0 {
+				t.Errorf("duplicate readiness notification: %+v, %v", duplicate, err)
+			}
+		})
+	}
+}

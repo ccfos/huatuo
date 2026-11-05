@@ -37,10 +37,11 @@ func (r *containerRecord) sameInstance(other *containerRecord) bool {
 	if r.pod != nil && other.pod != nil && r.pod.Type != other.pod.Type {
 		return false
 	}
-	return r.ref.InitPID == other.ref.InitPID && r.startTime == other.startTime &&
-		r.ref.MemoryCgroupPath == other.ref.MemoryCgroupPath &&
-		((r.directory == nil && other.directory == nil) ||
-			(r.directory != nil && other.directory != nil && os.SameFile(r.directory, other.directory)))
+	// Completing previously unknown identity is not evidence of a restart.
+	return (r.ref.InitPID == 0 || r.ref.InitPID == other.ref.InitPID) &&
+		(r.startTime == 0 || r.startTime == other.startTime) &&
+		(r.ref.MemoryCgroupPath == "" || r.ref.MemoryCgroupPath == other.ref.MemoryCgroupPath) &&
+		(r.directory == nil || (other.directory != nil && os.SameFile(r.directory, other.directory)))
 }
 
 // A complete snapshot accounts for every in-scope ID. A nil record retains
@@ -115,6 +116,7 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 		}
 	}
 	now := time.Now()
+	resourcesChanged := false
 	for id, record := range snapshot.records {
 		previous := v.records[id]
 		if record == nil || (record.pod == nil && record.container == nil) {
@@ -140,6 +142,9 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 				record.pod.StartedAt = previous.pod.StartedAt
 			}
 			record.ref.Key = previous.ref.Key
+			resourcesChanged = resourcesChanged || previous.ref != record.ref ||
+				!previous.pod.sameResources(record.pod) || (previous.directory == nil && record.directory != nil) ||
+				(previous.startTime == 0 && record.startTime != 0)
 			record.setLifeResources(previous.pod.lifeResources)
 			v.records[id] = record
 			continue
@@ -157,7 +162,10 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 	if syncErr != nil {
 		v.err = fmt.Errorf("%w: %w", ErrContainersUnavailable, syncErr)
 	}
-	if wasUnavailable || syncErr != nil {
+	if resourcesChanged {
+		v.revision++
+	}
+	if resourcesChanged || wasUnavailable || syncErr != nil {
 		for s := range v.subscribers {
 			s.needsFull = true
 			s.signal()
