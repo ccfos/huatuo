@@ -208,7 +208,7 @@ sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
 
 `TEST_IO_DISK` 默认 `/dev/disk/by-id/virtio-huatuo-ci-io`，必须是专用测试盘，内容可被覆盖；不存在、已挂载或有分区时直接失败。MD、loop 和 NVMe-loop 的后端文件也使用该盘。需要 SCSI 驱动控制的用例单独创建 `scsi_debug` 设备。容器用例使用本机 Kubernetes 节点和已有 kubelet 凭证。
 
-`make unit` 执行离线布局、兼容选择和记账检查。宿主机及容器指标用例验证真实 IOLatency 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
+`make unit` 验证 Go 配置解析、兼容选择、数据解码和指标转换。宿主机及容器指标用例验证真实 IOLatency 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
 
 健康取证用例调用真实 `smartctl`、`nvme`，分别需要 `smartmontools`、`nvme-cli`；受控工具输出覆盖命令失败场景。
 

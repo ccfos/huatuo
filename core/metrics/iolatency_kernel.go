@@ -129,8 +129,7 @@ func ioLatencyTracepointArguments(
 		if definition.constant == "" {
 			continue
 		}
-		// This slot exists only in the queue-prefixed layout. Qualification
-		// tests check full argument counts on each supported kernel.
+		// This slot exists only in the queue-prefixed layout.
 		available, err := probe(definition.symbol, definition.boundaryArgument)
 		if err != nil {
 			return nil, fmt.Errorf("probe iolatency %s argument %d: %w",

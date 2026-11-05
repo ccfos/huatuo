@@ -215,7 +215,7 @@ use this disk. Cases requiring SCSI driver controls create separate
 `scsi_debug` devices. Container cases use the local Kubernetes node and
 existing kubelet credentials.
 
-`make unit` runs offline layout, compatibility-selection and accounting checks.
+`make unit` checks Go configuration, compatibility selection, decoding and metric conversion.
 Host and container metric cases verify real IOLatency output; they do not
 independently verify complete tracepoint argument counts on each kernel or
 exercise every remap path.

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Qualify request.part layouts without loading or attaching BPF.
+// Check Go request-layout validation without loading BPF.
 package main
 
 import (
