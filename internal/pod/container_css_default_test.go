@@ -294,11 +294,11 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	record.pod.Cgroups = CgroupBinding{CSS: map[string]uint64{"cpu": 9150}, directories: map[string]string{"cpu": "/bound-checkout"}}
 	store.commit(containerSnapshot{records: map[string]*containerRecord{id: record}, isComplete: true}, nil)
 	controller := newContainerController(store)
-	containerManagerMu.Lock()
-	previous := containerManager
-	containerManager = controller
-	containerManagerMu.Unlock()
-	t.Cleanup(func() { containerManagerMu.Lock(); containerManager = previous; containerManagerMu.Unlock() })
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = controller.workloadManager
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
 	event.CSS[0] = 9150
 	copy(event.KnodeName[:], "8")
@@ -343,11 +343,11 @@ func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
 	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldNames; cgroupCssMetaDataMap.Delete(uint64(765432)) })
 	controller := newContainerController(newTestContainerStore())
 	controller.full = false
-	containerManagerMu.Lock()
-	previous := containerManager
-	containerManager = controller
-	containerManagerMu.Unlock()
-	t.Cleanup(func() { containerManagerMu.Lock(); containerManager = previous; containerManagerMu.Unlock() })
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = controller.workloadManager
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: 42}
 	event.CSS[0] = 765432
 	copy(event.KnodeName[:], strings.Repeat("a", 64))
@@ -381,15 +381,15 @@ func TestUnknownCgroupEventRequestsFullRefresh(t *testing.T) {
 			containerView = store
 			controller := newContainerController(store)
 			controller.full = false
-			containerManagerMu.Lock()
-			previous := containerManager
-			containerManager = controller
-			containerManagerMu.Unlock()
+			workloadManagerMu.Lock()
+			previous := activeManager
+			activeManager = controller.workloadManager
+			workloadManagerMu.Unlock()
 			t.Cleanup(func() {
 				containerView = previousView
-				containerManagerMu.Lock()
-				containerManager = previous
-				containerManagerMu.Unlock()
+				workloadManagerMu.Lock()
+				activeManager = previous
+				workloadManagerMu.Unlock()
 			})
 			event := &containerCssPerfEvent{Inode: 4200, Operation: abi.CgroupCSSOperationUpdate}
 			if removed {

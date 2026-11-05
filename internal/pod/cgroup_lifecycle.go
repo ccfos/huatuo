@@ -61,7 +61,7 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 						log.WithError(err).Warn("lost BPF perf event samples")
 						if lifecycle {
-							requestContainerRefresh("", false)
+							requestWorkloadRefresh("", false)
 						}
 						continue
 					}
@@ -79,7 +79,7 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 				}
 				if lifecycle && (data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
 					id := containerView.cgroupEvent(&data)
-					requestContainerRefresh(id, id != "" && data.Operation == abi.CgroupCSSOperationRemove)
+					requestWorkloadRefresh(id, id != "" && data.Operation == abi.CgroupCSSOperationRemove)
 				}
 			}
 		}
@@ -146,7 +146,7 @@ func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader
 		if ctx.Err() != nil {
 			return
 		}
-		requestContainerRefresh("", false)
+		requestWorkloadRefresh("", false)
 		for delay := time.Second; ; {
 			timer := time.NewTimer(delay)
 			select {
@@ -160,7 +160,7 @@ func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader
 			if err == nil {
 				log.Info("cgroup CSS event pipe recovered")
 				// Recover changes lost while the event pipe was unavailable.
-				requestContainerRefresh("", false)
+				requestWorkloadRefresh("", false)
 				break
 			}
 			log.WithError(err).Warn("reopen cgroup CSS event pipe")

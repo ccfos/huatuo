@@ -75,12 +75,12 @@ func InitGuestManager(options GuestScannerOptions) error {
 		options.Interval = 5 * time.Second
 	}
 	scanner := &guestScanner{options: options}
-	containerManagerMu.Lock()
-	defer containerManagerMu.Unlock()
-	if containerManager != nil {
-		return errors.New("container manager is already running")
+	workloadManagerMu.Lock()
+	defer workloadManagerMu.Unlock()
+	if activeManager != nil {
+		return errors.New("workload manager is already running")
 	}
-	controller := newContainerController(containerView)
+	controller := newWorkloadManager(containerView)
 
 	// Populate the CSS cache before discovery publishes BPF sampling targets.
 	// Missing kernel capabilities must not disable basic Guest discovery.
@@ -90,11 +90,16 @@ func InitGuestManager(options GuestScannerOptions) error {
 		}
 		return nil
 	}
-	controller.scan = scanner.scan
+	controller.discover = scanner.discover
 	controller.resyncInterval = options.Interval
-	containerManager = controller
+	activeManager = controller
 	controller.start()
 	return nil
+}
+
+func (s *guestScanner) discover(ctx context.Context, _ map[string]bool, _ bool) (containerSnapshot, error, bool) {
+	snapshot, err := s.scan(ctx)
+	return snapshot, err, err != nil
 }
 
 func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {

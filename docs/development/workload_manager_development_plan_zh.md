@@ -585,3 +585,12 @@ Store 为已验证的 CSS 和内核 cgroup 地址维护反向索引，提交、�
 4096 个对象下三次 benchmark 中位数：cgroup 地址归属查询 156.8 ns/op，CSS 归属查询 187.6 ns/op，未知事件 75.33 ns/op，均为零分配；删除事件需要复制被影响对象的只读元数据。公共事件投递（8 订阅者）为 2016 ns/op、零分配。ControllerRefresh/1024 为 8421295 ns/op、485891 B/op、3094 allocs/op；相比此前约增加 16 KiB 的快照空间，分配次数未增加，耗时差异视为环境波动。
 
 步骤 03 已完成。下一步将 Container 来源接入统一 Manager，继续保持现有容器对外契约；当前尚未开放 CubeSandbox 来源或宣称完成沙箱采集验收。
+
+
+### 步骤 04a：抽出公共发现调度
+
+将唯一的同步循环、周期与退避、刷新提示合并、取消和停止清理移入 `manager.go`。Host Container controller 保留 kubelet 列表解析和现有逐对象就绪重试；Kata Guest 直接使用公共调度，不再创建 Container controller。没有增加第二条同步循环，现有对外入口、周期和重试次数保持不变。
+
+本次先拆开调度与来源实现，暂以内部同步回调衔接；`Source.Discover` 的公开边界、发现结果验证和 Container 子包迁移仍属于步骤 04 后续提交，不代表步骤 04 全部完成。
+
+验证记录位于 `172.16.135.140:/data1/huatuo-workload-20261105/logs/step04a-*`：pod/autotracing race 测试和完整构建通过。新增用例覆盖慢查询期间提示合并到下一轮、取消后不提交返回结果及停止清理；保留现有有界就绪重试、删除确认、Guest 扫描和订阅关闭回归。另运行 HTTP/CRI 到真实内核绑定的集成测试及提交检查 `make check`。本次只移动调度职责，不改变 BPF 事件处理和指标循环。

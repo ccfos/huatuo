@@ -498,3 +498,71 @@ func TestContainerControllerKataRefreshRecovery(t *testing.T) {
 			beforeRecovery, calls, err, store.err)
 	}
 }
+
+// TestWorkloadManagerSerialRefresh 验证发现阻塞期间的提示合并到下一轮，
+// 同步调用不重叠，停止时取消 I/O 且不提交取消之后返回的发现结果。
+func TestWorkloadManagerSerialRefresh(t *testing.T) {
+	store := newContainerStore()
+	manager := newWorkloadManager(store)
+	manager.resyncInterval = time.Hour
+	type attempt struct {
+		hints map[string]bool
+		full  bool
+	}
+	entered := make(chan attempt, 2)
+	release := make(chan struct{})
+	var calls int
+	manager.discover = func(ctx context.Context, hints map[string]bool, full bool) (containerSnapshot, error, bool) {
+		calls++
+		entered <- attempt{hints: hints, full: full}
+		if calls == 1 {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		} else {
+			<-ctx.Done()
+		}
+		record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}}
+		return containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil, false
+	}
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	first := attempt{}
+	select {
+	case first = <-entered:
+	case <-time.After(time.Second):
+		t.Error("initial discovery did not start")
+		return
+	}
+	if !first.full || len(first.hints) != 0 {
+		t.Errorf("initial discovery=%+v", first)
+	}
+	manager.request("checkout-sandbox", false)
+	manager.request("checkout-worker", true)
+	manager.request("checkout-sandbox", true)
+	close(release)
+	select {
+	case next := <-entered:
+		if next.full || len(next.hints) != 2 || !next.hints["checkout-sandbox"] || !next.hints["checkout-worker"] {
+			t.Errorf("queued discovery hints=%+v", next)
+		}
+	case <-time.After(time.Second):
+		t.Error("queued refresh did not run after the first discovery")
+		return
+	}
+	store.mu.RLock()
+	revision := store.revision
+	store.mu.RUnlock()
+	manager.cancel()
+	select {
+	case <-manager.done:
+	case <-time.After(time.Second):
+		t.Error("manager did not join canceled discovery")
+		return
+	}
+	if calls != 2 || store.revision != revision || len(store.records) != 0 || store.isActive {
+		t.Errorf("canceled discovery changed state: calls=%d, revision=%d/%d, records=%d, active=%t",
+			calls, store.revision, revision, len(store.records), store.isActive)
+	}
+}

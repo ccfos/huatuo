@@ -19,35 +19,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
-
-	"github.com/ccfos/huatuo/internal/log"
-)
-
-const (
-	containerRefreshDelay   = 25 * time.Millisecond
-	containerResyncInterval = 30 * time.Second
 )
 
 type containerController struct {
-	store             *containerStore
-	scan              func(context.Context) (containerSnapshot, error)
+	*workloadManager
 	fetch             func(context.Context) (corev1.PodList, error)
 	resolve           func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error)
-	initialize        func(context.Context) error
-	resyncInterval    time.Duration
-	wake              chan struct{}
-	mu                sync.Mutex
-	hints             map[string]bool
-	full              bool
 	retries           map[string]*containerRefreshRetry
 	needsFull         bool
 	malformedAttempts int
-	cancel            context.CancelFunc
-	done              chan struct{}
 }
 
 type containerRefreshRetry struct {
@@ -57,18 +39,13 @@ type containerRefreshRetry struct {
 	err              error
 }
 
-var (
-	containerManagerMu sync.Mutex
-	containerManager   *containerController
-)
-
 // InitManager starts one shared producer before any initial container lookup.
 // Transient startup failures are visible to subscribers and retried by the
 // controller; getters never perform network I/O or start background work.
 func InitManager(config *ManagerCtx) error {
-	containerManagerMu.Lock()
-	defer containerManagerMu.Unlock()
-	if containerManager != nil {
+	workloadManagerMu.Lock()
+	defer workloadManagerMu.Unlock()
+	if activeManager != nil {
 		return nil
 	}
 	if config.PodReadOnlyPort == 0 && config.PodAuthorizedPort == 0 {
@@ -95,136 +72,19 @@ func InitManager(config *ManagerCtx) error {
 		}
 		return initCgroupLifecycle()
 	}
-	containerManager = controller
+	activeManager = controller.workloadManager
 	controller.start()
 	return nil
 }
 
-// ReleaseManager cancels I/O, joins the producer, and then releases CSS probes.
-// Manager lifecycle calls are serialized by the daemon.
-func ReleaseManager() {
-	containerManagerMu.Lock()
-	controller := containerManager
-	containerManager = nil
-	containerManagerMu.Unlock()
-	if controller == nil {
-		return
-	}
-	controller.cancel()
-	<-controller.done
-	kubeletPodListRunningEnabled.Store(false)
-	releaseCgroupLifecycle()
-}
-
 func newContainerController(store *containerStore) *containerController {
-	return &containerController{
-		store: store, fetch: kubeletGetPodList, resolve: resolveContainerRecord,
-		resyncInterval: containerResyncInterval,
-		wake:           make(chan struct{}, 1), hints: make(map[string]bool), full: true,
-		done: make(chan struct{}), retries: make(map[string]*containerRefreshRetry),
+	controller := &containerController{
+		workloadManager: newWorkloadManager(store),
+		fetch:           kubeletGetPodList, resolve: resolveContainerRecord,
+		retries: make(map[string]*containerRefreshRetry),
 	}
-}
-
-func (c *containerController) start() {
-	c.store.mu.Lock()
-	c.store.isActive, c.store.err = true, ErrContainersUnavailable
-	c.store.hasSnapshot = false
-	c.store.mu.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
-	c.cancel = cancel
-	go c.run(ctx)
-}
-
-// CSS events are hints, not confirmed container creates/deletes. Overflow
-// requests a complete reconciliation and never blocks the perf reader.
-func requestContainerRefresh(id string, removed bool) {
-	containerManagerMu.Lock()
-	defer containerManagerMu.Unlock()
-	if containerManager != nil {
-		containerManager.request(id, removed)
-	}
-}
-
-func (c *containerController) request(id string, removed bool) {
-	c.mu.Lock()
-	if id == "" || len(c.hints) >= containerEventQueueSize {
-		c.full = true
-	} else {
-		c.hints[id] = removed
-	}
-	c.mu.Unlock()
-	select {
-	case c.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (c *containerController) run(ctx context.Context) {
-	defer close(c.done)
-	defer func() {
-		c.store.mu.Lock()
-		defer c.store.mu.Unlock()
-		c.store.isActive, c.store.err = false, ErrContainerManagerDisabled
-		for s := range c.store.subscribers {
-			s.closeLocked()
-		}
-		clear(c.store.records)
-		clear(c.store.cgroupOwners)
-		clear(c.store.cssOwners)
-	}()
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-	delay := time.Second
-	due := time.Now()
-	initialized := c.initialize == nil
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.wake:
-			// Leave the timer unchanged on duplicate hints; bursts must not
-			// postpone synchronization forever.
-			if time.Until(due) > containerRefreshDelay {
-				due = time.Now().Add(containerRefreshDelay)
-				timer.Reset(containerRefreshDelay)
-			}
-		case <-timer.C:
-			if !initialized {
-				if err := c.initialize(ctx); err != nil {
-					c.store.commit(containerSnapshot{}, err)
-					log.WithError(err).Warn("initialize container state producer")
-					due = time.Now().Add(delay)
-					timer.Reset(delay)
-					delay = min(2*delay, c.resyncInterval)
-					continue
-				}
-				initialized = true
-			}
-			c.mu.Lock()
-			hints, full := c.hints, c.full
-			c.hints, c.full = make(map[string]bool), false
-			c.mu.Unlock()
-			snapshot, err, retry := c.refresh(ctx, hints, full)
-			if ctx.Err() != nil {
-				return
-			}
-			c.store.commit(snapshot, err)
-			if err != nil {
-				log.WithError(err).Warn("refresh container view")
-			}
-			// Kernel hints can precede kubelet status or be lost entirely.
-			// Keep reconciling membership after readiness retries are exhausted.
-			next := c.resyncInterval
-			if retry {
-				next = min(delay, c.resyncInterval)
-				delay = min(2*delay, c.resyncInterval)
-			} else {
-				delay = time.Second
-			}
-			due = time.Now().Add(next)
-			timer.Reset(next)
-		}
-	}
+	controller.discover = controller.refresh
+	return controller
 }
 
 // refresh retries unresolved instances without re-resolving healthy non-Kata records.
@@ -233,10 +93,6 @@ func (c *containerController) run(ctx context.Context) {
 // Known Kata instances keep retrying because runtime outages are recoverable.
 // Deletion hints keep retrying until kubelet confirms absence.
 func (c *containerController) refresh(ctx context.Context, hints map[string]bool, full bool) (containerSnapshot, error, bool) {
-	if c.scan != nil {
-		snapshot, err := c.scan(ctx)
-		return snapshot, err, err != nil
-	}
 	if full {
 		clear(c.retries)
 		c.needsFull = true

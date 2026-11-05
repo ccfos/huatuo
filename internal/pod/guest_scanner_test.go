@@ -415,8 +415,8 @@ func TestGuestContainerReference(t *testing.T) {
 func TestGuestControllerLifecycle(t *testing.T) {
 	s := guestFixture(t)
 	store := newContainerStore()
-	controller := newContainerController(store)
-	controller.scan = s.scan
+	controller := newWorkloadManager(store)
+	controller.discover = s.discover
 	controller.resyncInterval = 10 * time.Millisecond
 	controller.start()
 	sub := subscribeForTest(t, store)
