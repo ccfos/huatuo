@@ -32,8 +32,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// Exercise HTTP decoding, the active producer and real /proc/cgroup identity.
-// CSS probe delivery and memorywatch kernel delivery have separate kernel tests.
+// TestContainerControllerHTTPAndKernelBinding 验证 HTTP 发现、CRI 运行时分类和
+// 真实 /proc/cgroup 绑定，并覆盖 PID 文件先消失、kubelet 状态随后删除的顺序。
+// CSS 探针和 memorywatch 内核事件由各自的集成测试覆盖。
 func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	useContainerdForTest(t)
 	id := strings.Repeat("a", 64)
@@ -47,9 +48,17 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	}
 	initMu.Lock()
 	previousRoot := containerdStateDir
+	previousClient := containerdClient
 	containerdStateDir = runtimeRoot
+	response := runningRuntimeResponse(`{"runtimeType":"io.containerd.runc.v2"}`)
+	response.Status.Id = id
+	containerdClient = &pidRuntimeService{response: response}
 	initMu.Unlock()
-	t.Cleanup(func() { initMu.Lock(); containerdStateDir = previousRoot; initMu.Unlock() })
+	t.Cleanup(func() {
+		initMu.Lock()
+		containerdStateDir, containerdClient = previousRoot, previousClient
+		initMu.Unlock()
+	})
 	var mu sync.Mutex
 	list := runningPodListForTest(id)
 	list.Items[0].Status.Phase = corev1.PodRunning
