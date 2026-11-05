@@ -19,6 +19,7 @@ package pod
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -129,5 +130,53 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+// TestWorkloadManagerHTTPDeadline 使用真实 HTTP 连接验证整轮超时会取消正在
+// 等待的 kubelet 请求，不发布完整空列表，也不留下阻塞停止的后台查询。
+func TestWorkloadManagerHTTPDeadline(t *testing.T) {
+	canceled := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+		select {
+		case canceled <- struct{}{}:
+		default:
+		}
+	}))
+	t.Cleanup(server.Close)
+	store := newContainerStore()
+	controller := newContainerController(store)
+	controller.discoveryTimeout = 30 * time.Millisecond
+	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
+		return kubeletFetchPodList(ctx, server.Client(), server.URL)
+	}
+	controller.start()
+	t.Cleanup(func() { controller.cancel(); <-controller.done })
+	subscriber := subscribeForTest(t, store)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Error("discovery deadline did not cancel the HTTP request")
+		return
+	}
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case <-subscriber.Notify():
+		case <-deadline:
+			t.Error("HTTP timeout was not reported to subscribers")
+			return
+		}
+		_, err := subscriber.DrainEvents()
+		if errors.Is(err, context.DeadlineExceeded) {
+			break
+		}
+	}
+	store.mu.RLock()
+	complete, count := store.hasSnapshot, len(store.records)
+	store.mu.RUnlock()
+	if complete || count != 0 {
+		t.Error("HTTP timeout published an authoritative snapshot")
 	}
 }

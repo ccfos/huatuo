@@ -15,6 +15,7 @@
 package pod
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,7 +96,7 @@ func containerInitPIDByID(containerID string) (int, error) {
 	}
 
 	if container, _ := ContainerByID(containerID); container != nil && container.HostKataSandboxID() != "" {
-		info, err := readContainerdRuntimeInfo(containerID)
+		info, err := readContainerdRuntimeInfo(context.Background(), containerID)
 		if err != nil {
 			return -1, err
 		}

@@ -38,21 +38,25 @@ import (
 
 type pidRuntimeService struct {
 	criapi.RuntimeService
-	response    *runtimeapi.ContainerStatusResponse
-	err         error
-	calls       int
-	containerID string
-	verbose     bool
+	response     *runtimeapi.ContainerStatusResponse
+	err          error
+	calls        int
+	containerID  string
+	verbose      bool
+	checkContext bool
 }
 
 func (s *pidRuntimeService) ContainerStatus(
-	_ context.Context,
+	ctx context.Context,
 	id string,
 	verbose bool,
 ) (*runtimeapi.ContainerStatusResponse, error) {
 	s.calls++
 	s.containerID = id
 	s.verbose = verbose
+	if s.checkContext {
+		return nil, ctx.Err()
+	}
 	return s.response, s.err
 }
 
@@ -96,7 +100,7 @@ func TestReadContainerdRuntimeInfo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &pidRuntimeService{response: tt.response, err: tt.err}
 			containerdClient = client
-			info, err := readContainerdRuntimeInfo("test")
+			info, err := readContainerdRuntimeInfo(t.Context(), "test")
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("error = %v, want %q", err, tt.wantErr)
@@ -112,7 +116,7 @@ func TestReadContainerdRuntimeInfo(t *testing.T) {
 		})
 	}
 	containerdClient = nil
-	if _, err := readContainerdRuntimeInfo("test"); err == nil {
+	if _, err := readContainerdRuntimeInfo(t.Context(), "test"); err == nil {
 		t.Error("uninitialized CRI client must fail")
 	}
 }
@@ -162,7 +166,7 @@ func TestKubeletUpdateContainerRuntimeRouting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &pidRuntimeService{response: runningRuntimeResponse(tt.info)}
 			containerdClient = client
-			c, err := kubeletContainer("test", &corev1.Container{Name: "workload"}, status, pod)
+			c, err := kubeletContainer(t.Context(), "test", &corev1.Container{Name: "workload"}, status, pod)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Errorf("error = %v, want %q", err, tt.wantErr)
@@ -275,18 +279,37 @@ func TestPopulateKataContainerUsesHostBinding(t *testing.T) {
 	status := &corev1.ContainerStatus{
 		State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(time.Now())}},
 	}
-	classified, err := kubeletContainer(c.ID, spec, status, guestPod)
+	classified, err := kubeletContainer(t.Context(), c.ID, spec, status, guestPod)
 	if err != nil || classified == nil || classified.Type != ContainerTypeSidecar {
 		t.Fatalf("Kata Guest agent classification=%+v err=%v", classified, err)
 	}
 	spec.Name = "agent"
 	spec.Env = nil
-	classified, err = kubeletContainer(c.ID, spec, status, guestPod)
+	classified, err = kubeletContainer(t.Context(), c.ID, spec, status, guestPod)
 	if err != nil || classified == nil || classified.Type != ContainerTypeNormal {
 		t.Fatalf("business named agent classification=%+v err=%v", classified, err)
 	}
 	response.Info["info"] = `{"pid":4321,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"replaced"}`
 	if _, err := containerInitPIDByID(c.ID); err == nil {
 		t.Error("changed sandbox must invalidate the binding")
+	}
+}
+
+// TestRuntimeDiscoveryCancellation 验证容器元数据查询沿用 Manager 的取消信号，
+// 不创建脱离本轮发现的后台请求。
+func TestRuntimeDiscoveryCancellation(t *testing.T) {
+	useContainerdForTest(t)
+	previous := containerdClient
+	t.Cleanup(func() { containerdClient = previous })
+	client := &pidRuntimeService{checkContext: true}
+	containerdClient = client
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	record := &Container{ID: "checkout-api"}
+	if err := populateContainerRuntime(ctx, record, &corev1.Pod{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("runtime discovery cancellation=%v", err)
+	}
+	if client.calls != 1 {
+		t.Errorf("runtime calls=%d, want 1", client.calls)
 	}
 }

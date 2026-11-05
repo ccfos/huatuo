@@ -135,6 +135,10 @@ func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) 
 		return nil
 	}
 
+	if err := requestCtx.Err(); err != nil {
+		return err
+	}
+
 	// try to fallback https.
 	client, err := kubeletPodListAuthorizationRequest(requestCtx, ctx)
 	if err != nil {
@@ -183,12 +187,13 @@ func kubeletFetchPodList(ctx context.Context, client *http.Client, url string) (
 }
 
 func kubeletConfigDoRequest(
+	ctx context.Context,
 	client *http.Client,
 	kubeletConfigURL string,
 ) (kubeletConfiguration, error) {
 	empty := kubeletConfiguration{}
 
-	body, err := httpRequestContext(context.Background(), client, kubeletConfigURL)
+	body, err := httpRequestContext(ctx, client, kubeletConfigURL)
 	if err != nil {
 		return empty, err
 	}
@@ -300,7 +305,7 @@ func requestErrorBody(body []byte) string {
 	return message
 }
 
-func kubeletContainer(containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod) (*Container, error) {
+func kubeletContainer(ctx context.Context, containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod) (*Container, error) {
 	// container type
 	containerType, err := parseContainerType(container, pod)
 	if err != nil {
@@ -340,7 +345,7 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 		Labels:    labels,
 	}
 
-	if err := populateContainerRuntime(result, pod); err != nil {
+	if err := populateContainerRuntime(ctx, result, pod); err != nil {
 		return nil, err
 	}
 
@@ -352,7 +357,7 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 	return result, nil
 }
 
-func parseContainerIDInPodStatus(data string) (string, error) {
+func parseContainerIDInPodStatus(ctx context.Context, data string) (string, error) {
 	// containerID example:
 	//
 	// "containerID": "docker://06ae8891e7e9b80f353e07116980f93a357fb3f239c09894de73b2e74121c94f",
@@ -373,7 +378,7 @@ func parseContainerIDInPodStatus(data string) (string, error) {
 	if err := ValidateContainerID(parts[1]); err != nil {
 		return "", err
 	}
-	if err := initContainerProviderEnv(provider, dockerAPIVersion); err != nil {
+	if err := initContainerProviderEnv(ctx, provider, dockerAPIVersion); err != nil {
 		return "", fmt.Errorf("init container provider for containerID %q: %w", data, err)
 	}
 
@@ -413,7 +418,7 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 // Updated cache vars:
 //   - CgroupDriver
 //   - ContainerRuntimeEndpoint
-func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
+func kubeletConfigCacheMustUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error
@@ -432,11 +437,16 @@ func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 	}()
 
 	config, err = kubeletConfigDoRequest(
+		requestCtx,
 		kubeletPodListClient,
 		kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort),
 	)
 	if err == nil {
 		return nil
+	}
+
+	if err := requestCtx.Err(); err != nil {
+		return err
 	}
 
 	log.Debugf("kubelet config port is not available, try to read config files: %v", kubeletDefaultConfigPath)

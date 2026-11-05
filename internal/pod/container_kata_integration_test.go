@@ -35,14 +35,14 @@ func TestKataRuntimeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(bpf.Shutdown)
-	if err := initContainerProviderEnv(containerProviderContainerd, ""); err != nil {
+	if err := initContainerProviderEnv(t.Context(), containerProviderContainerd, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := initCgroupLifecycle(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(releaseCgroupLifecycle)
-	info, err := readContainerdRuntimeInfo(id)
+	info, err := readContainerdRuntimeInfo(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestKataRuntimeIntegration(t *testing.T) {
 		t.Fatal("Host VM namespace must not identify a Guest network namespace")
 	}
 	if peerID := os.Getenv("HUATUO_KATA_PEER_CONTAINER_ID"); peerID != "" {
-		peerInfo, err := readContainerdRuntimeInfo(peerID)
+		peerInfo, err := readContainerdRuntimeInfo(t.Context(), peerID)
 		if err != nil {
 			t.Fatal(err)
 		}

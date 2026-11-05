@@ -68,7 +68,7 @@ func TestContainerControllerIndependentOfGetters(t *testing.T) {
 		defer mu.Unlock()
 		return list, nil
 	}
-	controller.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+	controller.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
 		return containerRecordForTest(id), nil
 	}
 	controller.start()
@@ -141,7 +141,7 @@ func TestContainerControllerScopeAndPartialFailure(t *testing.T) {
 	c := newContainerController(store)
 	c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
 	counts := make(map[string]int)
-	c.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+	c.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
 		counts[id]++
 		return containerRecordForTest(id), nil
 	}
@@ -170,7 +170,7 @@ func TestContainerControllerReadinessRetriesAreBounded(t *testing.T) {
 	c := newContainerController(store)
 	c.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
 	attempts := 0
-	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 		attempts++
 		return nil, errors.New("init pid not ready")
 	}
@@ -184,7 +184,7 @@ func TestContainerControllerReadinessRetriesAreBounded(t *testing.T) {
 	if attempts != 3 {
 		t.Fatalf("attempts=%d", attempts)
 	}
-	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 		return containerRecordForTest(id), nil
 	}
 	snapshot, err, retry := c.refresh(t.Context(), map[string]bool{id: false}, false)
@@ -225,7 +225,7 @@ func TestContainerControllerDeletionBeforeKubeletUpdate(t *testing.T) {
 			c := newContainerController(store)
 			list := runningPodListForTest(id)
 			c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-			c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+			c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 				return containerRecordForTest(id), nil
 			}
 			snapshot, err, _ := c.refresh(t.Context(), nil, true)
@@ -235,7 +235,7 @@ func TestContainerControllerDeletionBeforeKubeletUpdate(t *testing.T) {
 				t.Fatal(err)
 			}
 			if name == "runtime already removed" {
-				c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+				c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 					return nil, errors.New("init pid file no longer exists")
 				}
 			}
@@ -310,7 +310,7 @@ func TestContainerControllerMetadataFailureDoesNotPreventDeletion(t *testing.T) 
 	}
 	c := newContainerController(store)
 	c.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(healthy, unresolved), nil }
-	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 		return nil, errors.New("init pid not ready")
 	}
 	snapshot, err, _ := c.refresh(t.Context(), nil, false)
@@ -327,7 +327,7 @@ func TestContainerControllerMetadataFailureDoesNotPreventDeletion(t *testing.T) 
 	if _, err := sub.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) {
 		t.Fatalf("incomplete metadata view became available: %v", err)
 	}
-	c.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+	c.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
 		return containerRecordForTest(id), nil
 	}
 	snapshot, err, _ = c.refresh(t.Context(), nil, false)
@@ -389,7 +389,7 @@ func TestContainerControllerReconcilesWithoutHint(t *testing.T) {
 		defer mu.Unlock()
 		return list, nil
 	}
-	c.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 		return containerRecordForTest(id), nil
 	}
 	c.start()
@@ -420,7 +420,7 @@ func TestControllerRefreshesKataRuntimeBinding(t *testing.T) {
 	controller := newContainerController(store)
 	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
 	resolves := 0
-	controller.resolve = func(
+	controller.resolve = func(_ context.Context,
 		id string,
 		_ *corev1.Container,
 		status *corev1.ContainerStatus,
@@ -460,7 +460,7 @@ func TestContainerControllerKataRefreshRecovery(t *testing.T) {
 	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
 	var isUnavailable bool
 	var calls int
-	controller.resolve = func(
+	controller.resolve = func(_ context.Context,
 		id string, _ *corev1.Container, status *corev1.ContainerStatus, _ *corev1.Pod,
 	) (*containerRecord, error) {
 		calls++
@@ -592,7 +592,7 @@ func TestContainerControllerDuplicateMembers(t *testing.T) {
 			}
 			controller := newContainerController(store)
 			controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-			controller.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+			controller.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
 				record := containerRecordForTest(id)
 				record.container.Name = "conflicting-metadata"
 				return record, nil
@@ -620,7 +620,7 @@ func TestContainerControllerPendingMetadataKeepsSyncTime(t *testing.T) {
 	store.commit(containerSnapshot{records: map[string]*containerRecord{id: previous, removed: containerRecordForTest(removed)}, isComplete: true}, nil)
 	controller := newContainerController(store)
 	controller.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
-	controller.resolve = func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
+	controller.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
 		return nil, errors.New("runtime temporarily unavailable")
 	}
 	for attempt := range 4 {
@@ -632,6 +632,89 @@ func TestContainerControllerPendingMetadataKeepsSyncTime(t *testing.T) {
 		store.commit(snapshot, err)
 		if store.records[id] != previous || store.records[removed] != nil {
 			t.Error("metadata outage advanced successful sync or blocked confirmed deletion")
+		}
+	}
+}
+
+// TestWorkloadManagerDiscoveryDeadline 验证超时后返回的完整空列表不能清空缓存，
+// 下一轮成功后恢复同步；每轮均从公共调度获得独立的截止时间。
+func TestWorkloadManagerDiscoveryDeadline(t *testing.T) {
+	store := newContainerStore()
+	manager := newWorkloadManager(store)
+	manager.resyncInterval = time.Hour
+	manager.discoveryTimeout = 20 * time.Millisecond
+	calls := 0
+	manager.discover = func(ctx context.Context, _ map[string]bool, full bool) (containerSnapshot, error, bool) {
+		calls++
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("discovery has no deadline")
+		}
+		if calls > 2 && !full {
+			t.Error("retry after timeout did not restore full discovery")
+		}
+		if calls == 2 {
+			<-ctx.Done()
+			return containerSnapshot{isComplete: true}, nil, false
+		}
+		record := containerRecordForTest("checkout-api")
+		return containerSnapshot{records: map[string]*containerRecord{record.container.ID: record}, isComplete: true}, nil, false
+	}
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	subscriber := subscribeForTest(t, store)
+	waitContainerViewForTest(t, subscriber, 1)
+	store.mu.RLock()
+	previous := store.records["checkout-api"]
+	store.mu.RUnlock()
+	manager.request("", false)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case <-subscriber.Notify():
+		case <-deadline:
+			t.Error("discovery deadline was not reported")
+			return
+		}
+		_, err := subscriber.DrainEvents()
+		if errors.Is(err, context.DeadlineExceeded) {
+			break
+		}
+	}
+	store.mu.RLock()
+	retained := store.records["checkout-api"] == previous
+	store.mu.RUnlock()
+	if !retained {
+		t.Error("late empty result changed the cached workload")
+	}
+	manager.request("checkout-api", false)
+	waitContainerViewForTest(t, subscriber, 1)
+}
+
+// TestWorkloadManagerInitializationDeadline 验证初始化使用同一超时约束，
+// 即使初始化在超时后返回 nil，也不能继续执行发现或发布完整空列表。
+func TestWorkloadManagerInitializationDeadline(t *testing.T) {
+	store := newContainerStore()
+	manager := newWorkloadManager(store)
+	manager.discoveryTimeout = 20 * time.Millisecond
+	manager.initialize = func(ctx context.Context) error { <-ctx.Done(); return nil }
+	manager.discover = func(context.Context, map[string]bool, bool) (containerSnapshot, error, bool) {
+		t.Error("discovery ran after initialization timed out")
+		return containerSnapshot{isComplete: true}, nil, false
+	}
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	subscriber := subscribeForTest(t, store)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case <-subscriber.Notify():
+		case <-deadline:
+			t.Error("initialization deadline was not reported")
+			return
+		}
+		_, err := subscriber.DrainEvents()
+		if errors.Is(err, context.DeadlineExceeded) {
+			return
 		}
 	}
 }

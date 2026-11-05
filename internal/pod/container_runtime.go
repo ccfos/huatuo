@@ -15,6 +15,7 @@
 package pod
 
 import (
+	"context"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,10 +26,10 @@ import (
 
 // populateContainerRuntime selects the runtime before reading any PID file or
 // deriving cgroup paths. The caller publishes the container only on success.
-func populateContainerRuntime(container *Container, pod *corev1.Pod) error {
+func populateContainerRuntime(ctx context.Context, container *Container, pod *corev1.Pod) error {
 	provider, _, _ := containerRuntimeState()
 	if provider == containerProviderContainerd {
-		info, err := readContainerdRuntimeInfo(container.ID)
+		info, err := readContainerdRuntimeInfo(ctx, container.ID)
 		if err != nil {
 			return err
 		}

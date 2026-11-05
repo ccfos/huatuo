@@ -26,7 +26,7 @@ import (
 type containerController struct {
 	*workloadManager
 	fetch             func(context.Context) (corev1.PodList, error)
-	resolve           func(string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error)
+	resolve           func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error)
 	retries           map[string]*containerRefreshRetry
 	needsFull         bool
 	malformedAttempts int
@@ -67,7 +67,7 @@ func InitManager(config *ManagerCtx) error {
 		if err := kubeletPodListPortCacheUpdate(ctx, &managerConfig); err != nil {
 			return err
 		}
-		if err := kubeletConfigCacheMustUpdate(&managerConfig); err != nil {
+		if err := kubeletConfigCacheMustUpdate(ctx, &managerConfig); err != nil {
 			return err
 		}
 		return initCgroupLifecycle()
@@ -146,7 +146,7 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 				if group.init && (spec.RestartPolicy == nil || *spec.RestartPolicy != corev1.ContainerRestartPolicyAlways) {
 					continue
 				}
-				id, err := parseContainerIDInPodStatus(status.ContainerID)
+				id, err := parseContainerIDInPodStatus(ctx, status.ContainerID)
 				if err != nil {
 					syncErr = err
 					malformed = true
@@ -188,7 +188,7 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 					syncErr = pending.err
 					continue
 				}
-				record, err := c.resolve(id, spec, status, p)
+				record, err := c.resolve(ctx, id, spec, status, p)
 				if err != nil {
 					if pending.attempts < 3 {
 						pending.attempts++
@@ -235,8 +235,8 @@ func (c *containerController) refresh(ctx context.Context, hints map[string]bool
 	return containerSnapshot{records: records, isComplete: !malformed}, syncErr, retry
 }
 
-func resolveContainerRecord(id string, spec *corev1.Container, status *corev1.ContainerStatus, p *corev1.Pod) (*containerRecord, error) {
-	container, err := kubeletContainer(id, spec, status, p)
+func resolveContainerRecord(ctx context.Context, id string, spec *corev1.Container, status *corev1.ContainerStatus, p *corev1.Pod) (*containerRecord, error) {
+	container, err := kubeletContainer(ctx, id, spec, status, p)
 	if err != nil {
 		return nil, err
 	}

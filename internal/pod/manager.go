@@ -23,23 +23,25 @@ import (
 )
 
 const (
-	workloadRefreshDelay   = 25 * time.Millisecond
-	workloadResyncInterval = 30 * time.Second
+	workloadRefreshDelay     = 25 * time.Millisecond
+	workloadResyncInterval   = 30 * time.Second
+	workloadDiscoveryTimeout = 10 * time.Second
 )
 
 // workloadManager owns the single producer loop for Host and Guest discovery.
 // Discovery callbacks perform one synchronous attempt and never schedule work.
 type workloadManager struct {
-	store          *containerStore
-	discover       func(context.Context, map[string]bool, bool) (containerSnapshot, error, bool)
-	initialize     func(context.Context) error
-	resyncInterval time.Duration
-	wake           chan struct{}
-	mu             sync.Mutex
-	hints          map[string]bool
-	full           bool
-	cancel         context.CancelFunc
-	done           chan struct{}
+	store            *containerStore
+	discover         func(context.Context, map[string]bool, bool) (containerSnapshot, error, bool)
+	initialize       func(context.Context) error
+	resyncInterval   time.Duration
+	discoveryTimeout time.Duration
+	wake             chan struct{}
+	mu               sync.Mutex
+	hints            map[string]bool
+	full             bool
+	cancel           context.CancelFunc
+	done             chan struct{}
 }
 
 var (
@@ -49,7 +51,7 @@ var (
 
 func newWorkloadManager(store *containerStore) *workloadManager {
 	return &workloadManager{
-		store: store, resyncInterval: workloadResyncInterval,
+		store: store, resyncInterval: workloadResyncInterval, discoveryTimeout: workloadDiscoveryTimeout,
 		wake: make(chan struct{}, 1), hints: make(map[string]bool), full: true,
 		done: make(chan struct{}),
 	}
@@ -136,7 +138,16 @@ func (c *workloadManager) run(ctx context.Context) {
 			}
 		case <-timer.C:
 			if !initialized {
-				if err := c.initialize(ctx); err != nil {
+				attemptCtx, cancel := context.WithTimeout(ctx, c.discoveryTimeout)
+				err := c.initialize(attemptCtx)
+				if err == nil {
+					err = attemptCtx.Err()
+				}
+				cancel()
+				if ctx.Err() != nil {
+					return
+				}
+				if err != nil {
 					c.store.commit(containerSnapshot{}, err)
 					log.WithError(err).Warn("initialize workload discovery")
 					due = time.Now().Add(delay)
@@ -150,7 +161,17 @@ func (c *workloadManager) run(ctx context.Context) {
 			hints, full := c.hints, c.full
 			c.hints, c.full = make(map[string]bool), false
 			c.mu.Unlock()
-			snapshot, err, retry := c.discover(ctx, hints, full)
+			attemptCtx, cancel := context.WithTimeout(ctx, c.discoveryTimeout)
+			snapshot, err, retry := c.discover(attemptCtx, hints, full)
+			if timeoutErr := attemptCtx.Err(); timeoutErr != nil {
+				// A timed-out result cannot authorize deletion or advance sync time.
+				snapshot, err, retry = containerSnapshot{}, timeoutErr, true
+				// The source may have consumed hints before its result was dropped.
+				c.mu.Lock()
+				c.full = true
+				c.mu.Unlock()
+			}
+			cancel()
 			if ctx.Err() != nil {
 				return
 			}

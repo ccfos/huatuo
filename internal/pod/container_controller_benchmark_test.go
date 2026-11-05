@@ -39,7 +39,7 @@ func BenchmarkContainerControllerRefresh(b *testing.B) {
 			c := newContainerController(store)
 			c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
 			resolves := 0
-			c.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+			c.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
 				resolves++
 				return containerRecordForTest(id), nil
 			}

@@ -61,7 +61,7 @@ func containerProviderFrom(s string) (containerProvider, error) {
 // initContainerProviderEnv initializes the runtime environment on first call.
 // On failure the provider remains unset so a subsequent call with a valid prefix can succeed.
 // After successful init, mismatched prefixes are rejected to tolerate stale PodStatus entries.
-func initContainerProviderEnv(provider containerProvider, apiVersion string) error {
+func initContainerProviderEnv(ctx context.Context, provider containerProvider, apiVersion string) error {
 	initMu.Lock()
 	defer initMu.Unlock()
 
@@ -74,22 +74,22 @@ func initContainerProviderEnv(provider containerProvider, apiVersion string) err
 
 	switch provider {
 	case containerProviderDocker:
-		return initDockerProviderEnv(apiVersion)
+		return initDockerProviderEnv(ctx, apiVersion)
 	case containerProviderContainerd:
-		return initContainerdProviderEnv()
+		return initContainerdProviderEnv(ctx)
 	default:
 		return fmt.Errorf("invalid container provider: %q", provider)
 	}
 }
 
-func initDockerProviderEnv(apiVersion string) error {
+func initDockerProviderEnv(ctx context.Context, apiVersion string) error {
 	client, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithVersion(apiVersion))
 	if err != nil {
 		return fmt.Errorf("create docker client: %w", err)
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	info, err := client.Info(ctx)
@@ -102,13 +102,18 @@ func initDockerProviderEnv(apiVersion string) error {
 	return nil
 }
 
-func initContainerdProviderEnv() error {
+func initContainerdProviderEnv(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The CRI constructor has no context parameter and retains its own
+	// five-second bound. Subsequent RPCs use the discovery context.
 	client, err := k8sremote.NewRemoteRuntimeService(kubeletRuntimeEndpoint, 5*time.Second, nil, nil)
 	if err != nil {
 		return fmt.Errorf("create containerd client: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	status, err := client.Status(ctx, true)
@@ -137,14 +142,14 @@ type containerdRuntimeInfo struct {
 	SandboxID   string `json:"sandboxID"`
 }
 
-func readContainerdRuntimeInfo(containerID string) (*containerdRuntimeInfo, error) {
+func readContainerdRuntimeInfo(ctx context.Context, containerID string) (*containerdRuntimeInfo, error) {
 	initMu.Lock()
 	client := containerdClient
 	initMu.Unlock()
 	if client == nil {
 		return nil, fmt.Errorf("containerd client not initialized")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	response, err := client.ContainerStatus(ctx, containerID, true)
 	if err != nil {
