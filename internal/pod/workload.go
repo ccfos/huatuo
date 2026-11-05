@@ -15,10 +15,17 @@
 package pod
 
 import (
+	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/utils/netutil"
 )
 
 const (
@@ -56,6 +63,9 @@ type CgroupBinding struct {
 
 type HostProcess struct {
 	PID int `json:"pid"`
+
+	startTime uint64
+	procRoot  string
 }
 
 // HostNetwork may carry IP metadata without a usable namespace binding.
@@ -64,6 +74,9 @@ type HostNetwork struct {
 	NamespaceInum   uint64 `json:"namespace_inum,omitempty"`
 	NamespaceCookie uint64 `json:"namespace_cookie,omitempty"`
 	IPAddress       string `json:"ip_address,omitempty"`
+
+	startTime uint64
+	procRoot  string
 }
 
 // ContainerInfo preserves container-specific classification and runtime metadata.
@@ -100,6 +113,121 @@ func Pods() (map[string]*Pod, error) {
 
 func (p *Pod) LifeResources(key string) any {
 	return p.lifeResources[key]
+}
+
+// ProcessPID returns only the still-current representative process.
+func (p *Pod) ProcessPID() (int, error) {
+	if p.Process == nil || p.Process.startTime == 0 {
+		return 0, fmt.Errorf("workload %q has no bound process", p.ID)
+	}
+	if err := validateProcess(p.Process.PID, p.Process.startTime, p.Process.procRoot); err != nil {
+		return 0, err
+	}
+	return p.Process.PID, nil
+}
+
+// NetworkPID verifies the process and namespace without assuming they match
+// the workload's representative process or its advertised IP address.
+func (p *Pod) NetworkPID() (int, error) {
+	if p.Network == nil || p.Network.startTime == 0 || p.Network.NamespaceInum == 0 {
+		return 0, fmt.Errorf("workload %q has no bound network namespace", p.ID)
+	}
+	if err := validateProcess(p.Network.PID, p.Network.startTime, p.Network.procRoot); err != nil {
+		return 0, err
+	}
+	inode, err := networkInode(p.Network.PID, p.Network.procRoot)
+	if err != nil {
+		return 0, err
+	}
+	if inode != p.Network.NamespaceInum {
+		return 0, fmt.Errorf("workload %q network namespace changed", p.ID)
+	}
+	return p.Network.PID, nil
+}
+
+func processStartTime(pid int, root string) (uint64, error) {
+	if pid <= 0 || root == "" {
+		return 0, fmt.Errorf("process binding requires a positive PID and proc root")
+	}
+	fs, err := procfs.NewFS(root)
+	if err != nil {
+		return 0, err
+	}
+	process, err := fs.Proc(pid)
+	if err != nil {
+		return 0, err
+	}
+	stat, err := process.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return stat.Starttime, nil
+}
+
+func validateProcess(pid int, start uint64, root string) error {
+	current, err := processStartTime(pid, root)
+	if err != nil {
+		return err
+	}
+	if current != start {
+		return fmt.Errorf("process %d start time changed", pid)
+	}
+	return nil
+}
+
+func networkInode(pid int, root string) (uint64, error) {
+	info, err := os.Stat(filepath.Join(root, strconv.Itoa(pid), "ns", "net"))
+	if err != nil {
+		return 0, err
+	}
+	return info.Sys().(*syscall.Stat_t).Ino, nil
+}
+
+// bindHostResources never derives a network target from a process or IP alone.
+// Missing resources remain independent of usable cgroup bindings.
+func bindHostResources(p *Pod, root string) {
+	if p.Process != nil {
+		location := p.Process
+		p.Process = nil
+		if start, err := processStartTime(location.PID, root); err == nil && start != 0 {
+			p.Process = &HostProcess{PID: location.PID, startTime: start, procRoot: root}
+		}
+	}
+	if p.Network != nil {
+		location := p.Network
+		p.Network = bindHostNetwork(location, root)
+		if p.Network == nil && location.IPAddress != "" {
+			p.Network = &HostNetwork{IPAddress: location.IPAddress}
+		}
+	}
+}
+
+func bindHostNetwork(location *HostNetwork, root string) *HostNetwork {
+	start, err := processStartTime(location.PID, root)
+	if err != nil || start == 0 {
+		return nil
+	}
+	inode, err := networkInode(location.PID, root)
+	if err != nil || inode == 0 || (location.NamespaceInum != 0 && inode != location.NamespaceInum) {
+		return nil
+	}
+	var cookie uint64
+	// The existing cookie probe uses /proc; a test or relocated proc tree must
+	// never cause it to inspect an unrelated process in the local namespace.
+	if root == "/proc" {
+		cookie, _ = netutil.NetNamespaceCookieByPID(location.PID)
+	}
+	if err := validateProcess(location.PID, start, root); err != nil {
+		return nil
+	}
+	currentInode, err := networkInode(location.PID, root)
+	if err != nil || currentInode != inode {
+		return nil
+	}
+	return &HostNetwork{
+		PID: location.PID, NamespaceInum: inode, NamespaceCookie: cookie,
+		IPAddress: location.IPAddress, startTime: start, procRoot: root,
+	}
 }
 
 // podFromContainer is a migration boundary for the existing discovery producer.

@@ -520,3 +520,11 @@ Container Host 发现使用各控制器真实成员路径形成公共视图，�
 - 在真实 v1 CPU/memory 挂载创建空测试组，并在独立挂载命名空间创建真正的 v2 挂载，两组测试均通过，无 SKIP；不迁移进程、不修改资源限制，测试组已清理。
 - `make build` 通过；提交检查使用 `make check`，原始日志为 `step02a-check.log`。
 - 本次未修改指标或 BPF 事件处理循环。ControllerRefresh/1024 的三次中位数为 8358717 ns/op、469507 B/op、3094 allocs/op；相比步骤 01，记录和公共绑定字段使每个对象刷新增加约 48 B，分配次数不变，耗时差异视为环境波动。
+
+### 步骤 02b：公共进程与网络绑定
+
+Container Host 的公共资源校验增加进程和网络部分，旧 Container 对外字段保持原样。`Pod.ProcessPID` 只返回已绑定且启动时间仍一致的代表进程；`Pod.NetworkPID` 另行验证网络目标进程及 netns inode，不从 IP 或代表进程推导网络目标。来源提供的 cookie 重新在本机核验；旧内核不支持 cookie 时仍可使用已验证的 inode。
+
+绑定缺失时查询返回 `0` 和错误，不回退到 PID 1 或默认网络命名空间。只有 IP 的对象保留地址元数据，不发布网络采集能力。进程和网络的任一失败不清除已有 cgroup。进程启动时间、proc 根目录只作为内部校验信息，不进入 JSON。Kata Guest 扫描的公共资源适配仍在步骤 02 后续提交中完成。
+
+测试机 `logs/step02b-*` 记录本次验证：pod race 测试、真实子进程/netns 集成测试、既有 Container/Kata 回归、v1/v2 挂载回归和 `make build` 均通过，无 SKIP。新增用例覆盖 PID 不存在、启动时间变化、进程退出、netns 变化、IP-only、网络 PID 与代表进程不同，以及 cgroup-only 对象不会获得宿主机进程目标。提交检查使用 `make check`，日志为 `step02b-check.log`；没有修改当前指标或 BPF 事件循环。

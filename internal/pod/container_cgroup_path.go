@@ -197,6 +197,7 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 		startTime: before.Starttime,
 	}
 	workload.Cgroups = bindCgroups(record.cgroupLocations, mounts)
+	bindHostResources(workload, procfs.DefaultPath())
 	path, memoryErr := paths.PathForMemory()
 	var info os.FileInfo
 	if memoryErr == nil {

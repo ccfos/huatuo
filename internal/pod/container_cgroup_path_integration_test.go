@@ -392,3 +392,57 @@ func TestWorkloadCgroupV1MountIntegration(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkloadHostResourcesIntegration 验证真实进程与 netns 的公共绑定，
+// 子进程退出后两个查询都失效，且 cgroup-only 对象不会补出宿主机 PID。
+func TestWorkloadHostResourcesIntegration(t *testing.T) {
+	command := exec.Command("sleep", "60")
+	if err := command.Start(); err != nil {
+		t.Errorf("start representative process: %v", err)
+		return
+	}
+	t.Cleanup(func() {
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	})
+	workload := &Pod{
+		ID: "checkout-workload", Process: &HostProcess{PID: command.Process.Pid},
+		Network: &HostNetwork{PID: command.Process.Pid},
+	}
+	bindHostResources(workload, "/proc")
+	if pid, err := workload.ProcessPID(); err != nil || pid != command.Process.Pid {
+		t.Errorf("bound process PID=%d, err=%v", pid, err)
+	}
+	if pid, err := workload.NetworkPID(); err != nil || pid != command.Process.Pid {
+		t.Errorf("bound network PID=%d, err=%v", pid, err)
+	}
+	namespace, err := os.Stat("/proc/self/ns/net")
+	if err != nil {
+		t.Errorf("read kernel namespace: %v", err)
+		return
+	}
+	if workload.Network == nil || workload.Network.NamespaceInum != namespace.Sys().(*syscall.Stat_t).Ino {
+		t.Error("child network namespace differs from inherited kernel namespace")
+	}
+	if err := command.Process.Kill(); err != nil {
+		t.Errorf("stop representative process: %v", err)
+		return
+	}
+	_ = command.Wait()
+	if _, err := workload.ProcessPID(); err == nil {
+		t.Error("exited representative process remains available")
+	}
+	if _, err := workload.NetworkPID(); err == nil {
+		t.Error("exited network process remains available")
+	}
+	sandbox := &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}
+	bindHostResources(sandbox, "/proc")
+	if pid, err := sandbox.ProcessPID(); err == nil || pid != 0 {
+		t.Errorf("sandbox fabricated process PID=%d, err=%v", pid, err)
+	}
+	if pid, err := sandbox.NetworkPID(); err == nil || pid != 0 {
+		t.Errorf("sandbox fabricated network PID=%d, err=%v", pid, err)
+	}
+}
