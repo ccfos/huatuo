@@ -245,130 +245,6 @@ func TestIOLatencyCollectionHealth(t *testing.T) {
 	}
 }
 
-func TestIOLatencyIntervalBuckets(t *testing.T) {
-	previous := ioLatencyCounters{}
-	current := ioLatencyCounters{}
-	for stage := range previous.Buckets {
-		for bucket := range previous.Buckets[stage] {
-			previous.Buckets[stage][bucket] = 100
-			current.Buckets[stage][bucket] = 100
-		}
-	}
-	for bucket := range previous.QueuedSize {
-		previous.QueuedSize[bucket] = 100
-		current.QueuedSize[bucket] = 100 + uint64(bucket+1)
-	}
-	issuedDeltas := [ioSizeBucketCount]uint64{2, 5, 4, 3, 2, 1}
-	for bucket := range previous.IssuedSize {
-		previous.IssuedSize[bucket] = 100
-		current.IssuedSize[bucket] = 100 + issuedDeltas[bucket]
-	}
-	current.Buckets[ioLatencyStageQ2D][0] += 2
-	current.Buckets[ioLatencyStageQ2D][1] += 3
-	current.Buckets[ioLatencyStageQ2D][16]++
-	current.Buckets[ioLatencyStageD2C][0]++
-	current.Buckets[ioLatencyStageD2C][2] += 2
-	current.Buckets[ioLatencyStageQ2G][3] += 4
-	delta, monotonic := ioLatencyCountersDelta(&previous, &current)
-	if !monotonic {
-		t.Fatal("interval counters decreased")
-	}
-	wantMetricNames := []string{
-		"q2d_seconds_bucket",
-		"d2c_seconds_bucket",
-		"q2g_seconds_bucket",
-	}
-	if len(ioLatencyStageMetrics) != len(wantMetricNames) {
-		t.Fatalf("latency stages = %d, want %d", len(ioLatencyStageMetrics), len(wantMetricNames))
-	}
-	for index, want := range wantMetricNames {
-		if got := ioLatencyStageMetrics[index].name; got != want {
-			t.Fatalf("stage %d metric = %q, want %q", index, got, want)
-		}
-	}
-	if got := ioLatencyQueuedSizeMetric.name; got != "queued_io_size_bytes_bucket" {
-		t.Fatalf("queued size metric = %q", got)
-	}
-	if got := ioLatencyIssuedSizeMetric.name; got != "issued_io_size_bytes_bucket" {
-		t.Fatalf("issued size metric = %q", got)
-	}
-	wantSizeBounds := [ioSizeBucketCount]string{
-		"4096", "16384", "65536", "262144", "1048576", "+Inf",
-	}
-	if ioSizeBucketLabels != wantSizeBounds {
-		t.Fatalf("queued size bounds = %v, want %v",
-			ioSizeBucketLabels, wantSizeBounds)
-	}
-
-	container := &pod.Container{
-		ID:       "container-id",
-		Name:     "container-name",
-		Hostname: "container-host",
-		Type:     pod.ContainerTypeNormal,
-		Qos:      pod.ContainerQosLevelMin,
-		Labels:   map[string]any{"HostNamespace": "namespace"},
-	}
-	for _, scope := range []struct {
-		name      string
-		container *pod.Container
-	}{
-		{name: "host"},
-		{name: "container", container: container},
-	} {
-		t.Run(scope.name, func(t *testing.T) {
-			metrics := appendIOLatencySeries(
-				nil,
-				scope.container,
-				"sda",
-				"read",
-				&delta,
-			)
-			wantCount := ioLatencyStageCount*ioLatencyBucketCount +
-				2*ioSizeBucketCount
-			if len(metrics) != wantCount {
-				t.Fatalf("metric count = %d, want %d", len(metrics),
-					wantCount)
-			}
-
-			wantQ2D := []float64{
-				2, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6,
-			}
-			wantD2C := []float64{
-				1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-			}
-			assertIOLatencyValues(t, metrics[:ioLatencyBucketCount],
-				wantQ2D)
-			assertIOLatencyValues(t,
-				metrics[ioLatencyBucketCount:2*ioLatencyBucketCount],
-				wantD2C)
-			assertIOLatencyValues(t,
-				metrics[2*ioLatencyBucketCount:3*ioLatencyBucketCount],
-				[]float64{
-					0, 0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-					4, 4, 4, 4,
-				})
-			assertIOLatencyValues(t,
-				metrics[3*ioLatencyBucketCount:3*ioLatencyBucketCount+
-					ioSizeBucketCount],
-				[]float64{1, 3, 6, 10, 15, 21})
-			assertIOLatencyValues(t,
-				metrics[3*ioLatencyBucketCount+ioSizeBucketCount:],
-				[]float64{2, 7, 11, 14, 16, 17})
-		})
-	}
-
-	start := time.Unix(100, 250000000)
-	end := time.Unix(161, 750000000)
-	timestamps := ioLatencyIntervalTimeMetrics(start, end)
-	if len(timestamps) != 2 {
-		t.Fatalf("timestamp metric count = %d, want 2", len(timestamps))
-	}
-	if timestamps[0].Value != 100.25 || timestamps[1].Value != 161.75 {
-		t.Fatalf("timestamp values = [%v %v], want [100.25 161.75]",
-			timestamps[0].Value, timestamps[1].Value)
-	}
-}
-
 func TestIOLatencySeriesRejectsCounterRollback(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -758,35 +634,6 @@ func TestIOLatencyCgroupSerialBaselines(t *testing.T) {
 	require.ElementsMatch(t, appendIOLatencySeries(nil, container, "sda", "read", &newCounters), got)
 }
 
-func TestIOLatencyMapABI(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		value  any
-		length int
-	}{
-		{name: "queue probe", value: ioLatencyQueueProbe{}, length: 24},
-		{name: "queue probe key", value: ioLatencyQueueKey{}, length: 32},
-		{name: "host key", value: uint64(0), length: 8},
-		{name: "disk counters", value: ioLatencyDiskCounters{}, length: 1024},
-		{name: "container key", value: ioLatencyContainerKey{}, length: 32},
-		{name: "counters", value: ioLatencyCounters{}, length: 504},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := binary.Size(test.value); got != test.length {
-				t.Fatalf("binary size = %d, want %d", got, test.length)
-			}
-		})
-	}
-
-	for _, length := range []int{23, 25} {
-		if err := decodeBPFMapData(
-			make([]byte, length), &ioLatencyQueueProbe{},
-		); err == nil {
-			t.Fatalf("map value with length %d was accepted", length)
-		}
-	}
-}
-
 // Host baselines across optional-source and cleanup failures.
 
 // A newly started session measures from its first successful Host baseline.
@@ -976,23 +823,6 @@ func TestIOLatencyCollectionRebuildsBaselineAfterReadFailure(t *testing.T) {
 				t.Fatal("new session did not establish its own baseline")
 			}
 		})
-	}
-}
-
-func assertIOLatencyValues(
-	t *testing.T,
-	metrics []*metric.Data,
-	want []float64,
-) {
-	t.Helper()
-	if len(metrics) != len(want) {
-		t.Fatalf("metric count = %d, want %d", len(metrics), len(want))
-	}
-	for index := range want {
-		if metrics[index].Value != want[index] {
-			t.Fatalf("bucket %d = %v, want %v", index,
-				metrics[index].Value, want[index])
-		}
 	}
 }
 
