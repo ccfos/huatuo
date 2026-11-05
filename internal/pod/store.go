@@ -54,16 +54,17 @@ type containerSnapshot struct {
 type containerStore struct {
 	mu          sync.RWMutex
 	records     map[string]*containerRecord
-	subscribers map[*ContainerSubscription]struct{}
+	subscribers map[*subscription]struct{}
 	revision    uint64
 	err         error
 	isActive    bool
+	hasSnapshot bool
 }
 
 func newContainerStore() *containerStore {
 	return &containerStore{
 		records:     make(map[string]*containerRecord),
-		subscribers: make(map[*ContainerSubscription]struct{}),
+		subscribers: make(map[*subscription]struct{}),
 		err:         ErrContainerManagerDisabled,
 	}
 }
@@ -111,7 +112,7 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 		for id, previous := range v.records {
 			if _, exists := snapshot.records[id]; !exists {
 				delete(v.records, id)
-				v.publish(ContainerDeleted, previous.ref)
+				v.publish(PodDeleted, previous)
 			}
 		}
 	}
@@ -150,13 +151,14 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 			continue
 		}
 		if previous != nil {
-			v.publish(ContainerDeleted, previous.ref)
+			v.publish(PodDeleted, previous)
 		}
 		record.ref.Key = ContainerKey{ID: id, Generation: v.revision + 1}
 		record.setLifeResources(newLifeResources())
 		v.records[id] = record
-		v.publish(ContainerCreated, record.ref)
+		v.publish(PodCreated, record)
 	}
+	v.hasSnapshot = v.hasSnapshot || snapshot.isComplete || len(v.records) > 0
 	wasUnavailable := v.err != nil
 	v.err = nil
 	if syncErr != nil {

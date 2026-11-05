@@ -572,3 +572,146 @@ func TestPodFirstResourceReadiness(t *testing.T) {
 		})
 	}
 }
+
+// TestPodSubscriptionIsolation 验证公共订阅返回容器和沙箱的独立身份，旧订阅
+// 仅返回容器；首次快照、删除增量以及已借出数据的不可变性遵循同一队列规则。
+func TestPodSubscriptionIsolation(t *testing.T) {
+	store := newTestContainerStore()
+	container := containerRecordForTest("checkout-container")
+	sandbox := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Name: "checkout"}}
+	records := map[string]*containerRecord{container.container.ID: container, sandbox.pod.ID: sandbox}
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+	public, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Errorf("subscribe workloads: %v", err)
+		return
+	}
+	t.Cleanup(public.Close)
+	legacy := subscribeForTest(t, store)
+	full, err := public.DrainEvents()
+	if err != nil || full.Mode != PodUpdateFull || len(full.Events) != len(records) || full.DiscoveryError != nil {
+		t.Errorf("workload snapshot=%+v, err=%v", full, err)
+		return
+	}
+	for _, event := range full.Events {
+		if event.Pod == nil || event.Key != records[event.Pod.ID].ref.Key || event.Kind != PodEventUnknown {
+			t.Errorf("workload snapshot entry=%+v", event)
+		}
+	}
+	old, err := legacy.DrainEvents()
+	if err != nil || len(old.Events) != 1 || old.Events[0].Container != container.ref {
+		t.Errorf("legacy projection=%+v, err=%v", old, err)
+	}
+	borrowed := slices.Clone(full.Events)
+	delete(records, sandbox.pod.ID)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+	if !slices.Equal(full.Events, borrowed) {
+		t.Error("publication mutated a borrowed workload snapshot")
+	}
+	deleted, err := public.DrainEvents()
+	if err != nil || deleted.Mode != PodUpdateIncremental || len(deleted.Events) != 1 || deleted.Events[0].Kind != PodDeleted || deleted.Events[0].Key != sandbox.ref.Key || deleted.Events[0].Pod.Type != TypeCubeSandbox {
+		t.Errorf("sandbox delete=%+v, err=%v", deleted, err)
+	}
+	if update, err := legacy.DrainEvents(); err != nil || len(update.Events) != 0 {
+		t.Errorf("sandbox leaked into legacy lifecycle: %+v, %v", update, err)
+	}
+}
+
+// TestPodSubscriptionDiscoveryFailure 验证首次发现失败不能伪装成空快照；已有
+// 非空或完整空缓存后，发现错误随快照返回，恢复后正常核对成员，旧接口仍返回错误。
+func TestPodSubscriptionDiscoveryFailure(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty=%t", empty), func(t *testing.T) {
+			store := newTestContainerStore()
+			store.err = ErrContainersUnavailable
+			public, err := store.subscribePods(t.Context())
+			if err != nil {
+				t.Errorf("subscribe workloads: %v", err)
+				return
+			}
+			t.Cleanup(public.Close)
+			legacy := subscribeForTest(t, store)
+			if update, err := public.DrainEvents(); !errors.Is(err, ErrPodsUnavailable) || update.Mode != PodUpdateUnknown {
+				t.Errorf("initial failure became a snapshot: %+v, %v", update, err)
+			}
+			records := make(map[string]*containerRecord)
+			if !empty {
+				records["checkout-sandbox"] = &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}}
+			}
+			store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+			_, _ = public.DrainEvents()
+			_, _ = legacy.DrainEvents()
+			failure := errors.New("cubelet request timed out")
+			store.commit(containerSnapshot{}, failure)
+			cached, err := public.DrainEvents()
+			if err != nil || cached.Mode != PodUpdateFull || !errors.Is(cached.DiscoveryError, failure) || len(cached.Events) != len(records) {
+				t.Errorf("cached snapshot during failure=%+v, err=%v", cached, err)
+			}
+			if _, err := legacy.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) {
+				t.Errorf("legacy error contract changed: %v", err)
+			}
+			store.commit(containerSnapshot{isComplete: true}, nil)
+			recovered, err := public.DrainEvents()
+			if err != nil || recovered.DiscoveryError != nil || recovered.Mode != PodUpdateFull || len(recovered.Events) != 0 {
+				t.Errorf("recovery snapshot=%+v, err=%v", recovered, err)
+			}
+		})
+	}
+}
+
+// TestPodSubscriptionReadinessAndClose 验证 cgroup-only 沙箱首次获得资源后
+// 以同代次全量通知唤醒订阅者；关闭后借出结果不变，后续读取返回终止错误。
+func TestPodSubscriptionReadinessAndClose(t *testing.T) {
+	store := newTestContainerStore()
+	pending := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{pending.pod.ID: pending}, isComplete: true}, nil)
+	public, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Errorf("subscribe workloads: %v", err)
+		return
+	}
+	t.Cleanup(public.Close)
+	_, _ = public.DrainEvents()
+	ready := &containerRecord{pod: pending.pod.copyMetadata()}
+	ready.pod.Cgroups.CSS = map[string]uint64{"memory": 8500}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{ready.pod.ID: ready}, isComplete: true}, nil)
+	update, err := public.DrainEvents()
+	if err != nil || update.Mode != PodUpdateFull || len(update.Events) != 1 || update.Events[0].Key != pending.ref.Key || update.Events[0].Pod.Cgroups.CSS["memory"] != 8500 {
+		t.Errorf("resource readiness=%+v, err=%v", update, err)
+	}
+	borrowed := slices.Clone(update.Events)
+	public.Close()
+	if !slices.Equal(update.Events, borrowed) {
+		t.Error("close mutated borrowed workload data")
+	}
+	if _, err := public.DrainEvents(); !errors.Is(err, ErrPodSubscriptionClosed) {
+		t.Errorf("closed workload subscription=%v", err)
+	}
+}
+
+// TestPodSubscriptionQueuedIdentity 验证队列保存发布时的代次和值，而不是可被
+// 后续复用的记录指针；创建和删除通知按各自发布时的身份交付。
+func TestPodSubscriptionQueuedIdentity(t *testing.T) {
+	store := newTestContainerStore()
+	public, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Errorf("subscribe workloads: %v", err)
+		return
+	}
+	t.Cleanup(public.Close)
+	_, _ = public.DrainEvents()
+	record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}, ref: ContainerRef{Key: PodKey{ID: "checkout-sandbox", Generation: 1}}}
+	store.mu.Lock()
+	store.publish(PodCreated, record)
+	record.ref.Key.Generation++
+	store.publish(PodDeleted, record)
+	store.mu.Unlock()
+	update, err := public.DrainEvents()
+	if err != nil || len(update.Events) != 2 {
+		t.Errorf("queued lifecycle=%+v, err=%v", update, err)
+		return
+	}
+	if update.Events[0].Key.Generation != 1 || update.Events[1].Key.Generation != 2 {
+		t.Errorf("queue retained a mutable record identity: %+v", update.Events)
+	}
+}

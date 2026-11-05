@@ -128,6 +128,7 @@ func newContainerController(store *containerStore) *containerController {
 func (c *containerController) start() {
 	c.store.mu.Lock()
 	c.store.isActive, c.store.err = true, ErrContainersUnavailable
+	c.store.hasSnapshot = false
 	c.store.mu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel

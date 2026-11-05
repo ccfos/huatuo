@@ -563,3 +563,13 @@ Store 不再将原来未知的 PID、进程启动时间、内存路径或目录�
 已直接免密连接 `172.16.134.96`，内核为 Linux 5.10、使用 cgroup v2。cubelet socket 为 `/data/cubelet/cubelet.sock`，现有 `cubecli inspect` 确认详情包含 `CGroupPath=/cube_sandbox/sandbox/8`、shim PID 和纳秒时间戳；对应目录包含 CPU、memory 和进程文件。代码参考 `/Users/didi/code/CubeSandbox`，未修改该仓库。
 
 检查时现有沙箱为 Paused，运行中列表为空，因此尚未完成运行中沙箱的采集验证；后续接入仍严格按运行状态筛选。本次仅查询现有环境，没有启动、恢复或删除现有沙箱。
+
+### 步骤 03b：公共 Pod 订阅
+
+新增 `SubscribePods`、`PodSubscription`、`PodKey`、`PodEvent` 和 `PodUpdate`。公共订阅与旧 `SubscribeContainers` 复用 `subscription.go` 中同一有界队列实现；旧入口只投影 Container 引用，不向未迁移调用方泄漏沙箱。身份和事件种类语义相同的旧类型使用兼容别名，旧返回结构保持原样。
+
+首次发现尚未建立缓存时仍返回不可用错误；缓存建立后，公共订阅通过 `PodUpdate.DiscoveryError` 报告发现异常，同时交付保留的对象。旧容器入口保留原错误契约。队列保存发布时的引用值和不可变 Pod 视图，完整快照清除已覆盖的增量，慢订阅者溢出后仍使用全量恢复，关闭不改写借出结果。
+
+`logs/step03b-*` 记录 pod/autotracing race 测试、完整构建和内存阈值内核通知集成测试通过。新增测试覆盖公共/容器入口隔离、首次发现失败、非空及空缓存的错误恢复、cgroup-only 资源就绪、队列身份稳定和关闭。提交检查使用 `make check`。
+
+同机三次 benchmark 中位数：旧接口 8 个订阅者的单次事件投递由 1614 ns 增至 1909 ns；4096 个对象的全量通知由 151815 ns 增至 195856 ns。新增公共接口的 8 订阅者投递为 1989 ns。三者均为零分配；额外耗时来自公共队列的类型过滤与兼容结果转换，没有新增后台同步循环。

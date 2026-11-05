@@ -17,7 +17,6 @@ package pod
 import (
 	"context"
 	"errors"
-	"slices"
 )
 
 const (
@@ -38,10 +37,7 @@ var (
 
 // ContainerKey identifies one process and memory cgroup binding. Generations
 // increase across manager restarts within one process; they are not persistent.
-type ContainerKey struct {
-	ID         string
-	Generation uint64
-}
+type ContainerKey = PodKey
 
 // ContainerRef is an immutable instance description. An empty memory path
 // means per-container memory is unavailable or pending. Host Kata VM cgroups
@@ -52,12 +48,12 @@ type ContainerRef struct {
 	MemoryCgroupPath string
 }
 
-type ContainerEventKind uint8
+type ContainerEventKind = PodEventKind
 
 const (
-	ContainerEventUnknown ContainerEventKind = iota
-	ContainerCreated
-	ContainerDeleted
+	ContainerEventUnknown = PodEventUnknown
+	ContainerCreated      = PodCreated
+	ContainerDeleted      = PodDeleted
 )
 
 type ContainerEvent struct {
@@ -66,12 +62,12 @@ type ContainerEvent struct {
 }
 
 // ContainerUpdateMode distinguishes full views from incremental events.
-type ContainerUpdateMode uint8
+type ContainerUpdateMode = PodUpdateMode
 
 const (
-	ContainerUpdateUnknown ContainerUpdateMode = iota
-	ContainerUpdateFull
-	ContainerUpdateIncremental
+	ContainerUpdateUnknown     = PodUpdateUnknown
+	ContainerUpdateFull        = PodUpdateFull
+	ContainerUpdateIncremental = PodUpdateIncremental
 )
 
 // ContainerUpdate carries a full set (Kind is Unknown and ignored) or ordered
@@ -85,150 +81,36 @@ type ContainerUpdate struct {
 	Events   []ContainerEvent
 }
 
-// ContainerSubscription owns one bounded event queue. DrainEvents has a single
-// consumer; Close and context cancellation may overlap it. No per-container or
-// per-subscription background goroutine is needed while the subscription is live.
+// ContainerSubscription is the legacy projection of the shared lifecycle.
+// It excludes sandbox objects and retains the original discovery error contract.
 type ContainerSubscription struct {
-	store     *containerStore
-	wake      chan struct{}
-	stop      func() bool
-	queue     [containerEventQueueSize]containerEvent
-	head      int
-	count     int
-	needsFull bool
-	isClosed  bool
-	batch     []ContainerEvent
+	subscription
+	batch []ContainerEvent
 }
 
-type containerEvent struct {
-	event    ContainerEvent
-	revision uint64
-}
-
-// SubscribeContainers attaches to the manager's shared producer. It returns
-// immediately, including during initialization: DrainEvents then reports
-// ErrContainersUnavailable until a complete view is committed. ctx owns the
-// subscription lifetime; cancellation closes it independently of other clients.
 func SubscribeContainers(ctx context.Context) (*ContainerSubscription, error) {
 	return containerView.subscribe(ctx)
 }
 
 func (v *containerStore) subscribe(ctx context.Context) (*ContainerSubscription, error) {
-	if err := ctx.Err(); err != nil {
+	s := &ContainerSubscription{batch: make([]ContainerEvent, 0, containerEventBatchSize)}
+	if err := v.addSubscription(ctx, &s.subscription, true); err != nil {
 		return nil, err
 	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.isActive {
-		return nil, ErrContainerManagerDisabled
-	}
-	s := &ContainerSubscription{
-		store:     v,
-		wake:      make(chan struct{}, 1),
-		needsFull: true,
-		batch:     make([]ContainerEvent, 0, containerEventBatchSize),
-	}
-	v.subscribers[s] = struct{}{}
-	s.stop = context.AfterFunc(ctx, s.Close)
-	s.signal()
 	return s, nil
 }
 
-// Notify is a coalesced readiness signal, including synchronization errors.
-// The caller must drain after a wakeup; closure is terminal, not an idle wakeup.
-func (s *ContainerSubscription) Notify() <-chan struct{} { return s.wake }
-
-// DrainEvents never waits for input. Returned slices are read-only and borrowed
-// until the next DrainEvents call; producers and Close do not mutate them.
-// Snapshot capture, covered-event removal and subsequent publication share the
-// store lock, leaving no snapshot-to-increment gap. Errors never imply deletion.
 func (s *ContainerSubscription) DrainEvents() (ContainerUpdate, error) {
-	v := s.store
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if s.isClosed {
-		return ContainerUpdate{}, ErrContainerSubscriptionClosed
-	}
-	select {
-	case <-s.wake:
-	default:
-	}
-	if v.err != nil {
-		return ContainerUpdate{}, v.err
-	}
-
 	clear(s.batch)
 	s.batch = s.batch[:0]
-	if s.needsFull {
-		s.batch = slices.Grow(s.batch, len(v.records))
-		for _, record := range v.records {
-			s.batch = append(s.batch, ContainerEvent{Container: record.ref})
-		}
-		clear(s.queue[:])
-		s.head, s.count, s.needsFull = 0, 0, false
-		return ContainerUpdate{
-			Revision: v.revision, Mode: ContainerUpdateFull,
-			Events: s.batch[:len(s.batch):len(s.batch)],
-		}, nil
+	update, err := s.drain(func(kind PodEventKind, ref ContainerRef, _ *Pod) {
+		s.batch = append(s.batch, ContainerEvent{Kind: kind, Container: ref})
+	})
+	if err != nil {
+		return ContainerUpdate{}, err
 	}
-
-	var revision uint64
-	for s.count > 0 && len(s.batch) < containerEventBatchSize {
-		item := &s.queue[s.head]
-		s.batch = append(s.batch, item.event)
-		revision = item.revision
-		*item = containerEvent{}
-		s.head = (s.head + 1) % len(s.queue)
-		s.count--
-	}
-	if s.count > 0 {
-		s.signal()
-	}
-	return ContainerUpdate{Revision: revision, Mode: ContainerUpdateIncremental, Events: s.batch[:len(s.batch):len(s.batch)]}, nil
-}
-
-// Close is idempotent and releases only this subscription. Borrowed batches
-// remain immutable; all publication and channel closure serialize on the store.
-func (s *ContainerSubscription) Close() {
-	v := s.store
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	s.closeLocked()
-}
-
-func (s *ContainerSubscription) closeLocked() {
-	if s.isClosed {
-		return
-	}
-	s.isClosed = true
-	delete(s.store.subscribers, s)
-	s.stop()
-	clear(s.queue[:])
-	s.count = 0
-	close(s.wake)
-}
-
-func (s *ContainerSubscription) signal() {
-	select {
-	case s.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (v *containerStore) publish(kind ContainerEventKind, ref ContainerRef) {
-	v.revision++
-	for s := range v.subscribers {
-		if !s.needsFull {
-			if s.count == len(s.queue) {
-				clear(s.queue[:])
-				s.head, s.count, s.needsFull = 0, 0, true
-			} else {
-				s.queue[(s.head+s.count)%len(s.queue)] = containerEvent{
-					event: ContainerEvent{Kind: kind, Container: ref}, revision: v.revision,
-				}
-				s.count++
-			}
-		}
-		s.signal()
-	}
+	return ContainerUpdate{
+		Revision: update.Revision, Mode: update.Mode,
+		Events: s.batch[:len(s.batch):len(s.batch)],
+	}, nil
 }
