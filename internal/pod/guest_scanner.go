@@ -356,21 +356,19 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 	css, _ := parseContainerCSS(process.containerID)
 	now := time.Now()
 	container := &Container{
-		ID:            process.containerID,
-		Name:          process.containerID[:12],
-		Hostname:      s.options.PodName,
-		Type:          ContainerTypeNormal,
-		Qos:           level,
-		InitPid:       process.pid,
-		CgroupPath:    cpu,
-		CgroupCss:     css,
-		StartedAt:     now,
-		SyncedAt:      now,
-		Labels:        map[string]any{labelHostNamespace: s.options.PodNamespace},
-		lifeResources: make(map[string]any),
+		ID:         process.containerID,
+		Name:       process.containerID[:12],
+		Hostname:   s.options.PodName,
+		Type:       ContainerTypeNormal,
+		Qos:        level,
+		InitPid:    process.pid,
+		CgroupPath: cpu,
+		CgroupCss:  css,
+		StartedAt:  now,
+		SyncedAt:   now,
+		Labels:     map[string]any{labelHostNamespace: s.options.PodNamespace},
 	}
 	container.memoryCgroupPath = &memory
-	createContainerLifeResources(container)
 	return &containerRecord{
 		container: container,
 		ref:       ContainerRef{Key: ContainerKey{ID: process.containerID}, InitPID: process.pid, MemoryCgroupPath: memory},

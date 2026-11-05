@@ -478,3 +478,29 @@ make check
 | ContainerFullUpdate / 4096 个容器 | 152801 | 0 | 0 |
 
 步骤 00 的接口、清单和基线已完成；未进行真实 CubeSandbox/Guest 功能验收。下一步实施 Store 的 Pod 迁移，并与本基线比较。
+
+### 步骤 01：Store 使用公共 Pod
+
+代码增加 `workload.go`，将缓存实现拆入 `store.go`、实例采集状态移入 `resources.go`。同一条缓存记录发布 Pod 和只读 Container 兼容视图；保留容器 JSON、Kata 稳定选择时间和旧订阅行为。本步尚未替换来源调度、公共绑定校验或生命周期通知，不开放 CubeSandbox 来源。
+
+采集状态由 Store 在实例创建时初始化，元数据更新保留状态，已识别的实例替换创建新状态。公共 Pod 成功同步时间独立更新，来源失败和 nil 成员不刷新；已经发布的视图不原地修改。`PodByID`、`Pods` 可读取公共对象，旧容器查询不返回沙箱。
+
+验证记录位于测试目录 `logs/step01-*`：
+
+- 全部程序 `make build`、pod/metric/document/guestbridge 单测、pod race 检查通过。
+- 内核/运行时引用校验、Kata Host 不发布应用内存目标、HTTP 发现到内核绑定的三组集成测试通过，启用 race 检查，无 SKIP。
+- `make check` 通过，新增测试覆盖兼容 JSON、元数据隔离、共享采集状态、实例替换、失败保留、完整空集和沙箱查询隔离。
+
+补充验证发现基线的 `TestContainerControllerHTTPAndKernelBinding` 缺少 CRI 分类响应；原版本可复现 `containerd client not initialized`，补齐已有 fake runtime 的 running runc 响应后通过。此测试准备修复单独提交，不改变生产逻辑，也不使用真实节点容器作为测试对象。
+
+同机 benchmark 对比（三次结果取中位数）：
+
+| 用例 | 原 ns/op → 新 ns/op | 原 B/op → 新 B/op | 原 allocs/op → 新 allocs/op |
+| --- | --- | --- | --- |
+| ControllerRefresh / 1024 | 8026032 → 8455365 | 141799 → 420348 | 1046 → 3094 |
+| BuildCPURepresentatives / runc | 128192 → 121364 | 36992 → 36992 | 6 → 6 |
+| BuildCPURepresentatives / kata | 230845 → 212056 | 36992 → 36992 | 6 → 6 |
+| ContainerEvents / 4096 / 8 订阅者 | 1712 → 1589 | 0 → 0 | 0 → 0 |
+| ContainerFullUpdate / 4096 | 152801 → 143633 | 0 → 0 | 0 → 0 |
+
+同步循环每次成功刷新为每个对象增加 Pod/记录快照，共约 272 B、2 次分配，以同时保留只读视图和最近同步时间；1024 个对象的全量同步约增加 0.43 ms。该成本发生在发现同步，不在 BPF 事件或指标循环中；事件发布和全量通知仍为零分配。其余耗时差异视为环境波动，不据此宣称性能提升。

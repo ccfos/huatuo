@@ -329,16 +329,15 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 	}
 
 	result := &Container{
-		ID:            containerID,
-		Name:          container.Name,
-		Hostname:      hostname,
-		Type:          containerType,
-		Qos:           containerQos,
-		IPAddress:     parseContainerIPAddress(pod),
-		StartedAt:     startedAt,
-		SyncedAt:      time.Now(),
-		lifeResources: make(map[string]any),
-		Labels:        labels,
+		ID:        containerID,
+		Name:      container.Name,
+		Hostname:  hostname,
+		Type:      containerType,
+		Qos:       containerQos,
+		IPAddress: parseContainerIPAddress(pod),
+		StartedAt: startedAt,
+		SyncedAt:  time.Now(),
+		Labels:    labels,
 	}
 
 	if err := populateContainerRuntime(result, pod); err != nil {
@@ -349,9 +348,6 @@ func kubeletContainer(containerID string, container *corev1.Container, container
 	if result.HostKataSandboxID() != "" && hasGuestAgentIdentity(container, pod) {
 		result.Type = ContainerTypeSidecar
 	}
-
-	// create container life resources
-	createContainerLifeResources(result)
 
 	return result, nil
 }

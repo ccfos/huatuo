@@ -83,6 +83,9 @@ func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[str
 	res := make(map[string]*Container)
 	for _, record := range containerView.records {
 		c := record.container
+		if c == nil || (record.pod != nil && record.pod.Type != TypeContainer) {
+			continue
+		}
 		// check Type
 		if c.Type&typeMask == 0 {
 			continue

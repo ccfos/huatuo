@@ -51,3 +51,52 @@ func TestContainerViewConcurrentCommitDrainAndClose(t *testing.T) {
 		t.Fatal("closed subscriptions retained")
 	}
 }
+
+// TestPodViewsConcurrentRefresh 验证公共单对象和列表查询与连续提交并发时，
+// 每个只读视图的名称和标签来自同一次提交，不会读到正在原地修改的元数据。
+func TestPodViewsConcurrentRefresh(t *testing.T) {
+	previous := containerView
+	store := newTestContainerStore()
+	containerView = store
+	t.Cleanup(func() { containerView = previous })
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			view, err := PodByID("checkout-sandbox")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if view != nil && view.Name != view.Labels["revision"] {
+				t.Errorf("inconsistent single view: name=%q, revision=%v", view.Name, view.Labels["revision"])
+				return
+			}
+			all, err := Pods()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			for _, view := range all {
+				if view.Name != view.Labels["revision"] {
+					t.Errorf("inconsistent list view: name=%q, revision=%v", view.Name, view.Labels["revision"])
+					return
+				}
+			}
+		}
+	}()
+	t.Cleanup(func() { close(stop); <-done })
+	for index := range 100 {
+		name := fmt.Sprintf("checkout-revision-%d", index)
+		record := &containerRecord{pod: &Pod{
+			ID: "checkout-sandbox", Type: TypeCubeSandbox, Name: name,
+			Labels: map[string]any{"revision": name},
+		}}
+		store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+	}
+}

@@ -15,11 +15,14 @@
 package pod
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -294,5 +297,184 @@ func TestMemoryCgroupDirectoryPreservesPublishedIdentity(t *testing.T) {
 	store.err = ErrContainersUnavailable
 	if _, err := store.memoryCgroupDirectory(record.ref); !errors.Is(err, ErrContainersUnavailable) {
 		t.Fatalf("unavailable directory lookup = %v", err)
+	}
+}
+
+// TestPodPublicationPreservesContainerContract 验证普通容器提交后的公共类型、
+// 容器分类、进程和网络映射，以及旧 JSON 和同步时间保持不变；来源 map
+// 的后续改动不能覆盖已经发布的标签、CSS 和独立 memory 路径。
+func TestPodPublicationPreservesContainerContract(t *testing.T) {
+	store := newTestContainerStore()
+	record := containerRecordForTest("checkout-container")
+	memory := "/memory/checkout"
+	source := record.container
+	source.Name, source.Hostname = "checkout", "huatuo-dev"
+	source.CgroupPath, source.memoryCgroupPath = "/cpu/checkout", &memory
+	source.CgroupCss = map[string]uint64{"cpu": 7100}
+	source.Labels = map[string]any{labelHostNamespace: "checkout-services"}
+	source.SyncedAt = time.Unix(100, 0)
+	source.NetNamespaceInum, source.NetNamespaceCookie = 5100, 6100
+	source.IPAddress = "172.16.0.2"
+	wantJSON, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: record}, isComplete: true}, nil)
+	view := store.records[source.ID]
+	if view.pod.Type != TypeContainer || view.pod.Container.Type != source.Type || view.pod.Container.Hostname != source.Hostname {
+		t.Errorf("container classification changed: %+v", view.pod)
+	}
+	if view.pod.Process == nil || view.pod.Process.PID != source.InitPid {
+		t.Errorf("process = %+v, want PID %d", view.pod.Process, source.InitPid)
+	}
+	if view.pod.Network == nil || view.pod.Network.NamespaceInum != source.NetNamespaceInum ||
+		view.pod.Network.NamespaceCookie != source.NetNamespaceCookie || view.pod.Network.PID != source.InitPid {
+		t.Errorf("network binding = %+v", view.pod.Network)
+	}
+	gotJSON, err := json.Marshal(view.container)
+	if err != nil || !bytes.Equal(gotJSON, wantJSON) {
+		t.Errorf("legacy JSON = %s, %v; want %s", gotJSON, err, wantJSON)
+	}
+	if !view.container.SyncedAt.Equal(source.SyncedAt) || !view.pod.SyncedAt.After(source.SyncedAt) {
+		t.Errorf("sync timestamps: legacy=%s, pod=%s", view.container.SyncedAt, view.pod.SyncedAt)
+	}
+	source.Labels[labelHostNamespace] = "changed-at-source"
+	source.CgroupCss["cpu"] = 7200
+	memory = "/memory/changed-at-source"
+	if view.pod.Labels[labelHostNamespace] != "checkout-services" || view.pod.Cgroups.CSS["cpu"] != 7100 ||
+		view.container.MemoryCgroupPath() != "/memory/checkout" {
+		t.Error("source metadata mutated a published view")
+	}
+}
+
+// TestPodInstanceResources 验证采集状态只在实例创建时初始化，Pod 和旧容器入口
+// 共享同一状态；元数据刷新保留状态与代次、旧视图不变，实例替换重新初始化，
+// 完整空快照同时删除公共对象和兼容视图。
+func TestPodInstanceResources(t *testing.T) {
+	type usage struct{ Total uint64 }
+	const resource = "test-checkout-usage"
+	if err := RegisterContainerLifeResources(resource, reflect.TypeOf(&usage{})); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lifeResourcesTpl.Delete(resource) })
+	store := newTestContainerStore()
+	first := containerRecordForTest("checkout-container")
+	store.commit(containerSnapshot{records: map[string]*containerRecord{first.container.ID: first}, isComplete: true}, nil)
+	initial := first.pod
+	state, ok := initial.LifeResources(resource).(*usage)
+	if !ok || state == nil {
+		t.Fatal("initial instance has no usage state")
+	}
+	state.Total = 72
+	if first.container.LifeResources(resource) != state {
+		t.Error("legacy container does not share the Pod state")
+	}
+	metadata := containerRecordForTest(first.container.ID)
+	metadata.container.Name = "checkout-renamed"
+	store.commit(containerSnapshot{records: map[string]*containerRecord{first.container.ID: metadata}, isComplete: true}, nil)
+	if metadata.ref.Key != first.ref.Key || metadata.pod.LifeResources(resource) != state || state.Total != 72 {
+		t.Error("metadata update reset the instance or its usage baseline")
+	}
+	if initial.Name == metadata.pod.Name || initial == metadata.pod {
+		t.Error("metadata update changed the previously published Pod")
+	}
+	replacement := containerRecordForTest(first.container.ID)
+	replacement.startTime++
+	store.commit(containerSnapshot{records: map[string]*containerRecord{first.container.ID: replacement}, isComplete: true}, nil)
+	fresh, ok := replacement.pod.LifeResources(resource).(*usage)
+	if !ok || fresh == nil || fresh == state || fresh.Total != 0 || replacement.ref.Key == first.ref.Key {
+		t.Errorf("replacement retained old state: %+v", fresh)
+	}
+	if first.container.LifeResources(resource) != state || state.Total != 72 {
+		t.Error("replacement mutated the old compatibility view")
+	}
+	store.commit(containerSnapshot{isComplete: true}, nil)
+	if len(store.records) != 0 {
+		t.Error("deleted workload retained a cached view")
+	}
+}
+
+// TestPodQueriesKeepSandboxIdentity 验证仅有 cgroup 的沙箱可查询但不会进入旧
+// 容器入口；发现失败和 nil 成员保留原对象与同步时间，返回集合可独立修改，
+// 完整空列表删除对象，未启动 Manager 时查询返回空集。
+func TestPodQueriesKeepSandboxIdentity(t *testing.T) {
+	previous := containerView
+	containerView = newTestContainerStore()
+	t.Cleanup(func() { containerView = previous })
+	source := &Pod{
+		ID: "checkout-sandbox", Type: TypeCubeSandbox, Name: "checkout",
+		Cgroups: CgroupBinding{Controllers: map[string]string{"memory": "/cube_sandbox/sandbox/8"}},
+		Labels:  map[string]any{"workload_namespace": "checkout-services"},
+	}
+	record := &containerRecord{pod: source}
+	containerView.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: record}, isComplete: true}, nil)
+	view, err := PodByID(source.ID)
+	if err != nil || view == nil {
+		t.Errorf("sandbox lookup = %+v, %v", view, err)
+		return
+	}
+	if view.Type != TypeCubeSandbox || view.Process != nil || view.Network != nil || view.Container != nil {
+		t.Errorf("invented sandbox resource or container metadata: %+v", view)
+	}
+	if legacy, lookupErr := ContainerByID(source.ID); lookupErr != nil || legacy != nil {
+		t.Errorf("sandbox exposed as container: %+v, %v", legacy, lookupErr)
+	}
+	if legacy, lookupErr := Containers(); lookupErr != nil || len(legacy) != 0 {
+		t.Errorf("sandbox exposed in container list: %+v, %v", legacy, lookupErr)
+	}
+	if legacy, lookupErr := ContainerRefByID(source.ID); lookupErr != nil || legacy != (ContainerRef{}) {
+		t.Errorf("sandbox exposed as container reference: %+v, %v", legacy, lookupErr)
+	}
+	delete(source.Cgroups.Controllers, "memory")
+	if view.Cgroups.Controllers["memory"] != "/cube_sandbox/sandbox/8" {
+		t.Error("discovery metadata shared a mutable controller map")
+	}
+	containerView.commit(containerSnapshot{}, errors.New("cubelet unavailable"))
+	containerView.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: nil}, isComplete: true}, nil)
+	retained, err := PodByID(source.ID)
+	if err != nil || retained != view {
+		t.Errorf("unresolved member replaced cached view: %+v, %v", retained, err)
+	}
+	all, err := Pods()
+	if err != nil || all[source.ID] != view {
+		t.Errorf("Pods() = %+v, %v", all, err)
+	}
+	delete(all, source.ID)
+	if retained, _ := PodByID(source.ID); retained != view {
+		t.Error("modifying query result removed a cached object")
+	}
+	containerView.commit(containerSnapshot{isComplete: true}, nil)
+	if removed, _ := PodByID(source.ID); removed != nil {
+		t.Error("complete empty discovery retained sandbox")
+	}
+	containerView = newContainerStore()
+	if empty, lookupErr := Pods(); lookupErr != nil || len(empty) != 0 {
+		t.Errorf("disabled Manager lookup = %+v, %v", empty, lookupErr)
+	}
+}
+
+// TestPodSuccessfulRefreshPreservesLegacyView 验证复用已解析容器记录时发布新的
+// Pod 同步时间，旧 Pod 和 Container 视图不变，不重复发送创建事件。
+func TestPodSuccessfulRefreshPreservesLegacyView(t *testing.T) {
+	store := newTestContainerStore()
+	record := containerRecordForTest("checkout-container")
+	record.container.SyncedAt = time.Unix(100, 0)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.container.ID: record}, isComplete: true}, nil)
+	oldPod, oldContainer := record.pod, record.container
+	oldTime := oldPod.SyncedAt
+	sub := subscribeForTest(t, store)
+	if _, err := sub.DrainEvents(); err != nil {
+		t.Fatal(err)
+	}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.container.ID: record}, isComplete: true}, nil)
+	current := store.records[record.container.ID]
+	if current.pod == oldPod || current.pod.SyncedAt.Before(oldTime) || !oldPod.SyncedAt.Equal(oldTime) {
+		t.Error("successful refresh did not preserve immutable Pod views")
+	}
+	if current.container != oldContainer || current.ref != record.ref {
+		t.Error("successful refresh changed the legacy view or instance reference")
+	}
+	if update, err := sub.DrainEvents(); err != nil || len(update.Events) != 0 {
+		t.Errorf("successful refresh emitted lifecycle: %+v, %v", update, err)
 	}
 }

@@ -17,10 +17,7 @@ package pod
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"slices"
-	"sync"
 )
 
 const (
@@ -87,47 +84,6 @@ type ContainerUpdate struct {
 	Mode     ContainerUpdateMode
 	Events   []ContainerEvent
 }
-
-type containerRecord struct {
-	container *Container
-	ref       ContainerRef
-	startTime uint64
-	guest     *guestScanner
-	directory os.FileInfo
-}
-
-func (r *containerRecord) sameInstance(other *containerRecord) bool {
-	return r.ref.InitPID == other.ref.InitPID && r.startTime == other.startTime &&
-		r.ref.MemoryCgroupPath == other.ref.MemoryCgroupPath &&
-		((r.directory == nil && other.directory == nil) ||
-			(r.directory != nil && other.directory != nil && os.SameFile(r.directory, other.directory)))
-}
-
-// A complete snapshot accounts for every in-scope ID. A nil record retains
-// membership while metadata is unresolved; incomplete snapshots cannot delete.
-type containerSnapshot struct {
-	records    map[string]*containerRecord
-	isComplete bool
-}
-
-type containerStore struct {
-	mu          sync.RWMutex
-	records     map[string]*containerRecord
-	subscribers map[*ContainerSubscription]struct{}
-	revision    uint64
-	err         error
-	isActive    bool
-}
-
-func newContainerStore() *containerStore {
-	return &containerStore{
-		records:     make(map[string]*containerRecord),
-		subscribers: make(map[*ContainerSubscription]struct{}),
-		err:         ErrContainerManagerDisabled,
-	}
-}
-
-var containerView = newContainerStore()
 
 // ContainerSubscription owns one bounded event queue. DrainEvents has a single
 // consumer; Close and context cancellation may overlap it. No per-container or
@@ -275,95 +231,4 @@ func (v *containerStore) publish(kind ContainerEventKind, ref ContainerRef) {
 		}
 		s.signal()
 	}
-}
-
-// commit keeps membership completeness separate from metadata readiness, so
-// one unresolved container cannot retain unrelated deleted containers.
-func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if !v.isActive {
-		return
-	}
-	if snapshot.isComplete {
-		for id, previous := range v.records {
-			if _, exists := snapshot.records[id]; !exists {
-				delete(v.records, id)
-				v.publish(ContainerDeleted, previous.ref)
-			}
-		}
-	}
-	for id, record := range snapshot.records {
-		previous := v.records[id]
-		if record == nil || previous == record {
-			continue
-		}
-		if previous != nil && previous.sameInstance(record) {
-			if record.guest != nil ||
-				(record.container.HostKataSandboxID() != "" &&
-					record.container.HostKataSandboxID() == previous.container.HostKataSandboxID()) {
-				record.container.StartedAt = previous.container.StartedAt
-				record.container.SyncedAt = previous.container.SyncedAt
-			}
-			record.ref.Key = previous.ref.Key
-			record.container.lifeResources = previous.container.lifeResources
-			v.records[id] = record
-			continue
-		}
-		if previous != nil {
-			v.publish(ContainerDeleted, previous.ref)
-		}
-		record.ref.Key = ContainerKey{ID: id, Generation: v.revision + 1}
-		v.records[id] = record
-		v.publish(ContainerCreated, record.ref)
-	}
-	wasUnavailable := v.err != nil
-	v.err = nil
-	if syncErr != nil {
-		v.err = fmt.Errorf("%w: %w", ErrContainersUnavailable, syncErr)
-	}
-	if wasUnavailable || syncErr != nil {
-		for s := range v.subscribers {
-			s.needsFull = true
-			s.signal()
-		}
-	}
-}
-
-// ContainerRefByID reads the current instance without enumeration or runtime I/O.
-// A zero reference means confirmed absence; an unavailable view returns an error.
-func ContainerRefByID(id string) (ContainerRef, error) {
-	containerView.mu.RLock()
-	defer containerView.mu.RUnlock()
-	if containerView.err != nil {
-		return ContainerRef{}, containerView.err
-	}
-	if record := containerView.records[id]; record != nil {
-		return record.ref, nil
-	}
-	return ContainerRef{}, nil
-}
-
-// MemoryCgroupDirectory returns the published directory identity for ref.
-// It never inspects the path again, which may now name another instance.
-func MemoryCgroupDirectory(ref ContainerRef) (os.FileInfo, error) {
-	return containerView.memoryCgroupDirectory(ref)
-}
-
-func (v *containerStore) memoryCgroupDirectory(ref ContainerRef) (os.FileInfo, error) {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	if v.err != nil {
-		return nil, v.err
-	}
-
-	record := v.records[ref.Key.ID]
-	if record == nil || record.ref != ref {
-		return nil, fmt.Errorf("container %q instance is no longer current", ref.Key.ID)
-	}
-	if record.directory == nil || ref.MemoryCgroupPath == "" {
-		return nil, fmt.Errorf("container %q memory cgroup binding is pending", ref.Key.ID)
-	}
-
-	return record.directory, nil
 }

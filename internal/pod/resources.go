@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,12 +43,13 @@ func RegisterContainerLifeResources(key string, anythingType reflect.Type) error
 	return nil
 }
 
-// createContainerLifeResources creates container life resources.
-func createContainerLifeResources(c *Container) {
+// newLifeResources allocates state only when the Store creates an instance.
+func newLifeResources() map[string]any {
+	resources := make(map[string]any)
 	lifeResourcesTpl.Range(func(key, anythingType any) bool {
-		// create container life resource
 		typ := anythingType.(reflect.Type)
-		c.lifeResources[key.(string)] = reflect.New(typ.Elem()).Interface()
+		resources[key.(string)] = reflect.New(typ.Elem()).Interface()
 		return true
 	})
+	return resources
 }
