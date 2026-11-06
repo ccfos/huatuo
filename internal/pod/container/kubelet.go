@@ -16,6 +16,7 @@ package container
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -193,4 +194,86 @@ func requestErrorBody(body []byte) string {
 		message += fmt.Sprintf("... [truncated after %d bytes]", maxKubeletErrorBodyBytes)
 	}
 	return message
+}
+
+// KubeletOptions selects the existing read-only or certificate-authenticated endpoint.
+type KubeletOptions struct {
+	ReadOnlyPort   uint32
+	AuthorizedPort uint32
+	ClientCertPath string
+}
+
+// Kubelet owns connection selection for one discovery producer. Calls are serial.
+type Kubelet struct {
+	options KubeletOptions
+	client  *http.Client
+	podURL  string
+}
+
+func NewKubelet(options KubeletOptions) (*Kubelet, error) {
+	if options.ReadOnlyPort == 0 && options.AuthorizedPort == 0 {
+		return nil, fmt.Errorf("configure a kubelet read-only or authorized port")
+	}
+	if options.ReadOnlyPort == 0 && options.ClientCertPath == "" {
+		return nil, fmt.Errorf("authorized kubelet port requires a client certificate")
+	}
+	return &Kubelet{options: options}, nil
+}
+
+// Initialize probes the read-only endpoint before the existing HTTPS fallback.
+// Failed attempts publish no client and can be retried by the Manager.
+func (k *Kubelet) Initialize(ctx context.Context) error {
+	if k.client != nil {
+		return nil
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	url := fmt.Sprintf("http://127.0.0.1:%d/pods", k.options.ReadOnlyPort)
+	if _, err := FetchPodList(ctx, client, url); err == nil {
+		k.client, k.podURL = client, url
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	certs := strings.Split(k.options.ClientCertPath, ",")
+	certPath := strings.TrimSpace(certs[0])
+	keyPath := certPath
+	if len(certs) > 1 {
+		keyPath = strings.TrimSpace(certs[1])
+	}
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return fmt.Errorf("loading client key pair [%s,%s]: %w", certPath, keyPath, err)
+	}
+	client = &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			Certificates:       []tls.Certificate{cert},
+			InsecureSkipVerify: true, // #nosec G402 -- preserve existing kubelet authentication.
+		}},
+	}
+	url = fmt.Sprintf("https://127.0.0.1:%d/pods", k.options.AuthorizedPort)
+	if _, err := FetchPodList(ctx, client, url); err != nil {
+		client.CloseIdleConnections()
+		return fmt.Errorf("podlist https: %w", err)
+	}
+	k.client, k.podURL = client, url
+	return nil
+}
+
+func (k *Kubelet) Pods(ctx context.Context) (corev1.PodList, error) {
+	if k.client == nil {
+		return corev1.PodList{}, fmt.Errorf("initialize kubelet client before discovery")
+	}
+	return FetchPodList(ctx, k.client, k.podURL)
+}
+
+func (k *Kubelet) Configuration(ctx context.Context) (KubeletConfiguration, error) {
+	if err := ctx.Err(); err != nil {
+		return KubeletConfiguration{}, err
+	}
+	if k.client == nil {
+		return KubeletConfiguration{}, fmt.Errorf("initialize kubelet client before reading configuration")
+	}
+	return FetchKubeletConfig(ctx, k.client, fmt.Sprintf("https://127.0.0.1:%d/configz", k.options.AuthorizedPort))
 }

@@ -73,7 +73,6 @@ func ReleaseManager() {
 	}
 	controller.cancel()
 	<-controller.done
-	kubeletPodListRunningEnabled.Store(false)
 	releaseCgroupLifecycle()
 }
 
@@ -324,4 +323,12 @@ func (m *workloadManager) bindDiscovery(ctx context.Context, kind string, discov
 		snapshot.records[id] = record
 	}
 	return snapshot, resultErr
+}
+
+// DiscoveryInitialized reports whether the active Manager accepted a complete
+// snapshot. Later refresh errors retain readiness until the Manager stops.
+func DiscoveryInitialized() bool {
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	return containerView.isActive && containerView.hasSnapshot
 }

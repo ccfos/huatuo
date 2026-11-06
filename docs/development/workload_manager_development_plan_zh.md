@@ -661,3 +661,9 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 本次是分阶段搬迁：旧初始化适配器暂时调用子包的协议函数，子包目前不依赖根包。后续增加返回公共 Pod 的 Container Source 前，必须将其余来源初始化与调用方一起移出根包，消除这条临时反向调用，不能形成根包与来源子包相互导入。
 
 测试机 `logs/step04g-*` 记录根包、Container 子包和 autotracing race 测试通过；HTTP 发现、整轮取消、无 CSS 的生产启动路径集成测试以及完整构建通过。提交前运行 `make check`。步骤 04 的 Source 和启动入口最终切换仍待完成。
+
+### 步骤 04h：kubelet 连接状态归来源实例所有
+
+`container.Kubelet` 接管只读端口探测、证书加载、HTTPS 回退和选定的 HTTP 连接。旧 Host 入口创建实例并将 `Pods` 查询注入 controller，移除根包的 kubelet URL、HTTP client、启用状态三个全局变量及私有证书字段。实例不启动后台任务，初始化失败不发布连接状态，由现有 Manager 重试。保留单文件证书和逗号分隔证书/私钥的配置方式、只读端口优先及原 TLS 校验行为。
+
+配置文件兜底和 runtime 配置暂仍由旧初始化适配器处理，后续随来源一并迁移。新增已有测试文件中的 HTTP/TLS 用例覆盖端口选择、客户端证书、configz、未初始化调用及取消后不触发证书回退；根包取消回归继续覆盖不误入本地配置兜底。`logs/step04h-*` 记录 root/container/autotracing race、生产启动及 HTTP 取消集成测试、完整构建和提交检查 `make check`。

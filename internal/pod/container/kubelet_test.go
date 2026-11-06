@@ -17,13 +17,19 @@ package container
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -497,4 +503,122 @@ func (t bodyReadErrorTransport) RoundTrip(_ *http.Request) (*http.Response, erro
 			iotest.ErrReader(t.readErr),
 		)),
 	}, nil
+}
+
+func TestKubeletConnectionSelection(t *testing.T) {
+	readOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	t.Cleanup(readOnly.Close)
+	client, err := NewKubelet(KubeletOptions{ReadOnlyPort: uint32(readOnly.Listener.Addr().(*net.TCPAddr).Port)})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if _, err := client.Pods(t.Context()); err == nil {
+		t.Error("uninitialized client allowed discovery")
+	}
+	if err := client.Initialize(t.Context()); err != nil {
+		t.Error(err)
+		return
+	}
+	if _, err := client.Pods(t.Context()); err != nil {
+		t.Errorf("read-only discovery: %v", err)
+	}
+	if client.podURL != readOnly.URL+"/pods" {
+		t.Errorf("selected endpoint=%q", client.podURL)
+	}
+	for _, options := range []KubeletOptions{{}, {AuthorizedPort: 10250}} {
+		if _, err := NewKubelet(options); err == nil {
+			t.Errorf("invalid options accepted: %+v", options)
+		}
+	}
+}
+
+func TestKubeletCertificateFallback(t *testing.T) {
+	readOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(readOnly.Close)
+	authorized := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if len(request.TLS.PeerCertificates) == 0 {
+			t.Error("kubelet request has no client certificate")
+		}
+		if request.URL.Path == "/configz" {
+			_, _ = io.WriteString(w, `{"kubeletconfig":{"cgroupDriver":"systemd","containerRuntimeEndpoint":"unix:///run/containerd/custom.sock"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	authorized.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.RequireAnyClientCert}
+	authorized.StartTLS()
+	t.Cleanup(authorized.Close)
+	cert := authorized.TLS.Certificates[0]
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})
+	for _, combined := range []bool{false, true} {
+		t.Run(fmt.Sprintf("combined=%t", combined), func(t *testing.T) {
+			certPath, keyPath := filepath.Join(t.TempDir(), "cert.pem"), filepath.Join(t.TempDir(), "key.pem")
+			content := certPEM
+			if combined {
+				content = append(append([]byte{}, certPEM...), keyPEM...)
+			}
+			if err := os.WriteFile(certPath, content, 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+			certOption := certPath
+			if !combined {
+				certOption = " " + certPath + " , " + keyPath + " "
+			}
+			client, err := NewKubelet(KubeletOptions{
+				ReadOnlyPort:   uint32(readOnly.Listener.Addr().(*net.TCPAddr).Port),
+				AuthorizedPort: uint32(authorized.Listener.Addr().(*net.TCPAddr).Port), ClientCertPath: certOption,
+			})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := client.Initialize(t.Context()); err != nil {
+				t.Error(err)
+				return
+			}
+			t.Cleanup(client.client.CloseIdleConnections)
+			if _, err := client.Pods(t.Context()); err != nil {
+				t.Error(err)
+			}
+			config, err := client.Configuration(t.Context())
+			if err != nil || config.CgroupDriver != "systemd" || config.ContainerRuntimeEndpoint != "unix:///run/containerd/custom.sock" {
+				t.Errorf("configz=%+v err=%v", config, err)
+			}
+		})
+	}
+}
+
+func TestKubeletConnectionCancellation(t *testing.T) {
+	client, err := NewKubelet(KubeletOptions{ReadOnlyPort: 10255, ClientCertPath: "/missing/certificate"})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := client.Initialize(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled initialization tried certificate fallback: %v", err)
+	}
+	if client.client != nil || client.podURL != "" {
+		t.Error("failed initialization published a connection")
+	}
+	if _, err := client.Configuration(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("config cancellation=%v", err)
+	}
 }

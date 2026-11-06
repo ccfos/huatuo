@@ -1025,3 +1025,28 @@ func TestSourceContainerProjection(t *testing.T) {
 		t.Errorf("legacy projection=%+v", legacy)
 	}
 }
+
+func TestDiscoveryInitializedLifecycle(t *testing.T) {
+	previous := containerView
+	containerView = newContainerStore()
+	t.Cleanup(func() { containerView = previous })
+	if DiscoveryInitialized() {
+		t.Error("disabled manager reported ready")
+	}
+	containerView.isActive = true
+	if DiscoveryInitialized() {
+		t.Error("manager reported ready before discovery")
+	}
+	containerView.commit(containerSnapshot{isComplete: true}, nil)
+	if !DiscoveryInitialized() {
+		t.Error("complete empty discovery did not become ready")
+	}
+	containerView.commit(containerSnapshot{}, errors.New("source temporarily unavailable"))
+	if !DiscoveryInitialized() {
+		t.Error("transient failure reset discovery readiness")
+	}
+	containerView.isActive = false
+	if DiscoveryInitialized() {
+		t.Error("stopped manager retained discovery readiness")
+	}
+}

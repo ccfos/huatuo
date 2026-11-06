@@ -16,12 +16,9 @@ package pod
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -31,15 +28,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const kubeletReqTimeout = 5 * time.Second
-
 var (
-	kubeletPodListRunningEnabled atomic.Bool
-	kubeletPodListURL            string
-	kubeletPodListClient         *http.Client
-	kubeletPodCgroupDriver       = "cgroupfs"
-	kubeletRuntimeEndpoint       = "unix:///run/containerd/containerd.sock"
-	kubeletDefaultConfigPath     = []string{
+	kubeletPodCgroupDriver   = "cgroupfs"
+	kubeletRuntimeEndpoint   = "unix:///run/containerd/containerd.sock"
+	kubeletDefaultConfigPath = []string{
 		"/var/lib/kubelet/config.yaml",
 		"/var/lib/kubelet/ack-managed-config.yaml",
 		"/etc/kubernetes/kubelet/config.json",
@@ -52,92 +44,6 @@ type ManagerCtx struct {
 	PodAuthorizedPort uint32
 	PodClientCertPath string
 	DockerAPIVersion  string
-
-	// this is used internally.
-	podClientCertPath string
-	podClientCertKey  string
-}
-
-func kubeletPodListReadOnlyURL(port uint32) string {
-	return fmt.Sprintf("http://127.0.0.1:%d/pods", port)
-}
-
-func kubeletPodListAuthorizedURL(port uint32) string {
-	return fmt.Sprintf("https://127.0.0.1:%d/pods", port)
-}
-
-func kubeletConfigAuthorizedURL(port uint32) string {
-	return fmt.Sprintf("https://127.0.0.1:%d/configz", port)
-}
-
-func kubeletPodListHttpRequest(requestCtx context.Context, ctx *ManagerCtx) (*http.Client, error) {
-	client := &http.Client{
-		Timeout: kubeletReqTimeout,
-	}
-
-	_, err := containerdiscovery.FetchPodList(requestCtx, client, kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort))
-	return client, err
-}
-
-func kubeletPodListAuthorizationRequest(requestCtx context.Context, ctx *ManagerCtx) (*http.Client, error) {
-	cert, err := tls.LoadX509KeyPair(ctx.podClientCertPath, ctx.podClientCertKey)
-	if err != nil {
-		return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
-			ctx.podClientCertPath, ctx.podClientCertKey, err)
-	}
-
-	client := &http.Client{
-		Timeout: kubeletReqTimeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				Certificates:       []tls.Certificate{cert},
-				InsecureSkipVerify: true, // #nosec G402
-			},
-		},
-	}
-
-	_, err = containerdiscovery.FetchPodList(requestCtx, client, kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort))
-	return client, err
-}
-
-func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
-	if client, err := kubeletPodListHttpRequest(requestCtx, ctx); err == nil {
-		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
-		kubeletPodListClient = client
-		kubeletPodListRunningEnabled.Store(true)
-		return nil
-	}
-
-	if err := requestCtx.Err(); err != nil {
-		return err
-	}
-
-	// try to fallback https.
-	client, err := kubeletPodListAuthorizationRequest(requestCtx, ctx)
-	if err != nil {
-		return fmt.Errorf("podlist https: %w", err)
-	}
-
-	// update https instance cache
-	kubeletPodListClient = client
-	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
-	kubeletPodListRunningEnabled.Store(true)
-	return nil
-}
-
-// KubeletPodListRunningEnabled reports whether kubelet discovery has initialized.
-// An empty container view does not disable discovery; transient refresh errors
-// retain the initialized state until the manager stops.
-func KubeletPodListRunningEnabled() bool {
-	return kubeletPodListRunningEnabled.Load()
-}
-
-func kubeletGetPodList(ctx context.Context) (corev1.PodList, error) {
-	if !KubeletPodListRunningEnabled() {
-		return corev1.PodList{}, fmt.Errorf("kubelet not running")
-	}
-
-	return containerdiscovery.FetchPodList(ctx, kubeletPodListClient, kubeletPodListURL)
 }
 
 func kubeletContainer(ctx context.Context, containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod) (*Container, error) {
@@ -253,7 +159,7 @@ func kubeletConfigFileDefault() (containerdiscovery.KubeletConfiguration, error)
 // Updated cache vars:
 //   - CgroupDriver
 //   - ContainerRuntimeEndpoint
-func kubeletConfigCacheMustUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
+func kubeletConfigCacheMustUpdate(requestCtx context.Context, client *containerdiscovery.Kubelet) error {
 	var (
 		config containerdiscovery.KubeletConfiguration
 		err    error
@@ -271,11 +177,7 @@ func kubeletConfigCacheMustUpdate(requestCtx context.Context, ctx *ManagerCtx) e
 			kubeletPodCgroupDriver, kubeletRuntimeEndpoint)
 	}()
 
-	config, err = containerdiscovery.FetchKubeletConfig(
-		requestCtx,
-		kubeletPodListClient,
-		kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort),
-	)
+	config, err = client.Configuration(requestCtx)
 	if err == nil {
 		return nil
 	}

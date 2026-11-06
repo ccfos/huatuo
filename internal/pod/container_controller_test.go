@@ -18,13 +18,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
 )
 
 func useContainerdForTest(t *testing.T) {
@@ -860,12 +861,9 @@ func TestSourceManagerCancellation(t *testing.T) {
 // TestKubeletInitializationCancellation 验证 configz 请求继承取消信号，
 // 取消后不尝试本地配置兜底，不会将正常停止误判为配置缺失并 panic。
 func TestKubeletInitializationCancellation(t *testing.T) {
-	previous := kubeletPodListClient
-	t.Cleanup(func() { kubeletPodListClient = previous })
-	kubeletPodListClient = &http.Client{}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := kubeletConfigCacheMustUpdate(ctx, &ManagerCtx{PodAuthorizedPort: 10250}); !errors.Is(err, context.Canceled) {
+	if err := kubeletConfigCacheMustUpdate(ctx, &containerdiscovery.Kubelet{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("config initialization cancellation=%v", err)
 	}
 }

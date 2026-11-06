@@ -16,11 +16,10 @@ package pod
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/ccfos/huatuo/internal/log"
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -53,23 +52,22 @@ func InitManager(config *ManagerCtx) error {
 	if config.PodReadOnlyPort == 0 && config.PodAuthorizedPort == 0 {
 		return nil
 	}
-	if config.PodReadOnlyPort == 0 && config.PodClientCertPath == "" {
-		return errors.New("authorized kubelet port requires a client certificate")
+	client, err := containerdiscovery.NewKubelet(containerdiscovery.KubeletOptions{
+		ReadOnlyPort: config.PodReadOnlyPort, AuthorizedPort: config.PodAuthorizedPort,
+		ClientCertPath: config.PodClientCertPath,
+	})
+	if err != nil {
+		return err
 	}
-	managerConfig := *config
-	certs := strings.Split(config.PodClientCertPath, ",")
-	managerConfig.podClientCertPath = strings.TrimSpace(certs[0])
-	managerConfig.podClientCertKey = managerConfig.podClientCertPath
-	if len(certs) > 1 {
-		managerConfig.podClientCertKey = strings.TrimSpace(certs[1])
-	}
+
 	dockerAPIVersion = config.DockerAPIVersion
 	controller := newContainerController(containerView)
+	controller.fetch = client.Pods
 	controller.initialize = func(ctx context.Context) error {
-		if err := kubeletPodListPortCacheUpdate(ctx, &managerConfig); err != nil {
+		if err := client.Initialize(ctx); err != nil {
 			return err
 		}
-		if err := kubeletConfigCacheMustUpdate(ctx, &managerConfig); err != nil {
+		if err := kubeletConfigCacheMustUpdate(ctx, client); err != nil {
 			return err
 		}
 		// File metrics and metadata remain usable without CSS probes.
@@ -86,8 +84,8 @@ func InitManager(config *ManagerCtx) error {
 func newContainerController(store *containerStore) *containerController {
 	controller := &containerController{
 		workloadManager: newWorkloadManager(store),
-		fetch:           kubeletGetPodList, resolve: resolveContainerRecord,
-		retries: make(map[string]*containerRefreshRetry),
+		resolve:         resolveContainerRecord,
+		retries:         make(map[string]*containerRefreshRetry),
 	}
 	controller.discover = controller.refresh
 	return controller

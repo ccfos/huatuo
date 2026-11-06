@@ -308,7 +308,6 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 	previousView, previousLoader := containerView, cgroupSubSysLoader
 	previousIDs := cgroupCssID2SubSysNameMap
 	previousRoot, previousClient := containerdStateDir, containerdClient
-	previousEnabled, previousURL, previousHTTP := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
 	previousFiles, previousDriver := kubeletDefaultConfigPath, kubeletPodCgroupDriver
 	previousEndpoint, previousAPIVersion := kubeletRuntimeEndpoint, dockerAPIVersion
 	t.Cleanup(func() {
@@ -316,7 +315,6 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 		containerView, cgroupSubSysLoader = previousView, previousLoader
 		cgroupCssID2SubSysNameMap = previousIDs
 		containerdStateDir, containerdClient = previousRoot, previousClient
-		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousHTTP
 		kubeletDefaultConfigPath, kubeletPodCgroupDriver = previousFiles, previousDriver
 		kubeletRuntimeEndpoint, dockerAPIVersion = previousEndpoint, previousAPIVersion
 	})
