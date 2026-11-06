@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/log"
@@ -27,35 +28,38 @@ import (
 )
 
 func setupPodManager(d *Daemon) (func(context.Context) error, error) {
+	var source pod.Source
+	var options pod.ManagerOptions
+	var err error
 	if d.opts.Mode == runmode.Sandbox {
-		if err := pod.InitGuestManager(
-			pod.GuestScannerOptions{
-				ProcRoot:     procfs.DefaultPath(),
-				CgroupRoot:   filepath.Join(procfs.DefaultPathByType("sys"), "fs", "cgroup"),
-				PodName:      d.opts.GuestIdentity.PodName,
-				PodNamespace: d.opts.GuestIdentity.PodNamespace,
-			},
-		); err != nil {
-			return nil, err
+		source, err = pod.NewGuestSource(pod.GuestScannerOptions{
+			ProcRoot:     procfs.DefaultPath(),
+			CgroupRoot:   filepath.Join(procfs.DefaultPathByType("sys"), "fs", "cgroup"),
+			PodName:      d.opts.GuestIdentity.PodName,
+			PodNamespace: d.opts.GuestIdentity.PodNamespace,
+		})
+		options = pod.ManagerOptions{ProcRoot: procfs.DefaultPath(), SyncInterval: 5 * time.Second}
+	} else {
+		if d.opts.DisableKubelet {
+			log.Infof("kubelet pod sync disabled by --disable-kubelet")
+			return nil, nil
 		}
-		return func(context.Context) error { pod.ReleaseManager(); return nil }, nil
+		source, err = pod.NewContainerSource(&pod.ContainerSourceOptions{
+			PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
+			PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
+			PodClientCertPath: config.Get().Pod.KubeletClientCertPath,
+			DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
+		})
 	}
-	if d.opts.DisableKubelet {
-		log.Infof("kubelet pod sync disabled by --disable-kubelet")
+	if err != nil {
+		return nil, fmt.Errorf("prepare workload discovery: %w", err)
+	}
+	if source == nil {
 		return nil, nil
 	}
-
-	mgrCtx := pod.ManagerCtx{
-		PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
-		PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
-		PodClientCertPath: config.Get().Pod.KubeletClientCertPath,
-		DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
+	if err := pod.StartManager(source, options); err != nil {
+		return nil, fmt.Errorf("start workload manager: %w", err)
 	}
-
-	if err := pod.InitManager(&mgrCtx); err != nil {
-		return nil, fmt.Errorf("init podlist and sync module: %w", err)
-	}
-
 	return func(context.Context) error {
 		pod.ReleaseManager()
 		return nil

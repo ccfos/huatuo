@@ -709,3 +709,13 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 `172.16.134.96`（Linux 5.10、cgroup v2）的 `step04l-integration-v2.log` 记录公共 cgroup 绑定和 Guest Source 内核生命周期测试均通过。只操作独立测试进程和 cgroup，未启动、停止或修改现有 CubeSandbox。
 
 步骤 04 剩余 Container 来源子包依赖整理和启动调用方注入。Host 与现有 Kata Guest 已走 Source/Manager，但 CubeSandbox 来源、配置和采集器迁移尚未完成。
+
+### 步骤 04m：启动入口显式创建并注入来源
+
+`huatuo-bamai` 和独立 `sched-blame` 在启动处创建 `Source`，再统一调用 `StartManager`。Host 使用 `NewContainerSource`，现有 Kata Guest 使用 `NewGuestSource`；构造函数不发起发现请求、不启动循环，也不修改 runtime 配置。Host 的配置和连接初始化仍在 `Discover` 中执行，取消、重试和原有 configz/本地文件均失败时的 panic 策略不变。
+
+所有调用方及测试已迁移，删除无人使用的 `InitManager`、`InitGuestManager` 和旧 controller 启动文件。`ManagerCtx` 改为来源配置 `ContainerSourceOptions`；Guest 扫描周期由 `ManagerOptions` 明确设置，删除来源选项中的无效 `Interval` 字段。Host 双端口为零仍表示禁用；Guest 仍使用原有 5 秒周期和 proc/cgroup 根目录。统一禁用开关的行为变化留在步骤 05，不在此提交提前改变 Guest 对旧 `--disable-kubelet` 的处理。
+
+`logs/step04m-*` 记录 pod/container/autotracing、两个启动命令的 race 测试，HTTP/HTTPS 来源启动、无 CSS 启动、整轮取消、Guest 内核生命周期集成测试及完整构建、提交前 `make check`。构造函数测试覆盖无后台副作用、缺失配置、禁用配置和原有证书要求。
+
+步骤 04 仍剩 Container 来源子包迁移及其 legacy 查询依赖整理；来源构造函数暂位于根包。三处先前未提交的 CSS 修改未纳入本提交，后续拆分会涉及相同代码，需确认其提交归属后继续迁移。

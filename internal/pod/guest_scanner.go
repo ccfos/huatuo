@@ -43,7 +43,6 @@ type GuestScannerOptions struct {
 	CgroupRoot   string
 	PodName      string
 	PodNamespace string
-	Interval     time.Duration
 }
 
 type guestScanner struct {
@@ -60,11 +59,10 @@ type guestProcess struct {
 	cgroups     *CgroupBinding
 }
 
-// InitGuestManager uses the same cached view and subscriptions as the Host
-// manager, without contacting kubelet or the Host container runtime.
-func InitGuestManager(options GuestScannerOptions) error {
+// NewGuestSource prepares local application discovery without starting a Manager.
+func NewGuestSource(options GuestScannerOptions) (Source, error) {
 	if options.PodName == "" || options.PodNamespace == "" {
-		return errors.New("guest discovery requires pod name and namespace")
+		return nil, errors.New("guest discovery requires pod name and namespace")
 	}
 	if options.ProcRoot == "" {
 		options.ProcRoot = procfs.DefaultPath()
@@ -72,25 +70,7 @@ func InitGuestManager(options GuestScannerOptions) error {
 	if options.CgroupRoot == "" {
 		options.CgroupRoot = paths.RootfsDefaultPath
 	}
-	if options.Interval <= 0 {
-		options.Interval = 5 * time.Second
-	}
-	scanner := &guestScanner{options: options}
-	workloadManagerMu.Lock()
-	defer workloadManagerMu.Unlock()
-	if activeManager != nil {
-		return errors.New("workload manager is already running")
-	}
-	controller, err := newSourceManager(containerView, scanner, ManagerOptions{
-		SyncInterval: options.Interval, ProcRoot: options.ProcRoot,
-	})
-	if err != nil {
-		return err
-	}
-	controller.initialize = initializeWorkloadResources
-	activeManager = controller
-	controller.start()
-	return nil
+	return &guestScanner{options: options}, nil
 }
 
 func (*guestScanner) Type() string { return TypeContainer }

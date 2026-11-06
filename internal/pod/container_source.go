@@ -29,10 +29,40 @@ import (
 // containerSource temporarily shares the legacy runtime settings in this package.
 // It owns no cache or scheduler; the Manager commits each complete discovery.
 type containerSource struct {
-	client  *containerdiscovery.Kubelet
-	ready   bool
-	fetch   func(context.Context) (corev1.PodList, error)
-	resolve func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*Pod, error)
+	dockerVersion string
+	client        *containerdiscovery.Kubelet
+	ready         bool
+	fetch         func(context.Context) (corev1.PodList, error)
+	resolve       func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*Pod, error)
+}
+
+type ContainerSourceOptions struct {
+	PodReadOnlyPort   uint32
+	PodAuthorizedPort uint32
+	PodClientCertPath string
+	DockerAPIVersion  string
+}
+
+// NewContainerSource prepares discovery without I/O or starting a Manager.
+// Zero kubelet ports retain the existing disabled discovery configuration.
+func NewContainerSource(config *ContainerSourceOptions) (Source, error) {
+	if config == nil {
+		return nil, errors.New("container discovery configuration is required")
+	}
+	if config.PodReadOnlyPort == 0 && config.PodAuthorizedPort == 0 {
+		return nil, nil
+	}
+	client, err := containerdiscovery.NewKubelet(containerdiscovery.KubeletOptions{
+		ReadOnlyPort: config.PodReadOnlyPort, AuthorizedPort: config.PodAuthorizedPort,
+		ClientCertPath: config.PodClientCertPath,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &containerSource{
+		client: client, fetch: client.Pods, resolve: resolveContainerPod,
+		dockerVersion: config.DockerAPIVersion,
+	}, nil
 }
 
 func (*containerSource) Type() string { return TypeContainer }
@@ -48,6 +78,7 @@ func (s *containerSource) Discover(ctx context.Context) (Discovery, error) {
 		if err := kubeletConfigCacheMustUpdate(ctx, s.client); err != nil {
 			return Discovery{}, err
 		}
+		dockerAPIVersion = s.dockerVersion
 		s.ready = true
 	}
 	list, err := s.fetch(ctx)

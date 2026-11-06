@@ -97,7 +97,7 @@ func discoverGuestForTest(t testing.TB, scanner *guestScanner, ctx context.Conte
 	return snapshot, err
 }
 
-func TestInitGuestManagerKeepsDiscoveryWithoutCSS(t *testing.T) {
+func TestGuestSourceStartupWithoutCSS(t *testing.T) {
 	scanner := guestFixture(t)
 	guestDirectory(t, scanner.options.CgroupRoot, "/"+guestCheckoutID)
 	guestProc(t, scanner, 150, 1, 100, "0::/"+guestCheckoutID+"\n")
@@ -117,7 +117,11 @@ func TestInitGuestManagerKeepsDiscoveryWithoutCSS(t *testing.T) {
 		cgroupSubSysLoader = previousLoader
 		cgroupCssID2SubSysNameMap = previousIDs
 	})
-	if err := InitGuestManager(scanner.options); err != nil {
+	source, err := NewGuestSource(scanner.options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StartManager(source, ManagerOptions{ProcRoot: scanner.options.ProcRoot, SyncInterval: 5 * time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	sub := subscribeForTest(t, containerView)
@@ -653,6 +657,34 @@ func TestGuestReferenceMembershipAndDirectory(t *testing.T) {
 			}
 			if err := ValidateContainerRef(ref); err == nil {
 				t.Error("changed Guest binding was accepted")
+			}
+		})
+	}
+}
+
+func TestNewGuestSource(t *testing.T) {
+	for _, test := range []struct {
+		name, podName, namespace string
+		wantErr                  bool
+	}{
+		{name: "valid", podName: "checkout", namespace: "payments"},
+		{name: "missing name", namespace: "payments", wantErr: true},
+		{name: "missing namespace", podName: "checkout", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previous := activeManager
+			source, err := NewGuestSource(GuestScannerOptions{PodName: test.podName, PodNamespace: test.namespace})
+			if (err != nil) != test.wantErr {
+				t.Errorf("constructor error=%v, want error=%t", err, test.wantErr)
+			}
+			if activeManager != previous {
+				t.Error("constructing a source started the Manager")
+			}
+			if source != nil {
+				scanner := source.(*guestScanner)
+				if scanner.options.ProcRoot == "" || scanner.options.CgroupRoot == "" {
+					t.Error("default scan roots are missing")
+				}
 			}
 		})
 	}

@@ -31,13 +31,6 @@ var (
 	kubeletRuntimeEndpoint = "unix:///run/containerd/containerd.sock"
 )
 
-type ManagerCtx struct {
-	PodReadOnlyPort   uint32
-	PodAuthorizedPort uint32
-	PodClientCertPath string
-	DockerAPIVersion  string
-}
-
 func kubeletContainer(ctx context.Context, containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod) (*Container, error) {
 	// container type
 	containerType, err := parseContainerType(container, pod)

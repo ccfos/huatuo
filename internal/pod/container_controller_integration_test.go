@@ -352,7 +352,11 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 		attempted <- struct{}{}
 		return errors.New("test kernel has no CSS probe support")
 	}
-	if err := InitManager(&ManagerCtx{PodAuthorizedPort: uint32(portNumber), PodClientCertPath: certPath}); err != nil {
+	source, err := NewContainerSource(&ContainerSourceOptions{PodAuthorizedPort: uint32(portNumber), PodClientCertPath: certPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := StartManager(source, ManagerOptions{}); err != nil {
 		t.Error(err)
 		return
 	}

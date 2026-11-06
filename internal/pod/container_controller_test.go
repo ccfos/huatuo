@@ -585,3 +585,33 @@ func TestKubeletInitializationCancellation(t *testing.T) {
 		t.Errorf("config initialization cancellation=%v", err)
 	}
 }
+
+func TestNewContainerSource(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		config            *ContainerSourceOptions
+		wantErr, disabled bool
+	}{
+		{name: "missing config", wantErr: true},
+		{name: "disabled", config: &ContainerSourceOptions{}, disabled: true},
+		{name: "authorized without certificate", config: &ContainerSourceOptions{PodAuthorizedPort: 10250}, wantErr: true},
+		{name: "readonly", config: &ContainerSourceOptions{PodReadOnlyPort: 10255, DockerAPIVersion: "1.43"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previousManager, previousVersion := activeManager, dockerAPIVersion
+			source, err := NewContainerSource(test.config)
+			if (err != nil) != test.wantErr {
+				t.Errorf("constructor error=%v, want error=%t", err, test.wantErr)
+			}
+			if test.disabled && source != nil {
+				t.Error("zero kubelet ports created an enabled source")
+			}
+			if !test.wantErr && !test.disabled && (source == nil || source.Type() != TypeContainer) {
+				t.Error("configured container source was not created")
+			}
+			if activeManager != previousManager || dockerAPIVersion != previousVersion {
+				t.Error("constructing a source started discovery or changed runtime settings")
+			}
+		})
+	}
+}
