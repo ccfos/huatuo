@@ -178,6 +178,17 @@ write_config_bamai_netdev_rdma_link() {
 	write_config_bamai_netdev "${RDMA_PORT}"
 }
 
+write_config_bamai_netdev_qdisc() {
+	write_config_blacklist_except netdev_qdisc
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_http
+	cat << EOF
+[MetricCollector.Qdisc]
+    DeviceIncluded = "${qdisc_included}"
+    DeviceExcluded = "${qdisc_excluded}"
+EOF
+}
+
 write_config_bamai_include_filter() {
 	write_config_bamai_default
 	cat << 'EOF'
