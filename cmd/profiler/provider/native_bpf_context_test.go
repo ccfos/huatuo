@@ -1154,3 +1154,40 @@ func BenchmarkRetainedBurstDelivery(b *testing.B) {
 		})
 	}
 }
+
+func TestFrozenDrainWaitsForWriterBeforeCounting(t *testing.T) {
+	reader := &frozenRingReaderStub{}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{}}
+	r := &ringBufferContext{bpf: obj, readerA: reader, transferStateMapID: 1}
+	synchronized := false
+	r.synchronizeWriters = func() error {
+		if obj.values[bpfmap.TransferCountIdx] != 1 {
+			t.Fatal("writers synchronized before parity changed")
+		}
+		reader.batches = []bpf.PerfEventBatch{{Events: []any{&abi.ProfilerEventBase{Value: 7, Kernstack: -1, Userstack: -1}}}}
+		obj.values[bpfmap.SampleCountAIdx] = 1
+		synchronized = true
+		return nil
+	}
+	var total int64
+	err := r.drainFrozenRingBuffer(func() any { return &abi.ProfilerEventBase{} }, func(b *pipeline.SampleBatch) error {
+		for _, sample := range b.Samples {
+			total += sample.Value
+		}
+		return nil
+	}, func(v int64) (int64, error) { return v, nil })
+	if err != nil || !synchronized || total != 7 || obj.values[bpfmap.SampleCountAIdx] != 0 {
+		t.Fatalf("err=%v synchronized=%v total=%d count=%d", err, synchronized, total, obj.values[bpfmap.SampleCountAIdx])
+	}
+}
+
+func TestFrozenDrainSynchronizationFailurePreservesUnreadRing(t *testing.T) {
+	reader := &frozenRingReaderStub{}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{bpfmap.SampleCountAIdx: 7}}
+	failure := errors.New("synchronize failed")
+	r := &ringBufferContext{bpf: obj, readerA: reader, transferStateMapID: 1, synchronizeWriters: func() error { return failure }}
+	err := r.drainFrozenRingBuffer(func() any { return nil }, nil, nil)
+	if !errors.Is(err, failure) || reader.reads != 0 || obj.values[bpfmap.SampleCountAIdx] != 7 {
+		t.Fatalf("err=%v reads=%d count=%d", err, reader.reads, obj.values[bpfmap.SampleCountAIdx])
+	}
+}
