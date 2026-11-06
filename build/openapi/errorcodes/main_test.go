@@ -143,6 +143,60 @@ func TestValidateCatalogsRejectsConflictingDefinitions(t *testing.T) {
 	}
 }
 
+// TestValidateGoNamesRejectsCollidingCodes covers the codes that fold to one
+// identifier: "internal_error" is special-cased to "Internal" and underscores
+// are dropped, so a second code with the same folded name would emit a second
+// constant with the same name into the same file.
+func TestValidateGoNamesRejectsCollidingCodes(t *testing.T) {
+	t.Parallel()
+
+	err := validateGoNames([]catalog{{
+		name: "common",
+		definitions: []definition{
+			{
+				Code:        "internal_error",
+				HTTPStatus:  500,
+				Description: "The server failed to process the request.",
+			},
+			{
+				Code:        "internal",
+				HTTPStatus:  500,
+				Description: "Duplicate identifier probe.",
+			},
+		},
+	}})
+	if err == nil {
+		t.Fatal("validateGoNames() error = nil, want collision")
+	}
+	if want := `go name "Internal" collides for codes "internal_error" and "internal" in the common catalog`; err.Error() != want {
+		t.Errorf("validateGoNames() error = %q, want %q", err, want)
+	}
+}
+
+// TestValidateGoNamesAcceptsDistinctCodes keeps the check scoped to one catalog:
+// each catalog generates its own file, so the same identifier in another one is
+// a different declaration.
+func TestValidateGoNamesAcceptsDistinctCodes(t *testing.T) {
+	t.Parallel()
+
+	err := validateGoNames([]catalog{
+		{
+			name: "common",
+			definitions: []definition{
+				{Code: "internal_error", HTTPStatus: 500, Description: "Failed."},
+				{Code: "invalid_request", HTTPStatus: 400, Description: "Invalid."},
+			},
+		},
+		{
+			name:        "node",
+			definitions: []definition{{Code: "internal", HTTPStatus: 500, Description: "Failed."}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("validateGoNames() error = %v, want nil", err)
+	}
+}
+
 func TestGoNamePreservesInitialisms(t *testing.T) {
 	t.Parallel()
 
