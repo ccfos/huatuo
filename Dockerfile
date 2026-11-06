@@ -31,7 +31,7 @@ RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
     make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto python3 &&\
     go install github.com/vektra/mockery/v2@v2.53.6 &&\
-    go install capnproto.org/go/capnp/v3/capnpc-go@latest
+    go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 
 RUN set -x; \
     make install-tools &&\
