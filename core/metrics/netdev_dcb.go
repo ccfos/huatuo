@@ -32,6 +32,10 @@ import (
 
 type dcbCollector struct {
 	deviceMatcher *matcher.ListMatcher
+	// Keeping sysfs and rtnetlink I/O replaceable makes Update independent of
+	// host DCB hardware in tests.
+	listDevices func() ([]string, error)
+	query       func(string) ([][]byte, error)
 }
 
 func init() {
@@ -46,8 +50,12 @@ func newDcb() (*tracing.EventTracingAttr, error) {
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &dcbCollector{deviceMatcher: deviceMatcher},
-		Flag:        tracing.FlagMetric,
+		TracingData: &dcbCollector{
+			deviceMatcher: deviceMatcher,
+			listDevices:   sysfs.DefaultNetClassDevices,
+			query:         doDcbRequest,
+		},
+		Flag: tracing.FlagMetric,
 	}, nil
 }
 
@@ -134,13 +142,13 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 	data := []*metric.Data{}
 
-	ifaces, err := sysfs.DefaultNetClassDevices()
+	ifaces, err := dcb.listDevices()
 	if err != nil {
 		return nil, err
 	}
 
 	for _, ifname := range dcb.deviceMatcher.Filter(ifaces) {
-		msgs, err := doDcbRequest(ifname)
+		msgs, err := dcb.query(ifname)
 		if err != nil {
 			if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODEV) {
 				continue

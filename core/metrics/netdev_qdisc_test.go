@@ -17,12 +17,20 @@ package collector
 import (
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
 
+	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/qdisc"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 )
 
@@ -151,4 +159,278 @@ func summarizeQdiscMetrics(metrics []*metric.Data) []qdiscMetric {
 		})
 	}
 	return summary
+}
+
+// Keep netdev_dcb cases in this existing file instead of adding one unit test
+// file per collector.
+func TestDeserializeIEEEPfc(t *testing.T) {
+	t.Parallel()
+
+	pfc := testIEEEPfc()
+	got, err := deserializeIEEEPfc(append([]byte(nil), ieeePfcBytes(&pfc)...))
+	require.NoError(t, err)
+	require.Equal(t, pfc, *got)
+
+	_, err = deserializeIEEEPfc(make([]byte, int(unsafe.Sizeof(ieeePfc{}))-1))
+	require.ErrorContains(t, err, "ieee pfc attr too short")
+}
+
+func TestParseAttributes(t *testing.T) {
+	t.Parallel()
+
+	pfc := testIEEEPfc()
+	pfcAttr := nl.NewRtAttr(DCB_ATTR_IEEE_PFC, ieeePfcBytes(&pfc)).Serialize()
+	peerPfcAttr := nl.NewRtAttr(DCB_ATTR_IEEE_PEER_PFC, ieeePfcBytes(&pfc)).Serialize()
+
+	tests := []struct {
+		name    string
+		raw     []byte
+		want    *ieeePfc
+		wantErr string
+	}{
+		{
+			name: "pfc attribute",
+			raw: append(
+				nl.NewRtAttr(DCB_ATTR_IFNAME, nl.ZeroTerminated("eth0")).Serialize(),
+				nl.NewRtAttr(DCB_ATTR_IEEE, pfcAttr).Serialize()...,
+			),
+			want: &pfc,
+		},
+		{
+			name: "peer pfc is ignored",
+			raw: append(
+				nl.NewRtAttr(DCB_ATTR_IEEE, peerPfcAttr).Serialize(),
+				nl.NewRtAttr(DCB_ATTR_IEEE, pfcAttr).Serialize()...,
+			),
+			want: &pfc,
+		},
+		{
+			name:    "missing ieee attribute",
+			raw:     nl.NewRtAttr(DCB_ATTR_IFNAME, nl.ZeroTerminated("eth0")).Serialize(),
+			wantErr: "no attr",
+		},
+		{
+			name:    "no pfc attribute",
+			raw:     nl.NewRtAttr(DCB_ATTR_IEEE, peerPfcAttr).Serialize(),
+			wantErr: "no attr",
+		},
+		{
+			name: "short pfc attribute",
+			raw: nl.NewRtAttr(DCB_ATTR_IEEE,
+				nl.NewRtAttr(DCB_ATTR_IEEE_PFC, []byte{0, 0, 0, 0}).Serialize(),
+			).Serialize(),
+			wantErr: "ieee pfc attr too short",
+		},
+		{
+			name:    "malformed nested attribute",
+			raw:     nl.NewRtAttr(DCB_ATTR_IEEE, []byte{0xff, 0xff, 0, 0}).Serialize(),
+			wantErr: "parse attr",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			attrs, err := nl.ParseRouteAttr(tt.raw)
+			require.NoError(t, err)
+
+			got, err := parseAttributes(attrs)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, *tt.want, *got)
+		})
+	}
+}
+
+func TestDcbCollectorUpdate(t *testing.T) {
+	pfc := testIEEEPfc()
+	collector := &dcbCollector{
+		deviceMatcher: mustDcbMatcher(t, `^eth[01]$`),
+		listDevices: func() ([]string, error) {
+			return []string{"lo", "eth1", "eth0"}, nil
+		},
+		query: func(ifname string) ([][]byte, error) {
+			if ifname != "eth0" {
+				return nil, unix.EOPNOTSUPP
+			}
+			msg := make([]byte, sizeofDcbmsg)
+			msg = append(msg, dcbRawAttrs(&pfc)...)
+			return [][]byte{msg}, nil
+		},
+	}
+
+	metrics, err := collector.Update()
+	require.NoError(t, err)
+	require.Len(t, metrics, 2*IEEE_8021QAZ_MAX_TCS)
+
+	samples := make(map[string]dcbSample, len(metrics))
+	for _, data := range metrics {
+		labels := data.Labels()
+		key := data.Name() + "/" + labels["prio"]
+		require.NotContains(t, samples, key, "duplicate sample %s", key)
+		samples[key] = dcbSample{Device: labels["device"], Value: data.Value}
+	}
+
+	for prio := 0; prio < IEEE_8021QAZ_MAX_TCS; prio++ {
+		key := "pfc_send_total/" + strconv.Itoa(prio)
+		sample, ok := samples[key]
+		require.True(t, ok, "missing %s", key)
+		assert.Equal(t, "eth0", sample.Device)
+		assert.Equal(t, float64(10+prio), sample.Value)
+
+		key = "pfc_received_total/" + strconv.Itoa(prio)
+		sample, ok = samples[key]
+		require.True(t, ok, "missing %s", key)
+		assert.Equal(t, "eth0", sample.Device)
+		assert.Equal(t, float64(100+prio), sample.Value)
+	}
+}
+
+func TestDcbCollectorUpdateDeviceListError(t *testing.T) {
+	wantErr := errors.New("sysfs unavailable")
+	collector := &dcbCollector{
+		deviceMatcher: mustDcbMatcher(t, `.*`),
+		listDevices:   func() ([]string, error) { return nil, wantErr },
+		query: func(string) ([][]byte, error) {
+			t.Fatal("query must not run when device discovery fails")
+			return nil, nil
+		},
+	}
+
+	_, err := collector.Update()
+	require.ErrorIs(t, err, wantErr)
+}
+
+func TestDcbCollectorUpdateSkipsUnsupportedDevices(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "not supported", err: unix.EOPNOTSUPP},
+		{name: "device gone", err: unix.ENODEV},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collector := &dcbCollector{
+				deviceMatcher: mustDcbMatcher(t, `^eth0$`),
+				listDevices:   func() ([]string, error) { return []string{"eth0"}, nil },
+				query:         func(string) ([][]byte, error) { return nil, tt.err },
+			}
+
+			metrics, err := collector.Update()
+			require.NoError(t, err)
+			assert.Empty(t, metrics)
+		})
+	}
+}
+
+func TestDcbCollectorUpdatePropagatesQueryError(t *testing.T) {
+	collector := &dcbCollector{
+		deviceMatcher: mustDcbMatcher(t, `^eth0$`),
+		listDevices:   func() ([]string, error) { return []string{"eth0"}, nil },
+		query:         func(string) ([][]byte, error) { return nil, unix.EPERM },
+	}
+
+	_, err := collector.Update()
+	require.ErrorIs(t, err, unix.EPERM)
+}
+
+func TestDcbCollectorUpdatePropagatesParseError(t *testing.T) {
+	tests := []struct {
+		name    string
+		attrs   []byte
+		wantErr string
+	}{
+		{name: "missing pfc", wantErr: "no attr"},
+		{
+			name:    "malformed ieee",
+			attrs:   nl.NewRtAttr(DCB_ATTR_IEEE, []byte{0xff, 0xff, 0, 0}).Serialize(),
+			wantErr: "parse attr",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collector := &dcbCollector{
+				deviceMatcher: mustDcbMatcher(t, `^eth0$`),
+				listDevices:   func() ([]string, error) { return []string{"eth0"}, nil },
+				query: func(string) ([][]byte, error) {
+					return [][]byte{append(make([]byte, sizeofDcbmsg), tt.attrs...)}, nil
+				},
+			}
+
+			_, err := collector.Update()
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestNewDcbRejectsInvalidDeviceFilter(t *testing.T) {
+	originalConfig := configSnapshot()
+	t.Cleanup(func() { Set(originalConfig) })
+	testConfig := &Config{}
+	testConfig.NetdevDCB.DeviceList = []string{"["}
+	Set(testConfig)
+
+	_, err := newDcb()
+	require.ErrorContains(t, err, "netdev dcb device list")
+}
+
+func TestNewDcbWiresCollector(t *testing.T) {
+	originalConfig := configSnapshot()
+	t.Cleanup(func() { Set(originalConfig) })
+	testConfig := &Config{}
+	testConfig.NetdevDCB.DeviceList = []string{"eth0"}
+	Set(testConfig)
+
+	attr, err := newDcb()
+	require.NoError(t, err)
+	require.NotNil(t, attr)
+	assert.Equal(t, tracing.FlagMetric, attr.Flag)
+
+	collector, ok := attr.TracingData.(*dcbCollector)
+	require.True(t, ok)
+	require.NotNil(t, collector.deviceMatcher)
+	require.NotNil(t, collector.listDevices)
+	require.NotNil(t, collector.query)
+}
+
+type dcbSample struct {
+	Device string
+	Value  float64
+}
+
+func mustDcbMatcher(t *testing.T, pattern string) *matcher.ListMatcher {
+	t.Helper()
+
+	m, err := matcher.NewListMatcher([]string{pattern})
+	require.NoError(t, err)
+	return m
+}
+
+func testIEEEPfc() ieeePfc {
+	pfc := ieeePfc{PFCCap: 1, PFCEn: 2, MBC: 3, Delay: 4}
+	for i := range pfc.Requests {
+		pfc.Requests[i] = uint64(10 + i)
+		pfc.Indications[i] = uint64(100 + i)
+	}
+	return pfc
+}
+
+func ieeePfcBytes(pfc *ieeePfc) []byte {
+	return unsafe.Slice((*byte)(unsafe.Pointer(pfc)), int(unsafe.Sizeof(*pfc)))
+}
+
+func dcbRawAttrs(pfc *ieeePfc) []byte {
+	ieee := nl.NewRtAttr(DCB_ATTR_IEEE, nil)
+	ieee.AddRtAttr(DCB_ATTR_IEEE_PFC, ieeePfcBytes(pfc))
+	return append(
+		nl.NewRtAttr(DCB_ATTR_IFNAME, nl.ZeroTerminated("eth0")).Serialize(),
+		ieee.Serialize()...,
+	)
 }
