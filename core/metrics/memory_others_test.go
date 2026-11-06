@@ -148,3 +148,30 @@ func TestMemoryPerCPUSnapshots(t *testing.T) {
 		})
 	}
 }
+
+// TestMemoryWorkloadSelection 验证内存采集保持原普通容器筛选，排除 sidecar 和
+// 无效元数据；Host Kata 保持已有 VM 路径行为，Guest 和无 PID 沙箱可按内存资源采集。
+func TestMemoryWorkloadSelection(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		kind string
+		info *pod.ContainerInfo
+		want bool
+	}{
+		{name: "cube", kind: pod.TypeCubeSandbox, want: true},
+		{name: "open", kind: pod.TypeOpenSandbox, want: true},
+		{name: "normal", kind: pod.TypeContainer, info: &pod.ContainerInfo{Type: pod.ContainerTypeNormal}, want: true},
+		{name: "sidecar", kind: pod.TypeContainer, info: &pod.ContainerInfo{Type: pod.ContainerTypeSidecar}},
+		{name: "daemon", kind: pod.TypeContainer, info: &pod.ContainerInfo{Type: pod.ContainerTypeDaemonSet}},
+		{name: "incomplete", kind: pod.TypeContainer},
+		{name: "Kata Host", kind: pod.TypeContainer, info: &pod.ContainerInfo{Type: pod.ContainerTypeNormal, RuntimeType: "io.containerd.kata.v2", SandboxID: "checkout-vm"}, want: true},
+		{name: "Kata Guest", kind: pod.TypeContainer, info: &pod.ContainerInfo{Type: pod.ContainerTypeNormal, Guest: true}, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workload := &pod.Pod{Type: test.kind, Container: test.info, Labels: map[string]any{pod.LabelHostNamespace: "checkout"}}
+			if got := isMemoryWorkload(workload); got != test.want {
+				t.Errorf("selected=%t, want %t", got, test.want)
+			}
+		})
+	}
+}

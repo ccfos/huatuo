@@ -160,6 +160,12 @@ CPU 文件指标不要求代表 PID、网络或 CSS。v1 分别使用已绑定�
 
 主线及常见发行版内核缺少这些接口时不会输出对应指标，无需额外加载模块。标准内核上的容器直接回收次数可使用 `memory_reclaim_container_directstall` 观测。
 
+### 内存事件计数
+
+`memory_events` 从对象已绑定的 memory/unified 目录读取 `memory.events`。容器保留 `memory_events_container_<字段>`；沙箱输出 `memory_events_workload_<字段>`，例如 `memory_events_workload_oom`，沿用六个固定 workload 标签。字段计数保持内核原值并使用现有 Gauge 类型，受 `MetricCollector.MemoryEvents.Included/Excluded` 控制。
+
+缺少 CPU、进程或 CSS 不影响读取；缺少 memory 绑定或文件时跳过该对象，非法内容仍报错。当前沙箱发现配置尚未开放，本路径使用合成来源验证。
+
 ### 内存状态
 
 容器字段来自 `memory.stat`，宿主机字段来自 `/proc/vmstat`，均受 `MetricCollector.Vmstat` 过滤规则影响。字段是否存在及其含义取决于内核和 cgroup 版本。

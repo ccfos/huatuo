@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–06 已完成；下一步为 07（内存指标迁移）。CubeSandbox 发现来源及生产采集配置尚未开放。
+当前进度：步骤 00–06 已完成；步骤 07 进行中（memory_events 已完成，memory_vmstat 和 memory_others 待完成）。CubeSandbox 发现来源及生产采集配置尚未开放。
 
 ## 开发与提交原则
 
@@ -802,3 +802,12 @@ CPU 使用率保留原差值、配额/cpuset 容量和回退在线核数规则�
 - cgroup-only 沙箱完整采集循环：v1 约 77 μs、82 allocs/op；v2 约 54 μs、77 allocs/op，主要开销仍为文件读取与解析。
 
 已更新中英文 CPU 指标参考。步骤 06 完成，下一步迁移内存文件指标；配置仍仅允许 Container 来源，不宣称 CubeSandbox 已可用，也未新增沙箱 Guest 指标。
+
+
+### 步骤 07a：memory.events 使用公共内存绑定
+
+`memory_events` 读取已验证的 memory/unified 目录，不依赖 CPU、进程或 CSS；容器保持原普通容器筛选及指标输出，沙箱经既有 Pod 输出边界生成 `memory_events_workload_<字段>`。`MemoryEvents.Included/Excluded` 继续按字段名过滤。缺少绑定或文件只跳过该对象，坏文件仍返回错误，不回退到宿主机路径。
+
+新增 memory-only Source/Manager 文件集成 fixture，覆盖 v1 分挂载及子树、v2、容器和两类沙箱、包含/排除规则、错误文件、文件与目录消失。metrics race 测试与集成测试通过。旧、新事件循环 benchmark 三次中位数为 20374 → 21443 ns/op、6664 → 6680 B/op、47 → 46 allocs/op；增加目录存在性检查，未增加来源查询。提交前执行构建和 `make check`。
+
+步骤 07 尚未完成：memory_others 待迁移，memory_vmstat 的旧 IncludedOnContainer/ExcludedOnContainer 是否复用于沙箱已向用户确认，答复前不修改该筛选语义。BPF 内存采集器仍在步骤 08 逐项迁移。

@@ -15,34 +15,28 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
-	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/matcher"
 
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/internal/utils/parseutil"
 	"github.com/ccfos/huatuo/pkg/metric"
 )
 
-type memEventsCollector struct {
-	cgroup cgroups.Cgroup
-}
+type memEventsCollector struct{}
 
 func init() {
 	tracing.RegisterEventTracing("memory_events", newMemEvents)
 }
 
 func newMemEvents() (*tracing.EventTracingAttr, error) {
-	cgroup, err := cgroups.NewManager()
-	if err != nil {
-		return nil, fmt.Errorf("memory events: init cgroup manager: %w", err)
-	}
-
 	return &tracing.EventTracingAttr{
-		TracingData: &memEventsCollector{
-			cgroup: cgroup,
-		}, Flag: tracing.FlagMetric,
+		TracingData: &memEventsCollector{}, Flag: tracing.FlagMetric,
 	}, nil
 }
 
@@ -53,18 +47,24 @@ func (c *memEventsCollector) Update() ([]*metric.Data, error) {
 		return nil, fmt.Errorf("memory events filter: %w", err)
 	}
 
-	containers, err := pod.NormalContainers()
+	workloads, err := pod.Pods()
 	if err != nil {
-		return nil, fmt.Errorf("get normal container: %w", err)
+		return nil, fmt.Errorf("get workloads: %w", err)
 	}
 
 	metrics := []*metric.Data{}
-	for _, container := range containers {
-		memoryPath := container.MemoryCgroupPath()
-		if memoryPath == "" {
+	for _, workload := range workloads {
+		if !isMemoryWorkload(workload) {
 			continue
 		}
-		raw, err := c.cgroup.MemoryEventRaw(memoryPath)
+		directory, err := workload.Cgroups.Directory("memory")
+		if err != nil {
+			continue
+		}
+		raw, err := parseutil.RawKV(filepath.Join(directory, "memory.events"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func (c *memEventsCollector) Update() ([]*metric.Data, error) {
 			}
 
 			metrics = append(metrics,
-				metric.NewContainerGaugeData(container, key, float64(value), fmt.Sprintf("memory events %s", key), nil))
+				metric.NewPodGaugeData(workload, key, float64(value), fmt.Sprintf("memory events %s", key), nil))
 		}
 	}
 

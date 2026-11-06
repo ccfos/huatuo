@@ -165,6 +165,12 @@ Memory reclaim and compaction can block tasks. These metrics record host cumulat
 
 Mainline and common distribution kernels without these interfaces do not emit the metrics; no additional module is needed. Use `memory_reclaim_container_directstall` for container direct-reclaim counts on standard kernels.
 
+### Memory Event Counts
+
+`memory_events` reads `memory.events` from the workload's bound memory/unified directory. Container names remain `memory_events_container_<field>`; sandboxes emit `memory_events_workload_<field>`, such as `memory_events_workload_oom`, with the six fixed workload labels. Kernel counts retain the existing Gauge type and `MetricCollector.MemoryEvents.Included/Excluded` field filters.
+
+No CPU, process or CSS binding is required. Missing memory bindings or files skip that workload; malformed contents remain errors. Sandbox discovery is not yet enabled in configuration; this path is validated with synthetic sources.
+
 ### Memory State
 
 Container fields come from `memory.stat`; host fields from `/proc/vmstat`. Both are subject to `MetricCollector.Vmstat` filters. Field availability and meanings depend on kernel and cgroup versions.
