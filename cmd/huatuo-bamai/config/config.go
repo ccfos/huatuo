@@ -17,11 +17,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ccfos/huatuo/core/autotracing"
 	"github.com/ccfos/huatuo/core/events"
@@ -87,12 +89,15 @@ type ProfilingConfig struct {
 	ToolDir string
 }
 
-// PodConfig controls Pod metadata discovery.
+// PodConfig controls workload discovery.
 type PodConfig struct {
-	KubeletReadOnlyPort   uint32 `default:"10255"`
-	KubeletAuthorizedPort uint32 `default:"10250"`
-	KubeletClientCertPath string
-	DockerAPIVersion      string `default:"1.24"`
+	Source                  string `default:"container"`
+	SyncIntervalSeconds     int    `default:"30"`
+	DiscoveryTimeoutSeconds int    `default:"10"`
+	KubeletReadOnlyPort     uint32 `default:"10255"`
+	KubeletAuthorizedPort   uint32 `default:"10250"`
+	KubeletClientCertPath   string
+	DockerAPIVersion        string `default:"1.24"`
 }
 
 // Config is the global huatuo-bamai configuration.
@@ -288,8 +293,22 @@ func (c *StorageConfig) Validate() error {
 	return nil
 }
 
-// Validate rejects invalid kubelet ports.
+// Validate rejects unsupported sources, invalid discovery durations and ports.
 func (c PodConfig) Validate() error {
+	if c.Source != "container" {
+		return fmt.Errorf("unsupported Pod.Source %q: only container is implemented", c.Source)
+	}
+	for _, setting := range []struct {
+		name  string
+		value int
+	}{
+		{"Pod.SyncIntervalSeconds", c.SyncIntervalSeconds},
+		{"Pod.DiscoveryTimeoutSeconds", c.DiscoveryTimeoutSeconds},
+	} {
+		if setting.value <= 0 || int64(setting.value) > math.MaxInt64/int64(time.Second) {
+			return fmt.Errorf("%s must be between 1 and %d seconds", setting.name, math.MaxInt64/int64(time.Second))
+		}
+	}
 	if c.KubeletReadOnlyPort > 65535 {
 		return errors.New("kubelet read-only port must not exceed 65535")
 	}
@@ -333,6 +352,11 @@ func update(values map[string]any, persist bool) error {
 		if err := internalconfig.Set(next, key, values[key]); err != nil {
 			return fmt.Errorf("%w: setting %q: %w", ErrInvalidUpdate, key, err)
 		}
+	}
+	current := configState.current.Load()
+	if next.Pod.Source != current.Pod.Source || next.Pod.SyncIntervalSeconds != current.Pod.SyncIntervalSeconds ||
+		next.Pod.DiscoveryTimeoutSeconds != current.Pod.DiscoveryTimeoutSeconds {
+		return fmt.Errorf("%w: changing Pod.Source, Pod.SyncIntervalSeconds or Pod.DiscoveryTimeoutSeconds requires a restart", ErrInvalidUpdate)
 	}
 	if err := next.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidUpdate, err)

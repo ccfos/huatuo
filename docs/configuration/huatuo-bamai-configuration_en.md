@@ -1278,9 +1278,9 @@ Remove `ascend_npu` from the global `BlackList` and restart the `huatuo-bamai` s
 
 These switches read the latest configuration on each collection. Changes made through the Node API take effect on the next collection.
 
-### 10. Pod and container information
+### 10. Workload discovery and container information
 
-This section configures the ports and credentials used to retrieve Pod information from kubelet and associate container and Pod labels.
+This section selects workload discovery and configures Host scheduling and kubelet connections. Only `Source = "container"` is currently supported: Host mode queries kubelet; `Mode = "sandbox"` retains Kata Guest local scanning and identity requirements. `cubesandbox`, `opensandbox` and unknown sources are rejected at startup.
 
 ```toml
 # Pod Configuration
@@ -1310,14 +1310,24 @@ This section configures the ports and credentials used to retrieve Pod informati
 # KubeletReadOnlyPort = 0, and KubeletAuthorizedPort = 0.
 #
 [Pod]
+    Source = "container"
+    SyncIntervalSeconds = 30
+    DiscoveryTimeoutSeconds = 10
     KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
 ```
 
 | Field | Description |
 | --- | --- |
+| `Source` | Default: `"container"`, currently the only supported source. Read at startup. |
+| `SyncIntervalSeconds` | Host discovery interval in seconds; positive integer, default `30`. Does not change metric intervals or the five-second Kata Guest scan. |
+| `DiscoveryTimeoutSeconds` | Overall timeout per Host discovery, in seconds; positive integer, default `10`. Kata Guest keeps its existing timeout. |
 | `KubeletReadOnlyPort` | Kubelet read-only port for retrieving the Pod list without authentication. Default: `10255`; port range: `1–65535`. Set to `0` to disable this method. |
 | `KubeletAuthorizedPort` | Kubelet HTTPS port for retrieving Pod information using certificate authentication. Default: `10250`; port range: `1–65535`. Set to `0` to disable this method. Recommended for production. |
 | `KubeletClientCertPath` | Kubelet client certificate and private key paths. The built-in default is `""`. Accepts two comma-separated paths or one PEM file containing both. The configuration file explicitly uses the paths under `/etc/kubernetes/pki/` shown above; verify them for your deployment. In non-Kubernetes environments, set both kubelet ports to `0` to disable Pod discovery. |
+
+Changes to `Pod.Source`, `Pod.SyncIntervalSeconds` or `Pod.DiscoveryTimeoutSeconds` require a restart. Runtime configuration updates reject actual changes without changing the in-memory snapshot or persisted file.
+
+Setting both kubelet ports to `0` still disables Host discovery; Kata Guest does not use these ports. `GuestBridge` requires discovery, so enabling it conflicts with the disable flag or with both Host kubelet ports set to zero.
 
 ### 11. Command-line options
 
@@ -1334,7 +1344,8 @@ huatuo-bamai --region <region> [options]
 | `--bpf-dir` | BPF object directory | `bpf` |
 | `--tools-bin-dir` | Tracing tool binary directory | `bin` |
 | `--region` | Deployment region (required) | - |
-| `--disable-kubelet` | Disable Pod discovery through kubelet | `false` |
+| `--disable-workload-discovery` | Disable the selected source and Guest local scanning; do not start the Manager. Local machine collection continues. | `false` |
+| `--disable-kubelet` | Deprecated alias of `--disable-workload-discovery`; also disables scanning in Guest mode | `false` |
 | `--disable-storage` | Disable storage backends | `false` |
 | `--enable-cgroup` | Enable resource limits in Huatuo's own cgroup (disabled by default) | `false` |
 | `--disable-tracing` | Disable a specified tracer; may be repeated | - |
@@ -1348,7 +1359,7 @@ Explicit configuration assignments override built-in defaults; comments are not 
 
 - **Log level**: `--log-debug` forces `Debug`. Otherwise, `Log.Level` is used, with `Info` as the default when omitted.
 - **Tracing blacklist**: `--disable-tracing` is merged with the configuration file's `BlackList`.
-- **Independent switches**: `--disable-kubelet` and `--disable-storage` disable Pod synchronization and storage backends, respectively. They have no same-named TOML fields, and enabling them does not bypass configuration validation.
+- **Independent switches**: `--disable-workload-discovery` (legacy alias: `--disable-kubelet`) and `--disable-storage` disable workload discovery and storage backends, respectively. They have no same-named TOML fields, and enabling them does not bypass configuration validation.
 
 ### 13. Configuration recommendations
 

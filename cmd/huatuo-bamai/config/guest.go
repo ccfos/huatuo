@@ -59,6 +59,9 @@ func (c *Config) validateGuestTransport() error {
 		if c.Mode == runmode.Sandbox {
 			return errors.New("GuestBridge requires Host mode")
 		}
+		if c.Pod.KubeletReadOnlyPort == 0 && c.Pod.KubeletAuthorizedPort == 0 {
+			return errors.New("GuestBridge requires workload discovery: enable a kubelet port")
+		}
 		if g.Port <= 2 || g.Port == ^uint32(
 			0,
 		) ||

@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–04 已完成；下一步为 05（显式来源配置和统一禁用开关）。CubeSandbox 发现与采集尚未开放。
+当前进度：步骤 00–05 已完成；下一步为 06（CPU 指标迁移并建立 workload 输出边界）。CubeSandbox 发现与采集尚未开放。
 
 ## 开发与提交原则
 
@@ -747,3 +747,22 @@ Container 发现、kubelet 配置与元数据解析、Docker/containerd 初始�
 Linux 隔离验证目录为 `/data1/huatuo-workload-20261105/rebase-20261106`。完整构建、全量 `make unit`、pod/container/metrics/events/autotracing/Guest 传输与网络命名空间相关 race 测试、HTTP/HTTPS/CRI/Host/Guest 集成及真实 cgroup v1 CPU/memory CSS 查询通过，`make check` 通过。首次冷缓存 lint 超过主线配置的 5 分钟上限；缓存预热后按原配置重跑通过，未放宽或关闭检查。
 
 步骤 05 尚未开始。后续资源采集迁移应包含此次主线新增的 reclaim/compaction、hungtask 归属与 CPU 自动采集变化；真实 Kata/CubeSandbox 场景验收仍按原计划执行。
+
+
+### 2026-11-06：事件触发后的来源状态重试
+
+CI 暴露了新 cgroup 已出现而 kubelet 尚未更新状态的时序：成功但过早的查询会等待 30 秒才再次发现对象。`da0ed25e` 在合并生命周期事件后的首次查询之外，以 1 秒、2 秒间隔再查询两次；未知事件同样适用，成功的有限查询结束后恢复正常周期，失败仍按既有策略退避。已用回归测试确认旧实现失败，修复后的 Pod race 测试、相关集成测试、构建和 `make check` 通过。
+
+新一轮 CI 的 Build/Lint/Vendor 通过；Rocky 8 在 `test_basic_runner.sh` 的超时清理检查中失败，尚未执行后续容器 IO 用例，不能据此宣称五种系统均已验收。PR 提交信息检查另受两条上游提交正文超过 80 字符影响。
+
+### 步骤 05：显式来源配置和统一禁用开关
+
+新增 `Pod.Source`，默认 `container`，当前仅允许 Container Host 和既有 Kata Guest；`cubesandbox`、`opensandbox`、空值及未知来源明确拒绝，禁用发现也不绕过配置校验。新增 Host 的 `Pod.SyncIntervalSeconds`（默认 30）和 `Pod.DiscoveryTimeoutSeconds`（默认 10），要求可表示的正整数秒；启动入口传给 Manager。Kata Guest 保留原 5 秒周期、10 秒超时和身份配置要求。
+
+`--disable-workload-discovery` 对 Host 和 Guest 都在构造来源前返回，不启动 Manager；`--disable-kubelet` 作为同一 CLI 参数的废弃别名保留。关闭发现不改变本机采集入口。启用 GuestBridge 且使用禁用参数时提前报错，禁用存储不能绕过；Host 的两个 kubelet 端口均为零时仍关闭发现，因此与启用 GuestBridge 冲突。
+
+来源、周期和超时仅启动时读取；运行时对独立字段或整个 Pod 对象的实际变更均要求重启，拒绝后内存快照和配置文件均不改变，同批普通字段也不部分提交。重复提交相同值仍允许。已同步三个示例配置及中英文配置说明。
+
+验证记录位于测试机 `rebase-20261106/logs/step05-*`：完整构建、全量 `make unit`、启动/config/handler race 测试通过。新增 HTTPS 集成测试通过生产启动入口验证一秒同步周期及一秒发现超时，真实 HTTP 请求在 Manager 截止时间到达后取消；测试不启动真实 kubelet 或操作已有容器。提交前运行 `make check`。
+
+步骤 05 完成；下一步迁移 CPU 采集及 workload 输出边界。CubeSandbox 来源、沙箱指标、GuestBridge 与真实场景验收仍按 06–22 推进，本次不开放。

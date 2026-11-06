@@ -26,11 +26,14 @@ import (
 
 func startGuestBridge(d *Daemon) (func(context.Context) error, error) {
 	cfg := config.Get().GuestBridge
-	if !cfg.Enabled || d.opts.DisableStorage {
+	if !cfg.Enabled {
 		return nil, nil
 	}
-	if d.opts.DisableKubelet {
-		return nil, fmt.Errorf("guestbridge: Host Pod discovery must be enabled")
+	if d.opts.DisableWorkloadDiscovery {
+		return nil, fmt.Errorf("guestbridge: workload discovery must be enabled")
+	}
+	if d.opts.DisableStorage {
+		return nil, nil
 	}
 	hostname, err := os.Hostname()
 	if err != nil {

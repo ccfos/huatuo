@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/runmode"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -46,5 +47,28 @@ func TestHostDocumentOrigin(t *testing.T) {
 	}
 	if metadata.SourceType != types.DocumentSourceHost {
 		t.Errorf("Host origin=%q", metadata.SourceType)
+	}
+}
+
+// TestDisabledWorkloadDiscovery 验证 Host 与 Guest 都不启动 Manager，Guest 即使
+// 未提供扫描身份也不构造扫描器；启用时仍校验既有 Guest 身份要求。
+func TestDisabledWorkloadDiscovery(t *testing.T) {
+	for _, mode := range []runmode.Mode{runmode.None, runmode.Baremetal, runmode.Sandbox} {
+		t.Run(string(mode), func(t *testing.T) {
+			d := &Daemon{opts: &Options{Mode: mode, DisableWorkloadDiscovery: true}}
+			cleanup, err := setupPodManager(d)
+			if cleanup != nil {
+				if closeErr := cleanup(t.Context()); closeErr != nil {
+					t.Error(closeErr)
+				}
+				t.Error("disabled discovery returned an active manager cleanup")
+			}
+			if err != nil || pod.DiscoveryInitialized() {
+				t.Errorf("disabled discovery started or failed: %v", err)
+			}
+		})
+	}
+	if _, err := setupPodManager(&Daemon{opts: &Options{Mode: runmode.Sandbox}}); err == nil {
+		t.Error("enabled Guest discovery accepted absent identity")
 	}
 }

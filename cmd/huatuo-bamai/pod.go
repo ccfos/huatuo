@@ -30,6 +30,11 @@ import (
 )
 
 func setupPodManager(d *Daemon) (func(context.Context) error, error) {
+	if d.opts.DisableWorkloadDiscovery {
+		log.Info("workload discovery disabled by --disable-workload-discovery")
+		return nil, nil
+	}
+	cfg := config.Get().Pod
 	var source pod.Source
 	var options pod.ManagerOptions
 	var err error
@@ -42,15 +47,15 @@ func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 		})
 		options = pod.ManagerOptions{ProcRoot: procfs.DefaultPath(), SyncInterval: 5 * time.Second}
 	} else {
-		if d.opts.DisableKubelet {
-			log.Infof("kubelet pod sync disabled by --disable-kubelet")
-			return nil, nil
+		options = pod.ManagerOptions{
+			SyncInterval:     time.Duration(cfg.SyncIntervalSeconds) * time.Second,
+			DiscoveryTimeout: time.Duration(cfg.DiscoveryTimeoutSeconds) * time.Second,
 		}
 		source, err = containerdiscovery.NewSource(&containerdiscovery.Options{
-			PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
-			PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
-			PodClientCertPath: config.Get().Pod.KubeletClientCertPath,
-			DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
+			PodReadOnlyPort:   cfg.KubeletReadOnlyPort,
+			PodAuthorizedPort: cfg.KubeletAuthorizedPort,
+			PodClientCertPath: cfg.KubeletClientCertPath,
+			DockerAPIVersion:  cfg.DockerAPIVersion,
 		})
 	}
 	if err != nil {

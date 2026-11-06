@@ -19,6 +19,8 @@ import (
 	"testing"
 )
 
+// TestGuestTransportConfiguration 验证 Host/Guest 传输组合、限制和路径校验，
+// 包括 GuestBridge 无可用发现端口时拒绝启动。
 func TestGuestTransportConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
@@ -27,6 +29,7 @@ func TestGuestTransportConfiguration(t *testing.T) {
 		{"disabled", "", true},
 		{"guest", "Mode=\"sandbox\"\n[GuestTransport]\nEnabled=true", true},
 		{"host", "[GuestBridge]\nEnabled=true", true},
+		{"bridge without discovery", "[GuestBridge]\nEnabled=true\n[Pod]\nKubeletReadOnlyPort=0\nKubeletAuthorizedPort=0", false},
 		{"host sender", "[GuestTransport]\nEnabled=true", false},
 		{"guest bridge", "Mode=\"sandbox\"\n[GuestBridge]\nEnabled=true", false},
 		{"small queue", "Mode=\"sandbox\"\n[GuestTransport]\nEnabled=true\nMaxPendingBytes=1", false},
