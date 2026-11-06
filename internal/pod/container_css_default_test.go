@@ -293,10 +293,10 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	record.pod = podFromContainer(record.container)
 	record.pod.Cgroups = CgroupBinding{CSS: map[string]uint64{"cpu": 9150}, directories: map[string]string{"cpu": "/bound-checkout"}}
 	store.commit(containerSnapshot{records: map[string]*containerRecord{id: record}, isComplete: true}, nil)
-	controller := newContainerController(store)
+	controller := newWorkloadManager(store)
 	workloadManagerMu.Lock()
 	previous := activeManager
-	activeManager = controller.workloadManager
+	activeManager = controller
 	workloadManagerMu.Unlock()
 	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
@@ -341,11 +341,11 @@ func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
 	oldNames := cgroupCssID2SubSysNameMap
 	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu"}
 	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldNames; cgroupCssMetaDataMap.Delete(uint64(765432)) })
-	controller := newContainerController(newTestContainerStore())
+	controller := newWorkloadManager(newTestContainerStore())
 	controller.full = false
 	workloadManagerMu.Lock()
 	previous := activeManager
-	activeManager = controller.workloadManager
+	activeManager = controller
 	workloadManagerMu.Unlock()
 	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: 42}
@@ -379,11 +379,11 @@ func TestUnknownCgroupEventRequestsFullRefresh(t *testing.T) {
 			store := newTestContainerStore()
 			previousView := containerView
 			containerView = store
-			controller := newContainerController(store)
+			controller := newWorkloadManager(store)
 			controller.full = false
 			workloadManagerMu.Lock()
 			previous := activeManager
-			activeManager = controller.workloadManager
+			activeManager = controller
 			workloadManagerMu.Unlock()
 			t.Cleanup(func() {
 				containerView = previousView

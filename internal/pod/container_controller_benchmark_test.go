@@ -18,11 +18,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
-
-	corev1 "k8s.io/api/core/v1"
 )
 
-func BenchmarkContainerControllerRefresh(b *testing.B) {
+func BenchmarkContainerSourceRefresh(b *testing.B) {
 	initMu.Lock()
 	previous := currContainerProvider
 	currContainerProvider = containerProviderContainerd
@@ -36,28 +34,15 @@ func BenchmarkContainerControllerRefresh(b *testing.B) {
 			}
 			list := runningPodListForTest(ids...)
 			store := newTestContainerStore()
-			c := newContainerController(store)
-			c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-			resolves := 0
-			c.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
-				resolves++
-				return containerRecordForTest(id), nil
-			}
-			snapshot, err, _ := c.refresh(b.Context(), nil, true)
-			if err != nil {
-				b.Fatal(err)
-			}
-			store.commit(snapshot, nil)
+			source := containerSourceForTest(list.Items)
+			manager := sourceManagerForTest(b, store, source)
 			b.ReportAllocs()
 			for b.Loop() {
-				snapshot, err, _ := c.refresh(b.Context(), nil, false)
+				snapshot, err, _ := manager.discover(b.Context(), nil, false)
 				if err != nil {
 					b.Fatal(err)
 				}
 				store.commit(snapshot, nil)
-			}
-			if resolves != size {
-				b.Fatalf("healthy containers were resolved again: got %d resolutions, want %d", resolves, size)
 			}
 		})
 	}

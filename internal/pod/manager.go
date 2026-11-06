@@ -213,15 +213,17 @@ func StartManager(source Source, options ManagerOptions) error {
 	if activeManager != nil {
 		return errors.New("workload manager is already running")
 	}
-	manager.initialize = func(context.Context) error {
-		// Missing CSS must not disable metadata and basic cgroup file collection.
-		if err := initCgroupLifecycle(); err != nil {
-			log.WithError(err).Warn("cgroup CSS unavailable; workload file collection remains enabled")
-		}
-		return nil
-	}
+	manager.initialize = initializeWorkloadResources
 	activeManager = manager
 	manager.start()
+	return nil
+}
+
+func initializeWorkloadResources(context.Context) error {
+	// Missing CSS must not disable metadata and basic cgroup file collection.
+	if err := initCgroupLifecycle(); err != nil {
+		log.WithError(err).Warn("cgroup CSS unavailable; workload file collection remains enabled")
+	}
 	return nil
 }
 

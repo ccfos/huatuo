@@ -87,6 +87,9 @@ type ContainerInfo struct {
 	Qos         ContainerQos  `json:"qos"`
 	RuntimeType string        `json:"runtime_type,omitempty"`
 	SandboxID   string        `json:"sandbox_id,omitempty"`
+
+	// CgroupPath preserves the legacy shared path independently of resource bindings.
+	CgroupPath string `json:"-"`
 }
 
 // PodByID returns the last published view without discovery or runtime I/O.
@@ -343,6 +346,10 @@ func containerFromWorkload(discovered, bound *Pod) *Container {
 	memory, memoryPresent := discovered.Cgroups.Controllers["memory"]
 	if !memoryPresent {
 		memory = discovered.Cgroups.Unified
+	}
+	if bound.Container.CgroupPath != "" {
+		container.CgroupPath = bound.Container.CgroupPath
+		memory = bound.Container.CgroupPath
 	}
 	// Old collectors assume both locations exist; an empty path could read
 	// the host root. The public Pod still exposes independently usable resources.

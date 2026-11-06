@@ -681,3 +681,15 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 原 PID 文件测试迁为 `container/runtime_test.go`，CRI 状态解析用例同步迁入，根包保留旧调用链路的 Kata 分类和实例校验回归。新增外部依赖集成测试使用原生 Docker HTTP 客户端和原生 CRI Unix socket gRPC 客户端，验证连接、状态目录、Kata 元数据、异常配置不发布结果及取消传递。测试服务是本次独立 fixture，不操作现有容器或沙箱；不能据此宣称真实 CubeSandbox 已接入。
 
 `logs/step04j-*` 记录 pod/container/autotracing race、HTTP/CRI socket 集成、旧 Host 生产启动、内核实例校验、完整构建及 `make check`。真实 `Source.Discover` 和启动调用方切换仍未完成，根包到协议子包的迁移期依赖仍待在该切换时消除。
+
+### 步骤 04k：Host 容器发现切换到 Source
+
+现有 `InitManager` 入口现在构造真正的 Container `Source`，通过公共 Manager 的 `Discover → bindDiscovery → Store` 链路发布结果。删除旧 controller 的逐成员缓存、三次重试上限和基于提示跳过健康成员的分支；每轮重新读取完整成员及元数据，周期、退避、超时和停止仍由唯一 Manager 循环负责。CSS 提示只提前触发下一轮完整发现，不直接决定成员增删。
+
+来源保留运行中普通容器和可重启 init sidecar 的筛选规则。重复 ID、身份解析失败和缺失 spec 将结果标为不完整；详情失败保留 nil 成员，仍可删除完整列表中已经消失的其他成员。查询失败和取消不能发布完整空集。Kata 运行时恢复不受重试次数限制，Store 继续保持同一实例的采集状态和代表对象优先级。
+
+来源提供实际 `/proc/<pid>/cgroup` 控制器位置，由公共 Manager 验证目录、进程、网络及 CSS。`ContainerInfo.CgroupPath` 暂存旧视图使用的共享路径，不序列化到公共元数据；旧 Container API 和旧采集器继续使用原路径，公共 Pod 使用真实控制器绑定。两者不共用路径字段，避免这次切换静默改变旧接口。缺失资源不回退到宿主机根 cgroup。configz 与默认文件均不可用时的原有 panic 行为保持不变。
+
+测试机 `172.16.135.140` 的 `logs/step04k-*` 记录 pod/container/autotracing race、真实 HTTP/HTTPS 生产入口、CRI socket、内核绑定、缺失 CSS、删除先于 kubelet 更新及整轮取消验证。基准使用本地内存中的 kubelet 列表和元数据解析 fixture，包含公共绑定与 Store 提交：1024 个容器完整刷新约 15.1 ms、3.70 MB、32711 次分配；不包含真实 kubelet/CRI 往返，不能作为真实节点容量结论。完整构建和提交前 `make check` 单独记录。
+
+步骤 04 尚未全部完成：Container Source 暂放在根包以复用迁移中的 runtime 状态；仍需完成来源子包的依赖方向、启动调用方注入，以及现有 Kata Guest 本地扫描接入 Source。本次只完成 Host 生产发现链路切换，未开放 CubeSandbox 来源。

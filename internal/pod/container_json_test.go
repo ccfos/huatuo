@@ -220,3 +220,22 @@ func TestWorkloadKataCompatibilityCSS(t *testing.T) {
 		t.Error("Kata compatibility mutated the public binding")
 	}
 }
+
+// Legacy API paths stay stable when public resource paths use kernel membership.
+func TestWorkloadCompatibilityLegacyPath(t *testing.T) {
+	for _, membership := range []string{"/actual-cpu", ""} {
+		raw := &Pod{
+			ID: "checkout", Type: TypeContainer,
+			Cgroups:   CgroupBinding{Controllers: map[string]string{"cpu": membership, "memory": "/actual-memory"}},
+			Container: &ContainerInfo{Type: ContainerTypeNormal, CgroupPath: "/kubepods/checkout"},
+			Labels:    map[string]any{labelHostNamespace: "default"},
+		}
+		legacy := containerFromWorkload(raw, raw)
+		if legacy == nil || legacy.CgroupPath != "/kubepods/checkout" || legacy.MemoryCgroupPath() != "/kubepods/checkout" {
+			t.Errorf("legacy shared path changed: %+v", legacy)
+		}
+		if raw.Cgroups.Controllers["cpu"] != membership || raw.Cgroups.Controllers["memory"] != "/actual-memory" {
+			t.Error("compatibility projection changed public resource paths")
+		}
+	}
+}

@@ -49,66 +49,6 @@ func runningPodListForTest(ids ...string) corev1.PodList {
 	return corev1.PodList{Items: []corev1.Pod{p}}
 }
 
-func TestContainerControllerIndependentOfGetters(t *testing.T) {
-	useContainerdForTest(t)
-	store := newContainerStore()
-	controller := newContainerController(store)
-	first, second := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	var mu sync.Mutex
-	list := runningPodListForTest(first)
-	entered, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
-	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
-		once.Do(func() {
-			close(entered)
-			select {
-			case <-release:
-			case <-ctx.Done():
-			}
-		})
-		mu.Lock()
-		defer mu.Unlock()
-		return list, nil
-	}
-	controller.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
-		return containerRecordForTest(id), nil
-	}
-	controller.start()
-	t.Cleanup(func() { controller.cancel(); <-controller.done })
-	sub := subscribeForTest(t, store)
-	<-entered
-	mu.Lock()
-	list = runningPodListForTest(first, second)
-	mu.Unlock()
-	controller.request(second, false)
-	close(release)
-	waitContainerViewForTest(t, sub, 2)
-	mu.Lock()
-	list = runningPodListForTest(second)
-	mu.Unlock()
-	controller.request(first, true)
-	timeout := time.After(time.Second)
-	for {
-		select {
-		case <-sub.Notify():
-		case <-timeout:
-			t.Fatal("container deletion required a getter")
-		}
-		update, err := sub.DrainEvents()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if update.Mode == ContainerUpdateFull && len(update.Events) == 1 {
-			return
-		}
-		for _, event := range update.Events {
-			if event.Kind == ContainerDeleted && event.Container.Key.ID == first {
-				return
-			}
-		}
-	}
-}
-
 func waitContainerViewForTest(t *testing.T, sub *ContainerSubscription, count int) {
 	t.Helper()
 	timeout := time.After(2 * time.Second)
@@ -131,378 +71,220 @@ func waitContainerViewForTest(t *testing.T, sub *ContainerSubscription, count in
 	}
 }
 
-func TestContainerControllerScopeAndPartialFailure(t *testing.T) {
+func containerPodForTest(id string) *Pod {
+	return &Pod{
+		ID: id, Type: TypeContainer, Name: id,
+		Cgroups:   CgroupBinding{Unified: "/" + id},
+		Container: &ContainerInfo{Type: ContainerTypeNormal},
+		Labels:    map[string]any{labelHostNamespace: "default"},
+	}
+}
+
+func containerSourceForTest(items []corev1.Pod) *containerSource {
+	return &containerSource{
+		fetch: func(context.Context) (corev1.PodList, error) { return corev1.PodList{Items: items}, nil },
+		resolve: func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*Pod, error) {
+			return containerPodForTest(id), nil
+		},
+	}
+}
+
+func sourceManagerForTest(t testing.TB, store *containerStore, source Source) *workloadManager {
+	t.Helper()
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager
+}
+
+func TestContainerSourceScope(t *testing.T) {
 	useContainerdForTest(t)
-	first, second, sidecar, initID := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
-	list := runningPodListForTest(first, second)
+	first, waiting, sidecar, initID := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	list := runningPodListForTest(first, waiting)
 	list.Items[0].Status.ContainerStatuses[1].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}
 	always := corev1.ContainerRestartPolicyAlways
 	list.Items[0].Spec.InitContainers = []corev1.Container{{Name: sidecar, RestartPolicy: &always}, {Name: initID}}
 	list.Items[0].Status.InitContainerStatuses = runningPodListForTest(sidecar, initID).Items[0].Status.ContainerStatuses
-	store := newTestContainerStore()
-	c := newContainerController(store)
-	c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
+	list.Items[0].Status.EphemeralContainerStatuses = runningPodListForTest(strings.Repeat("e", 64)).Items[0].Status.ContainerStatuses
+	source := containerSourceForTest(list.Items)
 	counts := make(map[string]int)
-	c.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
+	source.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*Pod, error) {
 		counts[id]++
-		return containerRecordForTest(id), nil
+		return containerPodForTest(id), nil
 	}
-	snapshot, err, retry := c.refresh(t.Context(), nil, true)
-	if err != nil || retry || len(snapshot.records) != 2 || snapshot.records[first] == nil || snapshot.records[sidecar] == nil {
-		t.Fatalf("scope=%v, err=%v", snapshot.records, err)
-	}
-	store.commit(snapshot, err)
-	snapshot, err, _ = c.refresh(t.Context(), map[string]bool{sidecar: false}, false)
-	if err != nil || counts[first] != 1 || counts[sidecar] != 2 {
-		t.Fatal("increment resolved unrelated containers")
-	}
-	store.commit(snapshot, err)
-	c.fetch = func(context.Context) (corev1.PodList, error) { return corev1.PodList{}, errors.New("query failed") }
-	snapshot, err, retry = c.refresh(t.Context(), nil, false)
-	store.commit(snapshot, err)
-	if err == nil || !retry || len(store.records) != 2 {
-		t.Fatal("failed query deleted cached containers")
-	}
-}
-
-func TestContainerControllerReadinessRetriesAreBounded(t *testing.T) {
-	useContainerdForTest(t)
-	id := strings.Repeat("a", 64)
-	store := newTestContainerStore()
-	c := newContainerController(store)
-	c.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
-	attempts := 0
-	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-		attempts++
-		return nil, errors.New("init pid not ready")
-	}
-	for i := 0; i < 4; i++ {
-		snapshot, err, retry := c.refresh(t.Context(), nil, i == 0)
-		store.commit(snapshot, err)
-		if err == nil || retry != (i < 2) {
-			t.Fatalf("attempt %d: err=%v retry=%t", i, err, retry)
+	for range 2 {
+		discovery, err := source.Discover(t.Context())
+		if err != nil || !discovery.Complete || len(discovery.Pods) != 2 || discovery.Pods[first] == nil || discovery.Pods[sidecar] == nil {
+			t.Errorf("running scope=%+v, err=%v", discovery, err)
 		}
 	}
-	if attempts != 3 {
-		t.Fatalf("attempts=%d", attempts)
-	}
-	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-		return containerRecordForTest(id), nil
-	}
-	snapshot, err, retry := c.refresh(t.Context(), map[string]bool{id: false}, false)
-	if err != nil || retry || snapshot.records[id] == nil {
-		t.Fatal("new hint did not recover readiness")
+	if counts[first] != 2 || counts[sidecar] != 2 {
+		t.Errorf("source did not refresh every member: %v", counts)
 	}
 }
 
-func TestContainerControllerShutdownCancelsFetch(t *testing.T) {
-	store := newContainerStore()
-	c := newContainerController(store)
-	entered := make(chan struct{})
-	c.fetch = func(ctx context.Context) (corev1.PodList, error) {
-		close(entered)
-		<-ctx.Done()
-		return corev1.PodList{}, ctx.Err()
-	}
-	c.start()
-	sub := subscribeForTest(t, store)
-	<-entered
-	c.cancel()
-	select {
-	case <-c.done:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown did not join I/O")
-	}
-	if _, err := sub.DrainEvents(); !errors.Is(err, ErrContainerSubscriptionClosed) {
-		t.Fatal(err)
-	}
-}
-
-func TestContainerControllerDeletionBeforeKubeletUpdate(t *testing.T) {
-	for _, name := range []string{"metadata available", "runtime already removed"} {
-		t.Run(name, func(t *testing.T) {
-			useContainerdForTest(t)
-			id := strings.Repeat("a", 64)
-			store := newTestContainerStore()
-			c := newContainerController(store)
-			list := runningPodListForTest(id)
-			c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-			c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-				return containerRecordForTest(id), nil
+// Confirmed membership deletion must proceed even when another member fails.
+func TestContainerSourceMetadataRecovery(t *testing.T) {
+	useContainerdForTest(t)
+	for _, kata := range []bool{false, true} {
+		t.Run(fmt.Sprintf("kata=%t", kata), func(t *testing.T) {
+			id, removed := strings.Repeat("a", 64), strings.Repeat("b", 64)
+			source := containerSourceForTest(runningPodListForTest(id, removed).Items)
+			failed := false
+			calls := 0
+			source.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*Pod, error) {
+				calls++
+				if failed {
+					return nil, errors.New("runtime temporarily unavailable")
+				}
+				p := containerPodForTest(id)
+				if kata {
+					p.Container.RuntimeType, p.Container.SandboxID = "io.containerd.kata-qemu.v2", "checkout-vm"
+				}
+				return p, nil
 			}
-			snapshot, err, _ := c.refresh(t.Context(), nil, true)
-			store.commit(snapshot, err)
-			sub := subscribeForTest(t, store)
-			if _, err := sub.DrainEvents(); err != nil {
+			store := newTestContainerStore()
+			manager := sourceManagerForTest(t, store, source)
+			snapshot, err, _ := manager.discover(t.Context(), nil, true)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if name == "runtime already removed" {
-				c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-					return nil, errors.New("init pid file no longer exists")
+			store.commit(snapshot, nil)
+			previous := store.records[id]
+			previous.pod.lifeResources["baseline"] = 6400
+			failed = true
+			source.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
+			for range 5 {
+				snapshot, err, retry := manager.discover(t.Context(), nil, false)
+				member, exists := snapshot.records[id]
+				if err == nil || !retry || !snapshot.isComplete || !exists || member != nil {
+					t.Errorf("failed member: complete=%t retry=%t exists=%t member=%+v err=%v", snapshot.isComplete, retry, exists, member, err)
 				}
-			}
-			hints := map[string]bool{id: true}
-			for range 4 {
-				snapshot, err, retry := c.refresh(t.Context(), hints, false)
 				store.commit(snapshot, err)
-				if !retry || store.records[id] == nil {
-					t.Fatalf("unconfirmed deletion: retry=%t, cached=%t", retry, store.records[id] != nil)
+				if store.records[id] != previous || store.records[removed] != nil {
+					t.Error("metadata failure advanced sync time or blocked confirmed deletion")
 				}
-				if update, err := sub.DrainEvents(); err != nil || len(update.Events) != 0 {
-					t.Fatalf("deletion hint changed the view: update=%+v, err=%v", update, err)
-				}
-				hints = nil
 			}
-			list = corev1.PodList{}
-			snapshot, err, retry := c.refresh(t.Context(), nil, false)
+			failed = false
+			snapshot, err, _ = manager.discover(t.Context(), nil, false)
 			store.commit(snapshot, err)
-			if err != nil || retry || store.records[id] != nil {
-				t.Fatalf("confirmed deletion: cached=%t, retry=%t, err=%v", store.records[id] != nil, retry, err)
+			current := store.records[id]
+			if err != nil || store.err != nil || calls != 8 || current.ref.Key != previous.ref.Key || current.pod.LifeResources("baseline") != 6400 {
+				t.Errorf("recovery lost the instance or stopped retrying: calls=%d err=%v", calls, err)
 			}
-			update, err := sub.DrainEvents()
-			if err != nil || len(update.Events) != 1 || update.Events[0].Kind != ContainerDeleted || update.Events[0].Container.Key.ID != id {
-				t.Fatalf("missing deletion event: update=%+v, err=%v", update, err)
+			if kata && !current.container.SyncedAt.Equal(previous.container.SyncedAt) {
+				t.Error("Kata refresh changed representative priority")
 			}
 		})
 	}
 }
 
-func TestContainerControllerUnmatchedCreationHintExpires(t *testing.T) {
+func TestContainerSourceIncompleteList(t *testing.T) {
 	useContainerdForTest(t)
-	id, unmatched := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	store := newTestContainerStore()
-	store.commit(containerSnapshot{records: map[string]*containerRecord{id: containerRecordForTest(id)}, isComplete: true}, nil)
-	sub := subscribeForTest(t, store)
-	if _, err := sub.DrainEvents(); err != nil {
-		t.Fatal(err)
-	}
-	c := newContainerController(store)
-	c.fetch = func(context.Context) (corev1.PodList, error) { return corev1.PodList{}, nil }
-	hints := map[string]bool{unmatched: false}
-	for attempt := range 4 {
-		snapshot, err, retry := c.refresh(t.Context(), hints, false)
-		store.commit(snapshot, err)
-		if len(store.records) != 0 {
-			t.Fatal("unmatched hint retained a container absent from a complete list")
-		}
-		if retry != (attempt < 2) || (err != nil) != (attempt < 2) {
-			t.Fatalf("attempt=%d, retry=%t, err=%v", attempt, retry, err)
-		}
-		hints = nil
-	}
-	update, err := sub.DrainEvents()
-	if err != nil || update.Mode != ContainerUpdateFull || len(update.Events) != 0 {
-		t.Fatalf("expired hint blocked recovery: update=%+v, err=%v", update, err)
-	}
-}
-
-func TestContainerControllerMetadataFailureDoesNotPreventDeletion(t *testing.T) {
-	useContainerdForTest(t)
-	deleted, healthy, unresolved := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
-	store := newTestContainerStore()
-	previousView := containerView
-	containerView = store
-	t.Cleanup(func() { containerView = previousView })
-	store.commit(containerSnapshot{records: map[string]*containerRecord{
-		deleted: containerRecordForTest(deleted), healthy: containerRecordForTest(healthy),
-	}, isComplete: true}, nil)
-	sub := subscribeForTest(t, store)
-	if _, err := sub.DrainEvents(); err != nil {
-		t.Fatal(err)
-	}
-	c := newContainerController(store)
-	c.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(healthy, unresolved), nil }
-	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-		return nil, errors.New("init pid not ready")
-	}
-	snapshot, err, _ := c.refresh(t.Context(), nil, false)
-	if err == nil || !snapshot.isComplete {
-		t.Fatalf("metadata failure changed membership completeness: complete=%t, err=%v", snapshot.isComplete, err)
-	}
-	store.commit(snapshot, err)
-	if cached, err := ContainerByID(deleted); err != nil || cached != nil {
-		t.Fatalf("deleted container still available: cached=%v, err=%v", cached, err)
-	}
-	if store.records[healthy] == nil || store.records[unresolved] != nil {
-		t.Fatal("partial metadata resolution lost a healthy container or published a nil record")
-	}
-	if _, err := sub.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) {
-		t.Fatalf("incomplete metadata view became available: %v", err)
-	}
-	c.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
-		return containerRecordForTest(id), nil
-	}
-	snapshot, err, _ = c.refresh(t.Context(), nil, false)
-	store.commit(snapshot, err)
-	update, err := sub.DrainEvents()
-	if err != nil || update.Mode != ContainerUpdateFull || len(update.Events) != 2 {
-		t.Fatalf("recovery did not publish a full view: update=%+v, err=%v", update, err)
-	}
-	for _, event := range update.Events {
-		if event.Container.Key.ID == deleted {
-			t.Fatal("recovery resurrected the deleted container")
-		}
-	}
-}
-
-func TestContainerControllerIncompleteListPreservesMetadata(t *testing.T) {
-	for _, name := range []string{"request failure", "missing spec", "invalid container id"} {
-		t.Run(name, func(t *testing.T) {
-			useContainerdForTest(t)
-			id, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	id, retained, fresh := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	for _, reason := range []string{"duplicate", "cross pod duplicate", "missing spec", "invalid ID", "query failure"} {
+		t.Run(reason, func(t *testing.T) {
 			store := newTestContainerStore()
-			store.commit(containerSnapshot{records: map[string]*containerRecord{id: containerRecordForTest(id)}, isComplete: true}, nil)
-			c := newContainerController(store)
-			list := runningPodListForTest(other)
-			switch name {
+			source := containerSourceForTest(runningPodListForTest(id, retained).Items)
+			manager := sourceManagerForTest(t, store, source)
+			snapshot, err, _ := manager.discover(t.Context(), nil, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.commit(snapshot, nil)
+			previous := store.records[id]
+			list := runningPodListForTest(id, fresh)
+			switch reason {
+			case "duplicate":
+				list = runningPodListForTest(id, id, fresh)
+			case "cross pod duplicate":
+				list.Items = append(list.Items, runningPodListForTest(id).Items...)
 			case "missing spec":
-				list.Items[0].Spec.Containers = nil
-			case "invalid container id":
+				list.Items[0].Spec.Containers = list.Items[0].Spec.Containers[1:]
+			case "invalid ID":
 				list.Items[0].Status.ContainerStatuses[0].ContainerID = "containerd://invalid"
 			}
-			c.fetch = func(context.Context) (corev1.PodList, error) {
-				if name == "request failure" {
+			source.fetch = func(context.Context) (corev1.PodList, error) {
+				if reason == "query failure" {
 					return corev1.PodList{}, errors.New("kubelet unavailable")
 				}
 				return list, nil
 			}
-			snapshot, err, _ := c.refresh(t.Context(), nil, false)
-			if err == nil || snapshot.isComplete {
-				t.Fatalf("invalid list accepted: complete=%t, err=%v", snapshot.isComplete, err)
+			snapshot, err, retry := manager.discover(t.Context(), nil, false)
+			if err == nil || !retry || snapshot.isComplete {
+				t.Errorf("incomplete list: complete=%t retry=%t err=%v", snapshot.isComplete, retry, err)
 			}
 			store.commit(snapshot, err)
-			if store.records[id] == nil {
-				t.Fatal("incomplete list deleted cached metadata")
+			if store.records[id] != previous || store.records[retained] == nil {
+				t.Error("incomplete list replaced conflicting metadata or deleted absent members")
+			}
+			if reason != "query failure" && store.records[fresh] == nil {
+				t.Error("incomplete list discarded a valid member")
 			}
 		})
 	}
 }
 
-func TestContainerControllerReconcilesWithoutHint(t *testing.T) {
+func TestContainerSourceCancellation(t *testing.T) {
+	useContainerdForTest(t)
+	for _, phase := range []string{"fetch", "resolve"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			list := runningPodListForTest(strings.Repeat("a", 64))
+			source := containerSourceForTest(list.Items)
+			if phase == "fetch" {
+				source.fetch = func(context.Context) (corev1.PodList, error) { cancel(); return corev1.PodList{}, nil }
+			} else {
+				source.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*Pod, error) {
+					cancel()
+					return nil, nil
+				}
+			}
+			discovery, err := source.Discover(ctx)
+			if !errors.Is(err, context.Canceled) || discovery.Complete || len(discovery.Pods) != 0 {
+				t.Errorf("canceled discovery=%+v err=%v", discovery, err)
+			}
+		})
+	}
+}
+
+// Periodic refresh also handles runtime teardown before kubelet removes a row.
+func TestContainerSourceReconcilesWithoutGetters(t *testing.T) {
 	useContainerdForTest(t)
 	id := strings.Repeat("a", 64)
-	store := newContainerStore()
-	c := newContainerController(store)
-	c.resyncInterval = 25 * time.Millisecond
 	var mu sync.Mutex
 	list := runningPodListForTest(id)
-	c.fetch = func(context.Context) (corev1.PodList, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		return list, nil
-	}
-	c.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-		return containerRecordForTest(id), nil
-	}
-	c.start()
-	t.Cleanup(func() { c.cancel(); <-c.done })
-	sub := subscribeForTest(t, store)
-	waitContainerViewForTest(t, sub, 1)
+	source := containerSourceForTest(list.Items)
+	source.fetch = func(context.Context) (corev1.PodList, error) { mu.Lock(); defer mu.Unlock(); return list, nil }
+	store := newContainerStore()
+	manager := sourceManagerForTest(t, store, source)
+	manager.resyncInterval = 25 * time.Millisecond
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	subscriber := subscribeForTest(t, store)
+	waitContainerViewForTest(t, subscriber, 1)
 	mu.Lock()
 	list = corev1.PodList{}
 	mu.Unlock()
-	select {
-	case <-sub.Notify():
-	case <-time.After(2 * time.Second):
-		t.Fatal("missing CSS hint prevented periodic reconciliation")
-	}
-	update, err := sub.DrainEvents()
-	if err != nil || len(update.Events) != 1 || update.Events[0].Kind != ContainerDeleted || update.Events[0].Container.Key.ID != id {
-		t.Fatalf("missing deletion event: update=%+v, err=%v", update, err)
-	}
-}
-
-func TestControllerRefreshesKataRuntimeBinding(t *testing.T) {
-	oldProvider := currContainerProvider
-	currContainerProvider = containerProviderContainerd
-	t.Cleanup(func() { currContainerProvider = oldProvider })
-	id := strings.Repeat("a", 64)
-	list := runningPodListForTest(id)
-	store := newTestContainerStore()
-	controller := newContainerController(store)
-	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-	resolves := 0
-	controller.resolve = func(_ context.Context,
-		id string,
-		_ *corev1.Container,
-		status *corev1.ContainerStatus,
-		_ *corev1.Pod,
-	) (*containerRecord, error) {
-		resolves++
-		record := containerRecordForTest(id)
-		record.container.RuntimeType = "io.containerd.kata-qemu.v2"
-		record.container.SandboxID = "vm"
-		record.container.StartedAt = status.State.Running.StartedAt.Time
-		record.container.SyncedAt = time.Unix(int64(resolves), 0)
-		return record, nil
-	}
-	for range 2 {
-		snapshot, err, _ := controller.refresh(t.Context(), nil, false)
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case <-subscriber.Notify():
+		case <-timeout:
+			t.Error("periodic deletion required a getter or CSS hint")
+			return
+		}
+		update, err := subscriber.DrainEvents()
 		if err != nil {
 			t.Fatal(err)
 		}
-		store.commit(snapshot, nil)
-	}
-	if resolves != 2 {
-		t.Errorf("Kata resolutions=%d, want 2", resolves)
-	}
-	if !store.records[id].container.SyncedAt.Equal(time.Unix(1, 0)) {
-		t.Error("refresh changed representative priority")
-	}
-}
-
-// TestContainerControllerKataRefreshRecovery 验证已发现 Kata 容器的周期恢复：
-// 首次发布成功，随后五次运行时查询失败，运行时恢复后应重新查询并清除不可用状态。
-func TestContainerControllerKataRefreshRecovery(t *testing.T) {
-	useContainerdForTest(t)
-	id := strings.Repeat("cafe", 16)
-	list := runningPodListForTest(id)
-	store := newTestContainerStore()
-	controller := newContainerController(store)
-	controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-	var isUnavailable bool
-	var calls int
-	controller.resolve = func(_ context.Context,
-		id string, _ *corev1.Container, status *corev1.ContainerStatus, _ *corev1.Pod,
-	) (*containerRecord, error) {
-		calls++
-		if isUnavailable {
-			return nil, errors.New("runtime temporarily unavailable")
+		for _, event := range update.Events {
+			if event.Kind == ContainerDeleted && event.Container.Key.ID == id {
+				return
+			}
 		}
-		record := containerRecordForTest(id)
-		record.container.RuntimeType = "io.containerd.kata-qemu.v2"
-		record.container.SandboxID = "checkout-sandbox"
-		record.container.StartedAt = status.State.Running.StartedAt.Time
-		return record, nil
-	}
-	snapshot, err, _ := controller.refresh(t.Context(), make(map[string]bool), true)
-	if err != nil {
-		t.Fatalf("initial discovery: %v", err)
-	}
-	store.commit(snapshot, nil)
-	previous := store.records[id]
-	isUnavailable = true
-	for range 5 {
-		var retry bool
-		snapshot, err, retry = controller.refresh(t.Context(), make(map[string]bool), false)
-		if !retry {
-			t.Fatal("known Kata instance stopped retrying")
-		}
-		if err == nil {
-			t.Fatal("runtime outage was not observed")
-		}
-		store.commit(snapshot, err)
-		if store.records[id] != previous || !store.records[id].pod.SyncedAt.Equal(previous.pod.SyncedAt) {
-			t.Error("failed runtime query advanced successful sync or replaced cached metadata")
-		}
-	}
-	isUnavailable = false
-	beforeRecovery := calls
-	snapshot, err, _ = controller.refresh(t.Context(), make(map[string]bool), false)
-	store.commit(snapshot, err)
-	if err != nil || calls == beforeRecovery || store.err != nil {
-		t.Fatalf("healthy runtime never retried: calls before=%d after=%d refresh=%v view=%v",
-			beforeRecovery, calls, err, store.err)
 	}
 }
 
@@ -571,70 +353,6 @@ func TestWorkloadManagerSerialRefresh(t *testing.T) {
 	if calls != 2 || store.revision != revision || len(store.records) != 0 || store.isActive {
 		t.Errorf("canceled discovery changed state: calls=%d, revision=%d/%d, records=%d, active=%t",
 			calls, store.revision, revision, len(store.records), store.isActive)
-	}
-}
-
-// TestContainerControllerDuplicateMembers 验证同一列表内和跨 Pod 的重复 ID
-// 都保留为 nil 成员，不用冲突元数据覆盖旧视图，也不据此删除其他成员。
-func TestContainerControllerDuplicateMembers(t *testing.T) {
-	useContainerdForTest(t)
-	duplicate, retained, fresh := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
-	for _, separatePods := range []bool{false, true} {
-		t.Run(fmt.Sprintf("separate_pods=%t", separatePods), func(t *testing.T) {
-			store := newTestContainerStore()
-			previous := containerRecordForTest(duplicate)
-			store.commit(containerSnapshot{records: map[string]*containerRecord{
-				duplicate: previous, retained: containerRecordForTest(retained),
-			}, isComplete: true}, nil)
-			list := runningPodListForTest(duplicate, duplicate, fresh)
-			if separatePods {
-				list = runningPodListForTest(duplicate)
-				other := runningPodListForTest(duplicate, fresh)
-				list.Items = append(list.Items, other.Items...)
-			}
-			controller := newContainerController(store)
-			controller.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-			controller.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
-				record := containerRecordForTest(id)
-				record.container.Name = "conflicting-metadata"
-				return record, nil
-			}
-			snapshot, err, retry := controller.refresh(t.Context(), nil, true)
-			member, exists := snapshot.records[duplicate]
-			if err == nil || !strings.Contains(err.Error(), "duplicate") || snapshot.isComplete || !retry || !exists || member != nil {
-				t.Errorf("duplicate result: complete=%t retry=%t member=%+v exists=%t err=%v", snapshot.isComplete, retry, member, exists, err)
-			}
-			store.commit(snapshot, err)
-			if store.records[duplicate] != previous || store.records[retained] == nil || store.records[fresh] == nil {
-				t.Error("duplicate list replaced old metadata, deleted an absent member, or lost a valid new member")
-			}
-		})
-	}
-}
-
-// TestContainerControllerPendingMetadataKeepsSyncTime 验证有限重试耗尽后仍保留
-// 上次成功视图；成员列表完整时，其他已消失对象不受详情失败影响。
-func TestContainerControllerPendingMetadataKeepsSyncTime(t *testing.T) {
-	useContainerdForTest(t)
-	id, removed := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	store := newTestContainerStore()
-	previous := containerRecordForTest(id)
-	store.commit(containerSnapshot{records: map[string]*containerRecord{id: previous, removed: containerRecordForTest(removed)}, isComplete: true}, nil)
-	controller := newContainerController(store)
-	controller.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
-	controller.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*containerRecord, error) {
-		return nil, errors.New("runtime temporarily unavailable")
-	}
-	for attempt := range 4 {
-		snapshot, err, _ := controller.refresh(t.Context(), nil, attempt == 0)
-		member, exists := snapshot.records[id]
-		if err == nil || !snapshot.isComplete || !exists || member != nil {
-			t.Errorf("pending metadata result: complete=%t exists=%t member=%+v err=%v", snapshot.isComplete, exists, member, err)
-		}
-		store.commit(snapshot, err)
-		if store.records[id] != previous || store.records[removed] != nil {
-			t.Error("metadata outage advanced successful sync or blocked confirmed deletion")
-		}
 	}
 }
 

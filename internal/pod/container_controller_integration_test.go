@@ -87,9 +87,10 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	previousView := containerView
 	containerView = store
 	t.Cleanup(func() { containerView = previousView })
-	controller := newContainerController(store)
+	source := &containerSource{resolve: resolveContainerPod}
+	controller := sourceManagerForTest(t, store, source)
 	controller.resyncInterval = 25 * time.Millisecond
-	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
+	source.fetch = func(ctx context.Context) (corev1.PodList, error) {
 		return containerdiscovery.FetchPodList(ctx, server.Client(), server.URL)
 	}
 
@@ -100,9 +101,10 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	store.mu.RLock()
 	record := store.records[id]
 	store.mu.RUnlock()
-	if record.ref.InitPID != os.Getpid() || record.startTime == 0 || record.directory == nil {
+	if record.ref.InitPID != os.Getpid() || record.startTime == 0 {
 		t.Fatal("kernel binding missing")
 	}
+	assertContainerSourceKernelPaths(t, record)
 	// Runtime teardown and its CSS hint can precede kubelet's next status.
 	if err := os.Remove(filepath.Join(runtimeDir, "init.pid")); err != nil {
 		t.Fatal(err)
@@ -127,10 +129,14 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 			t.Fatal("HTTP deletion did not reach subscription")
 		}
 		update, err := sub.DrainEvents()
+		if errors.Is(err, ErrContainersUnavailable) {
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(update.Events) == 1 && update.Events[0].Kind == ContainerDeleted && update.Events[0].Container.Key == record.ref.Key {
+		if (update.Mode == ContainerUpdateFull && len(update.Events) == 0) ||
+			(len(update.Events) == 1 && update.Events[0].Kind == ContainerDeleted && update.Events[0].Container.Key == record.ref.Key) {
 			if cached, err := ContainerByID(id); err != nil || cached != nil {
 				t.Fatalf("deleted container remains available to the API: cached=%v, err=%v", cached, err)
 			}
@@ -152,9 +158,10 @@ func TestWorkloadManagerHTTPDeadline(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	store := newContainerStore()
-	controller := newContainerController(store)
+	source := &containerSource{resolve: resolveContainerPod}
+	controller := sourceManagerForTest(t, store, source)
 	controller.discoveryTimeout = 30 * time.Millisecond
-	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
+	source.fetch = func(ctx context.Context) (corev1.PodList, error) {
 		return containerdiscovery.FetchPodList(ctx, server.Client(), server.URL)
 	}
 	controller.start()
@@ -363,10 +370,44 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 		t.Error("CSS failure prevented container discovery")
 		return
 	}
-	if record.ref.InitPID != os.Getpid() || record.directory == nil || record.pod.Process == nil {
+	if record.ref.InitPID != os.Getpid() || record.pod.Process == nil {
 		t.Error("CSS failure prevented kernel resource binding")
 	}
+	assertContainerSourceKernelPaths(t, record)
 	if record.container.CgroupCss == nil {
 		t.Error("legacy empty CSS must remain a JSON object")
+	}
+}
+
+func assertContainerSourceKernelPaths(t *testing.T, record *containerRecord) {
+	t.Helper()
+	paths, err := cgroups.PathsForPID(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, controller := range []string{"cpu", "memory"} {
+		want := paths.Controllers[controller]
+		if cgroups.CgroupMode() == cgroups.Unified {
+			want = paths.Unified
+		}
+		got, bound := record.pod.Cgroups.Path(controller)
+		if want == "" || want == "/" {
+			if bound {
+				t.Errorf("%s bound the host root: %q", controller, got)
+			}
+			continue
+		}
+		if !bound || got != want {
+			t.Errorf("%s path=%q bound=%t, kernel path=%q", controller, got, bound, want)
+		}
+		if controller == "memory" && (record.directory == nil || record.ref.MemoryCgroupPath != want) {
+			t.Error("memory instance identity was not bound to the kernel path")
+		}
+	}
+	if record.pod.Network == nil || record.pod.Network.PID != os.Getpid() || record.pod.Network.NamespaceInum == 0 {
+		t.Error("container network namespace was not bound by the Manager")
+	}
+	if record.container.CgroupPath != "/kubepods/pod/"+record.pod.ID {
+		t.Errorf("legacy kubelet path changed: %q", record.container.CgroupPath)
 	}
 }
