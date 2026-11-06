@@ -1,0 +1,196 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package container
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"strings"
+	"time"
+
+	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/ccfos/huatuo/internal/log"
+)
+
+const (
+	kubeletOversizedResponseWarningInterval = 30 * time.Minute
+	maxKubeletResponseBodyBytes             = 128 << 20
+	maxKubeletErrorBodyBytes                = 8 << 10
+)
+
+var kubeletOversizedResponseWarning = &rate.Sometimes{Interval: kubeletOversizedResponseWarningInterval}
+
+// KubeletConfiguration contains the runtime settings needed for discovery.
+type KubeletConfiguration struct {
+	// cgroupDriver is the driver kubelet uses to manipulate CGroups on the host (cgroupfs
+	// or systemd).
+	// Default: "cgroupfs"
+	// +optional
+	CgroupDriver string `json:"cgroupDriver,omitempty"`
+	// ContainerRuntimeEndpoint is the endpoint of container runtime.
+	// Unix Domain Sockets are supported on Linux, while npipe and tcp endpoints are supported on Windows.
+	// Examples:'unix:///path/to/runtime.sock', 'npipe:////./pipe/runtime'
+	ContainerRuntimeEndpoint string `json:"containerRuntimeEndpoint"`
+}
+
+type kubeletConfigz struct {
+	Kubeletconfig KubeletConfiguration `json:"kubeletconfig"`
+}
+
+// FetchPodList reads one bounded kubelet response under the discovery deadline.
+func FetchPodList(ctx context.Context, client *http.Client, url string) (corev1.PodList, error) {
+	podList := corev1.PodList{}
+	body, err := httpRequestContext(ctx, client, url)
+	if err != nil {
+		return podList, err
+	}
+
+	if err := json.Unmarshal(body, &podList); err != nil {
+		return podList, fmt.Errorf(
+			"http: %s, Unmarshal: %w, body: %s",
+			url,
+			err,
+			requestErrorBody(body),
+		)
+	}
+
+	return podList, nil
+}
+
+// FetchKubeletConfig reads the kubelet configz endpoint.
+func FetchKubeletConfig(
+	ctx context.Context,
+	client *http.Client,
+	kubeletConfigURL string,
+) (KubeletConfiguration, error) {
+	empty := KubeletConfiguration{}
+
+	body, err := httpRequestContext(ctx, client, kubeletConfigURL)
+	if err != nil {
+		return empty, err
+	}
+
+	config := kubeletConfigz{}
+	if err := json.Unmarshal(body, &config); err != nil {
+		return empty, fmt.Errorf(
+			"http: %s, Unmarshal: %w, body: %s",
+			kubeletConfigURL,
+			err,
+			requestErrorBody(body),
+		)
+	}
+
+	return config.Kubeletconfig, nil
+}
+
+func httpRequestContext(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _, err := requestLimitedBody(resp.Body, maxKubeletErrorBodyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+		}
+		return nil, fmt.Errorf(
+			"http: %s, status: %d, body: %s", url,
+			resp.StatusCode,
+			requestErrorBody(body),
+		)
+	}
+
+	if resp.ContentLength > maxKubeletResponseBodyBytes {
+		err := fmt.Errorf(
+			"http: %s, response body declares %d bytes, limit is %d bytes",
+			url,
+			resp.ContentLength,
+			maxKubeletResponseBodyBytes,
+		)
+		kubeletOversizedResponseWarning.Do(func() {
+			log.WithError(err).
+				WithField("url", url).
+				WithField("declared_size_bytes", resp.ContentLength).
+				WithField("limit_bytes", maxKubeletResponseBodyBytes).
+				Warn("rejecting oversized kubelet response")
+		})
+		return nil, err
+	}
+
+	// ContentLength covers declared-size responses; the stream check below covers
+	// unknown, chunked, decompressed, and inaccurate length declarations.
+	body, truncated, err := requestLimitedBody(resp.Body, maxKubeletResponseBodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+	}
+	if truncated {
+		err := fmt.Errorf(
+			"http: %s, response body exceeds %d bytes",
+			url,
+			maxKubeletResponseBodyBytes,
+		)
+		kubeletOversizedResponseWarning.Do(func() {
+			log.WithError(err).
+				WithField("url", url).
+				WithField("observed_size_bytes", maxKubeletResponseBodyBytes+1).
+				WithField("limit_bytes", maxKubeletResponseBodyBytes).
+				Warn("rejecting oversized kubelet response")
+		})
+		return nil, err
+	}
+
+	return body, nil
+}
+
+func requestLimitedBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	if limit <= 0 || limit == math.MaxInt64 {
+		return nil, false, fmt.Errorf("invalid response byte limit %d", limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) <= limit {
+		return data, false, nil
+	}
+	// Preserve the probe byte so error formatting can identify truncation without
+	// carrying separate state.
+	return data, true, nil
+}
+
+func requestErrorBody(body []byte) string {
+	truncated := len(body) > maxKubeletErrorBodyBytes
+	if len(body) > maxKubeletErrorBodyBytes {
+		body = body[:maxKubeletErrorBodyBytes]
+	}
+	message := strings.TrimSpace(string(body))
+	if truncated {
+		message += fmt.Sprintf("... [truncated after %d bytes]", maxKubeletErrorBodyBytes)
+	}
+	return message
+}

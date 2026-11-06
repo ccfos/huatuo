@@ -653,3 +653,11 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 旧 Host 启动入口在 kubelet 查询配置成功后，CSS 初始化失败只记录告警并继续发现。行为与 Guest 入口、公共 Source 入口一致；基础文件指标与元数据不依赖 CSS 探针能力，不额外增加初始化线程。kubelet 或 runtime 的错误处理保持原有重试语义。
 
 新增生产启动路径集成用例，使用真实 HTTP 和本机 procfs、模拟 CSS 初始化失败，确认 Host 仍发布容器和内核绑定；同时回归 Guest 同场景。`logs/step04f-*` 记录上述集成测试、pod/autotracing race、完整构建及提交检查 `make check`。本次不启动或改动测试机上的现有沙箱。
+
+### 步骤 04g：迁出 kubelet 协议查询
+
+将 PodList/configz HTTP 查询、响应大小限制、错误正文截断及配置响应结构迁入 `internal/pod/container/kubelet.go`，不增加客户端接口或后台任务。原 HTTP 测试文件随实现搬迁为 `container/kubelet_test.go`；依赖旧初始化状态的取消用例留在公共包已有测试文件中。
+
+本次是分阶段搬迁：旧初始化适配器暂时调用子包的协议函数，子包目前不依赖根包。后续增加返回公共 Pod 的 Container Source 前，必须将其余来源初始化与调用方一起移出根包，消除这条临时反向调用，不能形成根包与来源子包相互导入。
+
+测试机 `logs/step04g-*` 记录根包、Container 子包和 autotracing race 测试通过；HTTP 发现、整轮取消、无 CSS 的生产启动路径集成测试以及完整构建通过。提交前运行 `make check`。步骤 04 的 Source 和启动入口最终切换仍待完成。

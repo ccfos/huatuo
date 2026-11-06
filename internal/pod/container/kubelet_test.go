@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pod
+package container
 
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -267,13 +266,13 @@ func TestKubeletDecodersBoundMalformedBodyDiagnostics(t *testing.T) {
 		}, nil
 	})}
 
-	_, podErr := kubeletFetchPodList(t.Context(), client, "http://test.kubelet.invalid/pods")
+	_, podErr := FetchPodList(t.Context(), client, "http://test.kubelet.invalid/pods")
 	if podErr == nil || !strings.Contains(podErr.Error(), "[truncated after 8192 bytes]") {
-		t.Fatalf("kubeletFetchPodList() error=%v, want bounded diagnostic", podErr)
+		t.Fatalf("FetchPodList() error=%v, want bounded diagnostic", podErr)
 	}
-	_, configErr := kubeletConfigDoRequest(t.Context(), client, "http://test.kubelet.invalid/configz")
+	_, configErr := FetchKubeletConfig(t.Context(), client, "http://test.kubelet.invalid/configz")
 	if configErr == nil || !strings.Contains(configErr.Error(), "[truncated after 8192 bytes]") {
-		t.Fatalf("kubeletConfigDoRequest() error=%v, want bounded diagnostic", configErr)
+		t.Fatalf("FetchKubeletConfig() error=%v, want bounded diagnostic", configErr)
 	}
 	for name, err := range map[string]error{"pods": podErr, "configz": configErr} {
 		if len(err.Error()) > maxKubeletErrorBodyBytes+512 {
@@ -498,19 +497,4 @@ func (t bodyReadErrorTransport) RoundTrip(_ *http.Request) (*http.Response, erro
 			iotest.ErrReader(t.readErr),
 		)),
 	}, nil
-}
-
-// TestKubeletInitializationCancellation 验证 configz 请求继承取消信号，
-// 取消后不尝试本地配置兜底，不会将正常停止误判为配置缺失并 panic。
-func TestKubeletInitializationCancellation(t *testing.T) {
-	previous := kubeletPodListClient
-	t.Cleanup(func() { kubeletPodListClient = previous })
-	kubeletPodListClient = &http.Client{Transport: kubeletRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-		return nil, request.Context().Err()
-	})}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := kubeletConfigCacheMustUpdate(ctx, &ManagerCtx{PodAuthorizedPort: 10250}); !errors.Is(err, context.Canceled) {
-		t.Errorf("config initialization cancellation=%v", err)
-	}
 }

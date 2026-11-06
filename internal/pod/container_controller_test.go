@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -853,5 +854,18 @@ func TestSourceManagerCancellation(t *testing.T) {
 	}
 	if store.revision != 0 || len(store.records) != 0 {
 		t.Error("late source result was published")
+	}
+}
+
+// TestKubeletInitializationCancellation 验证 configz 请求继承取消信号，
+// 取消后不尝试本地配置兜底，不会将正常停止误判为配置缺失并 panic。
+func TestKubeletInitializationCancellation(t *testing.T) {
+	previous := kubeletPodListClient
+	t.Cleanup(func() { kubeletPodListClient = previous })
+	kubeletPodListClient = &http.Client{}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := kubeletConfigCacheMustUpdate(ctx, &ManagerCtx{PodAuthorizedPort: 10250}); !errors.Is(err, context.Canceled) {
+		t.Errorf("config initialization cancellation=%v", err)
 	}
 }

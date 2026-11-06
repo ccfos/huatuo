@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -87,7 +88,7 @@ func TestContainerControllerHTTPAndKernelBinding(t *testing.T) {
 	controller := newContainerController(store)
 	controller.resyncInterval = 25 * time.Millisecond
 	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
-		return kubeletFetchPodList(ctx, server.Client(), server.URL)
+		return containerdiscovery.FetchPodList(ctx, server.Client(), server.URL)
 	}
 
 	controller.start()
@@ -152,7 +153,7 @@ func TestWorkloadManagerHTTPDeadline(t *testing.T) {
 	controller := newContainerController(store)
 	controller.discoveryTimeout = 30 * time.Millisecond
 	controller.fetch = func(ctx context.Context) (corev1.PodList, error) {
-		return kubeletFetchPodList(ctx, server.Client(), server.URL)
+		return containerdiscovery.FetchPodList(ctx, server.Client(), server.URL)
 	}
 	controller.start()
 	t.Cleanup(func() { controller.cancel(); <-controller.done })
