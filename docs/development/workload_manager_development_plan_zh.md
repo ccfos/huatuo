@@ -775,3 +775,10 @@ CI 暴露了新 cgroup 已出现而 kubelet 尚未更新状态的时序：成功
 CSS 缓存只在 Refresh 带来新信息时请求合并全量发现，重复通知不触发发现，避免绑定读文件与探针形成循环。回归覆盖首次补齐及实例不变，原重复通知测试验证不会自我唤醒。同步比较发生在栈上，重复事件无需创建新缓存对象。
 
 测试机 `rebase-20261106/logs/late-css-*` 记录 Pod/Container race、完整构建、真实 cgroup/BPF 绑定和删除集成验证通过。重复 CSS 通知 benchmark 三次中位数由 240.1 ns/op、120 B/op、3 allocs/op 降为 67.74 ns/op、0 B/op、0 allocs/op。提交前执行 `make check`；真实 QEMU 的 blkio 用例仍待新一轮 CI 确认。本次未开始 CPU 指标迁移。
+
+
+### 2026-11-07：适配 cpuidle 生命周期告警检查
+
+四个 QEMU 系统已通过容器 IO 集成测试，随后在 cpuidle E2E 生命周期阶段因预期发现告警失败。容器退出时，kubelet 的 Running 状态可短暂晚于 CRI 或 `/proc`；公共 Manager 会重试，但原测试只接受旧的创建延迟告警。
+
+仅扩展该用例的日志检查，接受来自公共 Manager 的单条“无匹配运行中 CRI 状态”或“目标 `/proc/<pid>` 已消失”告警。继续保留其他告警、权限错误和混合错误的失败判定，也保留原目标身份、运行负载和火焰图断言，不改变生产日志级别。对 CI 保存的 Ubuntu 26.04、Rocky 8、openEuler 24.03 生命周期日志回放由失败变为通过；额外注入权限错误或拼接错误仍失败。`bash -n` 通过，提交前运行 `make check`；完整 QEMU E2E 仍由新一轮 CI 验证。
