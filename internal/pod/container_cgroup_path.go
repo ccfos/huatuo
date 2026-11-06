@@ -15,7 +15,6 @@
 package pod
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path"
@@ -249,28 +248,25 @@ func ValidateContainerRef(ref ContainerRef) error {
 	if previous == nil || previous.ref != ref {
 		return fmt.Errorf("container %q instance is no longer current", ref.Key.ID)
 	}
-	var current *containerRecord
-	if previous.guest != nil {
-		process, readErr := previous.guest.readProcess(ref.InitPID)
-		if readErr != nil {
-			return readErr
+	if previous.pod.Container != nil && previous.pod.Container.Guest {
+		if err := validateGuestContainerRef(previous); err != nil {
+			return err
 		}
-		current, err = previous.guest.bind(context.Background(), &process)
 	} else {
-		pid, pidErr := containerInitPIDByID(ref.Key.ID)
-		if pidErr != nil {
-			return pidErr
+		pid, err := containerInitPIDByID(ref.Key.ID)
+		if err != nil {
+			return err
 		}
 		if pid != ref.InitPID {
 			return fmt.Errorf("container %q init pid changed", ref.Key.ID)
 		}
-		current, err = containerMemoryBinding(previous.container)
-	}
-	if err != nil {
-		return err
-	}
-	if !previous.sameInstance(current) {
-		return fmt.Errorf("container %q kernel binding changed", ref.Key.ID)
+		current, err := containerMemoryBinding(previous.container)
+		if err != nil {
+			return err
+		}
+		if !previous.sameInstance(current) {
+			return fmt.Errorf("container %q kernel binding changed", ref.Key.ID)
+		}
 	}
 	// A lifecycle commit may have raced with the kernel reads.
 	actual, err := ContainerRefByID(ref.Key.ID)

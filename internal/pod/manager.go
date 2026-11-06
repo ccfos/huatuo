@@ -36,6 +36,7 @@ const (
 // Discovery callbacks perform one synchronous attempt and never schedule work.
 type workloadManager struct {
 	store            *containerStore
+	procRoot         string
 	discover         func(context.Context, map[string]bool, bool) (containerSnapshot, error, bool)
 	initialize       func(context.Context) error
 	resyncInterval   time.Duration
@@ -55,7 +56,7 @@ var (
 
 func newWorkloadManager(store *containerStore) *workloadManager {
 	return &workloadManager{
-		store: store, resyncInterval: workloadResyncInterval, discoveryTimeout: workloadDiscoveryTimeout,
+		store: store, procRoot: procfs.DefaultPath(), resyncInterval: workloadResyncInterval, discoveryTimeout: workloadDiscoveryTimeout,
 		wake: make(chan struct{}, 1), hints: make(map[string]bool), full: true,
 		done: make(chan struct{}),
 	}
@@ -198,6 +199,8 @@ func (c *workloadManager) run(ctx context.Context) {
 }
 
 type ManagerOptions struct {
+	// ProcRoot keeps discovery and resource binding on the same local proc tree.
+	ProcRoot         string
 	SyncInterval     time.Duration
 	DiscoveryTimeout time.Duration
 }
@@ -241,6 +244,9 @@ func newSourceManager(store *containerStore, source Source, options ManagerOptio
 		return nil, errors.New("workload sync interval and discovery timeout must not be negative")
 	}
 	manager := newWorkloadManager(store)
+	if options.ProcRoot != "" {
+		manager.procRoot = options.ProcRoot
+	}
 	if options.SyncInterval > 0 {
 		manager.resyncInterval = options.SyncInterval
 	}
@@ -261,7 +267,7 @@ func newSourceManager(store *containerStore, source Source, options ManagerOptio
 
 func (m *workloadManager) bindDiscovery(ctx context.Context, kind string, discovery Discovery) (containerSnapshot, error) {
 	snapshot := containerSnapshot{records: make(map[string]*containerRecord, len(discovery.Pods)), isComplete: discovery.Complete}
-	mounts, _ := cgroupMounts()
+	mounts, _ := cgroupMountsAt(m.procRoot)
 	var resultErr error
 	for id, discovered := range discovery.Pods {
 		if err := ctx.Err(); err != nil {
@@ -284,7 +290,7 @@ func (m *workloadManager) bindDiscovery(ctx context.Context, kind string, discov
 		workload.SyncedAt = time.Time{}
 		locations := CgroupBinding{Unified: workload.Cgroups.Unified, Controllers: workload.Cgroups.Controllers}
 		workload.Cgroups = bindCgroups(locations, mounts)
-		bindHostResources(workload, procfs.DefaultPath())
+		bindHostResources(workload, m.procRoot)
 		record := &containerRecord{pod: workload, cgroupLocations: locations}
 		if kind == TypeContainer {
 			record.container = containerFromWorkload(discovered, workload)

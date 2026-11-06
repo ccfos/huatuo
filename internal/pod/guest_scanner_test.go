@@ -86,8 +86,21 @@ func guestDirectory(t testing.TB, root, path string) {
 	}
 }
 
+// Tests exercise the same Source and binding boundary as production startup.
+func discoverGuestForTest(t testing.TB, scanner *guestScanner, ctx context.Context) (containerSnapshot, error) {
+	t.Helper()
+	manager, err := newSourceManager(newTestContainerStore(), scanner, ManagerOptions{ProcRoot: scanner.options.ProcRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err, _ := manager.discover(ctx, nil, true)
+	return snapshot, err
+}
+
 func TestInitGuestManagerKeepsDiscoveryWithoutCSS(t *testing.T) {
 	scanner := guestFixture(t)
+	guestDirectory(t, scanner.options.CgroupRoot, "/"+guestCheckoutID)
+	guestProc(t, scanner, 150, 1, 100, "0::/"+guestCheckoutID+"\n")
 	previousView := containerView
 	previousLoader := cgroupSubSysLoader
 	previousIDs := cgroupCssID2SubSysNameMap
@@ -108,7 +121,7 @@ func TestInitGuestManagerKeepsDiscoveryWithoutCSS(t *testing.T) {
 		t.Fatal(err)
 	}
 	sub := subscribeForTest(t, containerView)
-	waitContainerViewForTest(t, sub, 0)
+	waitContainerViewForTest(t, sub, 1)
 	select {
 	case <-attempted:
 	default:
@@ -124,7 +137,7 @@ func TestGuestScannerDiscovery(t *testing.T) {
 	guestProc(t, s, 100, 150, 101, "0::"+path+"\n")
 	guestProc(t, s, 200, 1, 102, "0::/"+guestSidecarID+"\n")
 	guestProc(t, s, 1, 0, 1, "0::/\n")
-	snapshot, err := s.scan(t.Context())
+	snapshot, err := discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +171,7 @@ func TestGuestScannerCgroupNamespaces(t *testing.T) {
 				guestDirectory(t, s.options.CgroupRoot, "/other/"+guestCheckoutID)
 			}
 			guestProc(t, s, 150, 1, 100, "0::"+tc.reported+"\n")
-			snap, err := s.scan(t.Context())
+			snap, err := discoverGuestForTest(t, s, t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -191,7 +204,7 @@ func TestGuestScannerLegacyCgroups(t *testing.T) {
 				membership += "3:memory:" + memory + "\n"
 			}
 			guestProc(t, scanner, 150, 1, 100, membership)
-			snapshot, err := scanner.scan(t.Context())
+			snapshot, err := discoverGuestForTest(t, scanner, t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -218,13 +231,13 @@ func TestGuestScannerMountIdentity(t *testing.T) {
 	)
 	guestDirectory(t, s.options.CgroupRoot, "/"+guestCheckoutID)
 	guestProc(t, s, 150, 1, 100, "0::/"+guestCheckoutID+"\n")
-	snap, err := s.scan(t.Context())
+	snap, err := discoverGuestForTest(t, s, t.Context())
 	if err != nil || len(snap.records) != 1 {
 		t.Errorf("mount fallback=%+v, %v", snap, err)
 	}
 	guestFile(t, s.options.ProcRoot, "self/mountinfo", "")
 	guestFile(t, s.options.ProcRoot, "self/cgroup", "0::/unidentified\n")
-	if _, err := s.scan(t.Context()); err == nil {
+	if _, err := discoverGuestForTest(t, s, t.Context()); err == nil {
 		t.Error("unknown sidecar identity accepted")
 	}
 }
@@ -235,13 +248,13 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 	guestDirectory(t, s.options.CgroupRoot, path)
 	guestProc(t, s, 150, 1, 100, "0::"+path+"\n")
 	store := newTestContainerStore()
-	snap, err := s.scan(t.Context())
+	snap, err := discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.commit(snap, nil)
 	previous := store.records[guestCheckoutID]
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +267,7 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 	}
 	// An unreadable process must not be published as a deletion.
 	guestFile(t, s.options.ProcRoot, "150/stat", "malformed")
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err == nil || snap.isComplete {
 		t.Fatal("partial scan reported complete")
 	}
@@ -263,7 +276,7 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 		t.Error("partial scan deleted live container")
 	}
 	guestProc(t, s, 150, 1, 200, "0::"+path+"\n")
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +287,7 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(s.options.ProcRoot, "150")); err != nil {
 		t.Fatal(err)
 	}
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +297,7 @@ func TestGuestScannerFailureAndReplacement(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := s.scan(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := discoverGuestForTest(t, s, ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled scan=%v", err)
 	}
 }
@@ -296,7 +309,7 @@ func TestGuestScannerAmbiguousPath(t *testing.T) {
 	guestProc(t, s, 150, 1, 100, "0::"+path+"\n")
 
 	store := newTestContainerStore()
-	snap, err := s.scan(t.Context())
+	snap, err := discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +323,7 @@ func TestGuestScannerAmbiguousPath(t *testing.T) {
 	// the container ID is still known.
 	guestDirectory(t, s.options.CgroupRoot, "/other/"+guestCheckoutID)
 	guestFile(t, s.options.ProcRoot, "150/cgroup", "0::/../"+guestCheckoutID+"\n")
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatalf("binding metadata must not fail the scan: %v", err)
 	}
@@ -332,7 +345,7 @@ func TestGuestScannerAmbiguousPath(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(s.options.CgroupRoot, "other")); err != nil {
 		t.Fatal(err)
 	}
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +365,7 @@ func TestGuestScannerBindingFailureKeepsMembership(t *testing.T) {
 	guestProc(t, s, 200, 1, 200, "0::/missing/"+missingID+"\n")
 
 	store := newTestContainerStore()
-	snap, err := s.scan(t.Context())
+	snap, err := discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatalf("unresolvable container must not fail the scan: %v", err)
 	}
@@ -378,7 +391,7 @@ func TestGuestScannerBindingFailureKeepsMembership(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(s.options.ProcRoot, "150")); err != nil {
 		t.Fatal(err)
 	}
-	snap, err = s.scan(t.Context())
+	snap, err = discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,32 +405,53 @@ func TestGuestScannerBindingFailureKeepsMembership(t *testing.T) {
 }
 
 func TestGuestContainerReference(t *testing.T) {
-	s := guestFixture(t)
-	guestDirectory(t, s.options.CgroupRoot, "/"+guestCheckoutID)
-	guestProc(t, s, 150, 1, 100, "0::/"+guestCheckoutID+"\n")
-	snap, err := s.scan(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := containerView
-	containerView = newTestContainerStore()
-	t.Cleanup(func() { containerView = previous })
-	containerView.commit(snap, nil)
-	ref := containerView.records[guestCheckoutID].ref
-	if err := ValidateContainerRef(ref); err != nil {
-		t.Errorf("Guest validation contacted host runtime: %v", err)
-	}
-	guestProc(t, s, 150, 1, 101, "0::/"+guestCheckoutID+"\n")
-	if err := ValidateContainerRef(ref); err == nil {
-		t.Error("reused process accepted")
+	for _, mode := range []string{"unified", "private unified", "private v1", "v1 without memory"} {
+		t.Run(mode, func(t *testing.T) {
+			s := guestFixture(t)
+			path := "/workloads/" + guestCheckoutID
+			membership := "0::" + path + "\n"
+			switch mode {
+			case "unified":
+				guestDirectory(t, s.options.CgroupRoot, path)
+			case "private unified":
+				guestDirectory(t, s.options.CgroupRoot, path)
+				membership = "0::/../" + guestCheckoutID + "\n"
+			case "private v1":
+				guestDirectory(t, s.options.CgroupRoot, "cpu,cpuacct"+path)
+				guestDirectory(t, s.options.CgroupRoot, "memory"+path)
+				membership = "2:cpu,cpuacct:/../" + guestCheckoutID + "\n3:memory:/../" + guestCheckoutID + "\n"
+			case "v1 without memory":
+				guestDirectory(t, s.options.CgroupRoot, "cpu,cpuacct"+path)
+				membership = "2:cpu,cpuacct:" + path + "\n"
+			}
+			guestProc(t, s, 150, 1, 100, membership)
+			snap, err := discoverGuestForTest(t, s, t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := containerView
+			containerView = newTestContainerStore()
+			t.Cleanup(func() { containerView = previous })
+			containerView.commit(snap, nil)
+			ref := containerView.records[guestCheckoutID].ref
+			if err := ValidateContainerRef(ref); err != nil {
+				t.Errorf("Guest validation contacted host runtime or lost binding: %v", err)
+			}
+			guestProc(t, s, 150, 1, 101, membership)
+			if err := ValidateContainerRef(ref); err == nil {
+				t.Error("reused process accepted")
+			}
+		})
 	}
 }
 
 func TestGuestControllerLifecycle(t *testing.T) {
 	s := guestFixture(t)
 	store := newContainerStore()
-	controller := newWorkloadManager(store)
-	controller.discover = s.discover
+	controller, err := newSourceManager(store, s, ManagerOptions{ProcRoot: s.options.ProcRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
 	controller.resyncInterval = 10 * time.Millisecond
 	controller.start()
 	sub := subscribeForTest(t, store)
@@ -435,9 +469,13 @@ func BenchmarkGuestScan(b *testing.B) {
 	for pid := 100; pid < 132; pid++ {
 		guestProc(b, s, pid, 1, uint64(pid), "0::/"+guestCheckoutID+"\n")
 	}
+	manager, err := newSourceManager(newTestContainerStore(), s, ManagerOptions{ProcRoot: s.options.ProcRoot})
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := s.scan(context.Background()); err != nil {
+		if _, err, _ := manager.discover(b.Context(), nil, true); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -449,7 +487,7 @@ func TestGuestScannerPrivateCgroupRoot(t *testing.T) {
 	guestDirectory(t, s.options.CgroupRoot, "/workloads/"+guestCheckoutID)
 	guestProc(t, s, 150, 1, 100, "0::/../"+guestCheckoutID+"\n")
 	guestProc(t, s, 200, 1, 100, "0::/\n")
-	snapshot, err := s.scan(t.Context())
+	snapshot, err := discoverGuestForTest(t, s, t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +545,7 @@ func TestGuestScannerPublicResources(t *testing.T) {
 			const memoryCSS = 8500
 			cgroupCssMetaDataMap.Store(uint64(memoryCSS), &containerCssMetaData{CSS: memoryCSS, Inode: stat.Ino, SubSys: "memory"})
 			t.Cleanup(func() { cgroupCssMetaDataMap.Delete(uint64(memoryCSS)) })
-			snapshot, err := scanner.scan(t.Context())
+			snapshot, err := discoverGuestForTest(t, scanner, t.Context())
 			if err != nil {
 				t.Errorf("scan Guest: %v", err)
 				return
@@ -535,6 +573,86 @@ func TestGuestScannerPublicResources(t *testing.T) {
 			}
 			if pid, err := record.pod.NetworkPID(); err == nil || pid != 0 {
 				t.Errorf("Guest fabricated network PID=%d, err=%v", pid, err)
+			}
+		})
+	}
+}
+
+func TestGuestSourceReturnsLocations(t *testing.T) {
+	scanner := guestFixture(t)
+	guestDirectory(t, scanner.options.CgroupRoot, "/"+guestCheckoutID)
+	guestProc(t, scanner, 150, 1, 100, "0::/"+guestCheckoutID+"\n")
+	discovery, err := scanner.Discover(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workload := discovery.Pods[guestCheckoutID]
+	if !discovery.Complete || workload == nil || workload.Type != TypeContainer || scanner.Type() != TypeContainer {
+		t.Errorf("Guest discovery=%+v", discovery)
+		return
+	}
+	if !workload.SyncedAt.IsZero() || workload.lifeResources != nil || workload.Cgroups.CSS != nil ||
+		workload.Cgroups.directories != nil || workload.Process.startTime != 0 || workload.Network != nil {
+		t.Error("Guest source published bound resources or collection state")
+	}
+	store := newTestContainerStore()
+	manager, err := newSourceManager(store, scanner, ManagerOptions{ProcRoot: scanner.options.ProcRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.bindDiscovery(t.Context(), TypeContainer, discovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.commit(snapshot, nil)
+	record := store.records[guestCheckoutID]
+	if record == nil || record.pod.Process == nil || record.pod.Process.startTime != 100 || record.directory == nil {
+		t.Error("Manager did not bind Guest locations")
+	}
+	if workload.Process.startTime != 0 || workload.Cgroups.directories != nil {
+		t.Error("Manager mutated the source result")
+	}
+}
+
+func TestGuestReferenceMembershipAndDirectory(t *testing.T) {
+	for _, change := range []string{"container ID", "memory membership", "memory directory", "ambiguous private path"} {
+		t.Run(change, func(t *testing.T) {
+			scanner := guestFixture(t)
+			cpu, memory := "/cpu/"+guestCheckoutID, "/memory/"+guestCheckoutID
+			guestDirectory(t, scanner.options.CgroupRoot, "cpu,cpuacct"+cpu)
+			guestDirectory(t, scanner.options.CgroupRoot, "memory"+memory)
+			membership := "2:cpu,cpuacct:" + cpu + "\n3:memory:" + memory + "\n"
+			guestProc(t, scanner, 150, 1, 100, membership)
+			snapshot, err := discoverGuestForTest(t, scanner, t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			previous := containerView
+			containerView = newTestContainerStore()
+			t.Cleanup(func() { containerView = previous })
+			containerView.commit(snapshot, nil)
+			ref := containerView.records[guestCheckoutID].ref
+			if err := ValidateContainerRef(ref); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "container ID":
+				guestProc(t, scanner, 150, 1, 100, strings.ReplaceAll(membership, guestCheckoutID, strings.Repeat("c", 64)))
+			case "memory membership":
+				guestDirectory(t, scanner.options.CgroupRoot, "memory/other/"+guestCheckoutID)
+				guestProc(t, scanner, 150, 1, 100, strings.ReplaceAll(membership, memory, "/other/"+guestCheckoutID))
+			case "memory directory":
+				directory := filepath.Join(scanner.options.CgroupRoot, "memory", memory)
+				if err := os.Rename(directory, directory+"-old"); err != nil {
+					t.Fatal(err)
+				}
+				guestDirectory(t, scanner.options.CgroupRoot, "memory"+memory)
+			case "ambiguous private path":
+				guestDirectory(t, scanner.options.CgroupRoot, "memory/other/"+guestCheckoutID)
+				guestProc(t, scanner, 150, 1, 100, strings.ReplaceAll(membership, memory, "/../"+guestCheckoutID))
+			}
+			if err := ValidateContainerRef(ref); err == nil {
+				t.Error("changed Guest binding was accepted")
 			}
 		})
 	}

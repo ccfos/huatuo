@@ -90,6 +90,9 @@ type ContainerInfo struct {
 
 	// CgroupPath preserves the legacy shared path independently of resource bindings.
 	CgroupPath string `json:"-"`
+	// Guest preserves local scanning's timestamps and optional memory hierarchy.
+	Guest            bool   `json:"-"`
+	MemoryCgroupPath string `json:"-"`
 }
 
 // PodByID returns the last published view without discovery or runtime I/O.
@@ -351,9 +354,15 @@ func containerFromWorkload(discovered, bound *Pod) *Container {
 		container.CgroupPath = bound.Container.CgroupPath
 		memory = bound.Container.CgroupPath
 	}
-	// Old collectors assume both locations exist; an empty path could read
-	// the host root. The public Pod still exposes independently usable resources.
-	for _, membership := range []string{container.CgroupPath, memory} {
+	if bound.Container.Guest {
+		memory = bound.Container.MemoryCgroupPath
+	}
+	// Only Guest scanning has an existing explicit unavailable-memory contract.
+	// All other empty paths must not reach legacy collectors as the host root.
+	for i, membership := range []string{container.CgroupPath, memory} {
+		if i == 1 && membership == "" && bound.Container.Guest {
+			continue
+		}
 		if membership == "/" || !filepath.IsAbs(membership) || filepath.Clean(membership) != membership {
 			return nil
 		}

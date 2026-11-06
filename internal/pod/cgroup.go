@@ -75,7 +75,11 @@ func (b *CgroupBinding) ProcessDirectory() (string, error) {
 }
 
 func cgroupMounts() ([]*promprocfs.MountInfo, error) {
-	fs, err := procfs.NewDefaultFS()
+	return cgroupMountsAt(procfs.DefaultPath())
+}
+
+func cgroupMountsAt(root string) ([]*promprocfs.MountInfo, error) {
+	fs, err := procfs.NewFS(root)
 	if err != nil {
 		return nil, err
 	}

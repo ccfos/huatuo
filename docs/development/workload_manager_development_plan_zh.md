@@ -693,3 +693,19 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 测试机 `172.16.135.140` 的 `logs/step04k-*` 记录 pod/container/autotracing race、真实 HTTP/HTTPS 生产入口、CRI socket、内核绑定、缺失 CSS、删除先于 kubelet 更新及整轮取消验证。基准使用本地内存中的 kubelet 列表和元数据解析 fixture，包含公共绑定与 Store 提交：1024 个容器完整刷新约 15.1 ms、3.70 MB、32711 次分配；不包含真实 kubelet/CRI 往返，不能作为真实节点容量结论。完整构建和提交前 `make check` 单独记录。
 
 步骤 04 尚未全部完成：Container Source 暂放在根包以复用迁移中的 runtime 状态；仍需完成来源子包的依赖方向、启动调用方注入，以及现有 Kata Guest 本地扫描接入 Source。本次只完成 Host 生产发现链路切换，未开放 CubeSandbox 来源。
+
+### 步骤 04l：现有 Kata Guest 扫描接入 Source
+
+`guestScanner` 实现同一 `Source` 接口，只返回 `Discovery.Pods`、成员完整性及未经绑定的位置。`InitGuestManager` 通过公共 Source Manager 驱动发现、绑定和 Store 提交，删除直接返回内部快照的旧入口。保留现有 5 秒默认扫描周期、应用容器识别、sidecar 排除、代表进程选择和 Kubernetes 身份要求；本次不启用 CubeSandbox Guest，也不增加 Guest 指标。
+
+公共 Manager 新增 `ProcRoot` 选项，默认沿用进程现有配置；Guest 启动传入原有扫描根目录，使进程校验和 mountinfo 读取使用同一本地 proc 视图。未增加配置文件或命令行开关。Guest 来源仍负责私有 cgroup 命名空间的位置解析；CSS、可采集目录和进程绑定只由公共层生成。
+
+移除 Store 记录中的 `guestScanner` 指针。`ContainerInfo` 的不序列化兼容字段 `Guest`、`MemoryCgroupPath` 保留 Guest 的稳定首次发现时间、独立内存路径及“内存控制器不可用”语义。现有引用校验依据已发布的进程根目录重新核对进程身份、当前成员路径和内存目录，保留 PID 复用、路径歧义和目录身份变化的拒绝行为，不调用 Host runtime 或发现来源。
+
+现有 Guest 测试经 Source/Manager 边界执行，覆盖 nil 成员、不完整扫描、确认删除、取消、私有命名空间、分控制器路径、缺少内存控制器、CSS 不可用及引用校验。新增 `TestGuestSourceKernelLifecycle` 只创建测试专用 cgroup 和进程，使用真实内核 stat/cgroup 文件验证发布、刷新状态与退出删除，结束时清理；它验证本机扫描链路，不代表真实 Kata VM 或 CubeSandbox GuestBridge 已验收。
+
+测试机 `172.16.135.140` 的 `logs/step04l-*` 记录 pod/container/autotracing race、Host 和 Guest 内核集成、完整构建和提交前检查。同环境 32 个进程归属一个容器的基准，从 1.608 ms、152239 B、1510 次分配变为 1.642 ms、163781 B、1591 次分配；新测量包含 Source 结果到公共 Manager 绑定的复制，不包含 Store 提交，单次耗时波动不作为性能回归结论。
+
+`172.16.134.96`（Linux 5.10、cgroup v2）的 `step04l-integration-v2.log` 记录公共 cgroup 绑定和 Guest Source 内核生命周期测试均通过。只操作独立测试进程和 cgroup，未启动、停止或修改现有 CubeSandbox。
+
+步骤 04 剩余 Container 来源子包依赖整理和启动调用方注入。Host 与现有 Kata Guest 已走 Source/Manager，但 CubeSandbox 来源、配置和采集器迁移尚未完成。

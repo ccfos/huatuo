@@ -614,6 +614,8 @@ Source 填写待校验位置，不填写 CSS。发布给采集器的路径和 CS
 
 Store 每条记录以 Pod 为公共对象。为避免一次迁移全部调用方，可在同一记录内保留一次提交生成的只读 Container 兼容视图，和 Pod 共用同一份实例采集状态；禁止另建容器 Store 或独立更新该视图。来源返回的 map 和视图在提交前建立明确所有权，提交后不可原地变更。
 
+迁移期间，`ContainerInfo` 以不序列化字段保留旧视图所需的 `CgroupPath`、Guest 扫描标记及独立 `MemoryCgroupPath`。Guest 缺少内存控制器时，旧视图仍明确返回不可用，不回退到 CPU 路径。Manager 的 `ProcRoot` 选项接收原有 Guest 扫描根目录，使 mountinfo、进程及网络核验读取同一本地 proc 视图；默认沿用现有 proc 配置，不新增用户配置开关。Store 不保存来源实例或扫描器指针，Guest 引用校验使用已发布的进程与本机状态。
+
 现有 Kata `keepKataRepresentative` 会用容器 `SyncedAt` 保持首次发现成员优先，而公共 `Pod.SyncedAt` 表示最近成功提交时间。迁移时保留内部首次发现时间和旧容器视图的时间语义，Kata 代表排序继续使用原稳定时间；不能因普通同步重新选代表。旧容器 JSON 字段、类型及 QoS 编码不变。
 
 ### 首次资源就绪通知

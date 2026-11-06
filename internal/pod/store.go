@@ -29,7 +29,6 @@ type containerRecord struct {
 	container *Container
 	ref       ContainerRef
 	startTime uint64
-	guest     *guestScanner
 	guestPeer GuestPeer
 	directory os.FileInfo
 }
@@ -148,7 +147,7 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 			if record.pod.Type != TypeContainer && record.pod.StartedAt.IsZero() {
 				record.pod.StartedAt = previous.pod.StartedAt
 			}
-			if record.container != nil && previous.container != nil && (record.guest != nil ||
+			if record.container != nil && previous.container != nil && (record.pod.Container.Guest ||
 				(record.container.HostKataSandboxID() != "" &&
 					record.container.HostKataSandboxID() == previous.container.HostKataSandboxID())) {
 				record.container.StartedAt = previous.container.StartedAt

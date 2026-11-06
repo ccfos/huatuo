@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	promprocfs "github.com/prometheus/procfs"
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -80,39 +81,34 @@ func InitGuestManager(options GuestScannerOptions) error {
 	if activeManager != nil {
 		return errors.New("workload manager is already running")
 	}
-	controller := newWorkloadManager(containerView)
-
-	// Populate the CSS cache before discovery publishes BPF sampling targets.
-	// Missing kernel capabilities must not disable basic Guest discovery.
-	controller.initialize = func(context.Context) error {
-		if err := initCgroupLifecycle(); err != nil {
-			log.WithError(err).Warn("Guest cgroup CSS unavailable; container BPF sampling is limited")
-		}
-		return nil
+	controller, err := newSourceManager(containerView, scanner, ManagerOptions{
+		SyncInterval: options.Interval, ProcRoot: options.ProcRoot,
+	})
+	if err != nil {
+		return err
 	}
-	controller.discover = scanner.discover
-	controller.resyncInterval = options.Interval
+	controller.initialize = initializeWorkloadResources
 	activeManager = controller
 	controller.start()
 	return nil
 }
 
-func (s *guestScanner) discover(ctx context.Context, _ map[string]bool, _ bool) (containerSnapshot, error, bool) {
-	snapshot, err := s.scan(ctx)
-	return snapshot, err, err != nil
-}
+func (*guestScanner) Type() string { return TypeContainer }
 
-func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
+func (s *guestScanner) Discover(ctx context.Context) (Discovery, error) {
+	if err := ctx.Err(); err != nil {
+		return Discovery{}, err
+	}
 	entries, err := os.ReadDir(s.options.ProcRoot)
 	if err != nil {
-		return containerSnapshot{}, fmt.Errorf("read guest proc: %w", err)
+		return Discovery{}, fmt.Errorf("read guest proc: %w", err)
 	}
 	if _, err := os.ReadDir(s.options.CgroupRoot); err != nil {
-		return containerSnapshot{}, fmt.Errorf("read guest cgroups: %w", err)
+		return Discovery{}, fmt.Errorf("read guest cgroups: %w", err)
 	}
 	self, err := os.ReadFile(filepath.Join(s.options.ProcRoot, "self", "cgroup"))
 	if err != nil {
-		return containerSnapshot{}, fmt.Errorf("read guest self cgroup: %w", err)
+		return Discovery{}, fmt.Errorf("read guest self cgroup: %w", err)
 	}
 	selfID, selfPath, _, _ := parseGuestCgroups(string(self))
 	if selfID == "" {
@@ -121,13 +117,13 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 	// A private cgroup namespace reports the sidecar and its children as /.
 	// Those processes have no container ID and are already excluded below.
 	if selfID == "" && selfPath != "/" {
-		return containerSnapshot{}, fmt.Errorf("resolve guest sidecar identity: %w", err)
+		return Discovery{}, fmt.Errorf("resolve guest sidecar identity: %w", err)
 	}
 	processes := make(map[int]guestProcess)
 	var membershipErr error
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return containerSnapshot{}, err
+			return Discovery{}, err
 		}
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil || pid <= 0 || !entry.IsDir() {
@@ -150,19 +146,19 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 			grouped[process.containerID] = append(grouped[process.containerID], process)
 		}
 	}
-	snapshot := containerSnapshot{records: make(map[string]*containerRecord, len(grouped))}
+	discovery := Discovery{Pods: make(map[string]*Pod, len(grouped))}
 	for id, group := range grouped {
 		if err := ctx.Err(); err != nil {
-			return containerSnapshot{}, err
+			return Discovery{}, err
 		}
 		// Membership is known from the process scan. A nil record keeps the
 		// previous instance and prevents deletion while metadata is pending.
-		snapshot.records[id] = nil
+		discovery.Pods[id] = nil
 		process := representativeGuestProcess(group, processes)
-		record, err := s.bind(ctx, &process)
+		workload, err := s.resolve(ctx, &process)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return containerSnapshot{}, ctxErr
+				return Discovery{}, ctxErr
 			}
 			// Binding is retried on the next scan; it is metadata, not
 			// membership, so it must not block deletions for other containers.
@@ -170,13 +166,16 @@ func (s *guestScanner) scan(ctx context.Context) (containerSnapshot, error) {
 				Debug("guest container metadata unavailable")
 			continue
 		}
-		snapshot.records[id] = record
+		discovery.Pods[id] = workload
 	}
 	// Only unreadable process entries can hide containers from the membership
 	// view. Known containers whose binding failed stay present with a nil
 	// record and are retried without freezing the whole view.
-	snapshot.isComplete = membershipErr == nil
-	return snapshot, membershipErr
+	if err := ctx.Err(); err != nil {
+		return Discovery{}, err
+	}
+	discovery.Complete = membershipErr == nil
+	return discovery, membershipErr
 }
 
 func (s *guestScanner) readProcess(pid int) (guestProcess, error) {
@@ -324,7 +323,7 @@ func resolveGuestCgroup(ctx context.Context, root, path, id string) (string, err
 	return path, nil
 }
 
-func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*containerRecord, error) {
+func (s *guestScanner) resolve(ctx context.Context, process *guestProcess) (*Pod, error) {
 	if process.containerID == "" || process.pid <= 0 {
 		return nil, errors.New("guest process identity is missing")
 	}
@@ -334,14 +333,9 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 		return nil, err
 	}
 	var memory string
-	var directory os.FileInfo
 	if process.memoryPath != "" {
 		root := s.controllerRoot("memory", legacy)
 		memory, err = resolveGuestCgroup(ctx, root, process.memoryPath, process.containerID)
-		if err != nil {
-			return nil, err
-		}
-		directory, err = os.Lstat(filepath.Join(root, memory))
 		if err != nil {
 			return nil, err
 		}
@@ -357,20 +351,6 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 		qos = corev1.PodQOSGuaranteed
 	}
 	level, _ := parseContainerQos(ContainerTypeNormal, &corev1.Pod{Status: corev1.PodStatus{QOSClass: qos}})
-	now := time.Now()
-	container := &Container{
-		ID:         process.containerID,
-		Name:       process.containerID[:12],
-		Hostname:   s.options.PodName,
-		Type:       ContainerTypeNormal,
-		Qos:        level,
-		InitPid:    process.pid,
-		CgroupPath: cpu,
-		StartedAt:  now,
-		SyncedAt:   now,
-		Labels:     map[string]any{labelHostNamespace: s.options.PodNamespace},
-	}
-	container.memoryCgroupPath = &memory
 	locations := *process.cgroups
 	locations.Controllers = maps.Clone(locations.Controllers)
 	if legacy {
@@ -384,56 +364,124 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 	} else {
 		locations.Unified = cpu
 	}
-	workload := podFromContainer(container)
-	workload.Cgroups = CgroupBinding{}
-	procFS, err := procfs.NewFS(s.options.ProcRoot)
-	if err != nil {
-		return nil, err
-	}
-	if mounts, err := procFS.GetMounts(); err == nil {
+	if mounts, err := cgroupMountsAt(s.options.ProcRoot); err == nil {
 		for controller, membership := range locations.Controllers {
 			if !strings.HasPrefix(membership, "/../") {
 				continue
 			}
-			for _, mount := range mounts {
-				if _, exists := mount.SuperOptions[controller]; mount.FSType != "cgroup" || !exists {
-					continue
-				}
-				resolved, err := resolveGuestCgroup(ctx, mountPathUnescape.Replace(mount.MountPoint), membership, process.containerID)
-				if err == nil {
-					locations.Controllers[controller] = filepath.Join(mountPathUnescape.Replace(mount.Root), resolved)
-					break
-				}
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
+			resolved, err := resolveGuestMembership(ctx, mounts, controller, membership, process.containerID)
+			if err == nil {
+				locations.Controllers[controller] = resolved
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
 		}
-		workload.Cgroups = bindCgroups(locations, mounts)
 	}
-	bindHostResources(workload, s.options.ProcRoot)
 	current, err := s.readProcess(process.pid)
 	if err != nil {
 		return nil, err
 	}
-	if current.startTime != process.startTime ||
-		current.containerID != process.containerID ||
-		current.cpuPath != process.cpuPath ||
-		current.memoryPath != process.memoryPath ||
-		current.cgroups.Unified != process.cgroups.Unified ||
-		!maps.Equal(current.cgroups.Controllers, process.cgroups.Controllers) {
+	if !process.sameIdentity(&current) {
 		return nil, fmt.Errorf("guest process %d changed during discovery", process.pid)
 	}
-	container.applyResources(workload)
-	return &containerRecord{
-		container:       container,
-		pod:             workload,
-		cgroupLocations: locations,
-		ref:             ContainerRef{Key: ContainerKey{ID: process.containerID}, InitPID: process.pid, MemoryCgroupPath: memory},
-		startTime:       process.startTime,
-		directory:       directory,
-		guest:           s,
+	return &Pod{
+		ID: process.containerID, Type: TypeContainer, Name: process.containerID[:12],
+		Cgroups: locations, Process: &HostProcess{PID: process.pid}, StartedAt: time.Now(),
+		Labels: map[string]any{labelHostNamespace: s.options.PodNamespace},
+		Container: &ContainerInfo{
+			Hostname: s.options.PodName, Type: ContainerTypeNormal, Qos: level,
+			Guest: true, CgroupPath: cpu, MemoryCgroupPath: memory,
+		},
 	}, nil
+}
+
+func (p *guestProcess) sameIdentity(other *guestProcess) bool {
+	return p.startTime == other.startTime && p.containerID == other.containerID &&
+		p.cpuPath == other.cpuPath && p.memoryPath == other.memoryPath &&
+		p.cgroups != nil && other.cgroups != nil &&
+		p.cgroups.Unified == other.cgroups.Unified && maps.Equal(p.cgroups.Controllers, other.cgroups.Controllers)
+}
+
+// A private cgroup namespace may report paths above its visible root. Resolve
+// those against actual mounts; a normal absolute membership needs no search.
+func resolveGuestMembership(ctx context.Context, mounts []*promprocfs.MountInfo, controller, membership, id string) (string, error) {
+	if !strings.HasPrefix(membership, "/../") {
+		return membership, nil
+	}
+	var resultErr error
+	for _, mount := range mounts {
+		if controller == "" {
+			if mount.FSType != "cgroup2" {
+				continue
+			}
+		} else if _, exists := mount.SuperOptions[controller]; mount.FSType != "cgroup" || !exists {
+			continue
+		}
+		resolved, err := resolveGuestCgroup(ctx, mountPathUnescape.Replace(mount.MountPoint), membership, id)
+		if err == nil {
+			return filepath.Join(mountPathUnescape.Replace(mount.Root), resolved), nil
+		}
+		resultErr = errors.Join(resultErr, err)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+	}
+	return "", fmt.Errorf("resolve guest %s membership %q: %w", controller, membership,
+		errors.Join(errors.New("no usable cgroup mount"), resultErr))
+}
+
+// Validation uses the published process and mounts, not the discovery source.
+func validateGuestContainerRef(previous *containerRecord) error {
+	if previous.pod.Process == nil {
+		return errors.New("guest representative process is unavailable")
+	}
+	root := previous.pod.Process.procRoot
+	scanner := &guestScanner{options: GuestScannerOptions{ProcRoot: root}}
+	process, err := scanner.readProcess(previous.ref.InitPID)
+	if err != nil {
+		return err
+	}
+	if process.containerID != previous.pod.ID || process.startTime != previous.startTime {
+		return fmt.Errorf("guest process %d identity changed", previous.ref.InitPID)
+	}
+	mounts, err := cgroupMountsAt(root)
+	if err != nil {
+		return err
+	}
+	current := &containerRecord{ref: ContainerRef{InitPID: process.pid}, startTime: process.startTime}
+	for _, controller := range []string{"cpu", "memory"} {
+		membership := process.cgroups.Controllers[controller]
+		mountController := controller
+		if process.cgroups.Controllers["cpu"] == "" {
+			membership, mountController = process.cgroups.Unified, ""
+		}
+		if membership == "" {
+			continue
+		}
+		membership, err = resolveGuestMembership(context.Background(), mounts, mountController, membership, process.containerID)
+		if err != nil {
+			return err
+		}
+		_, info, err := resolveCgroupDirectory(mounts, mountController, membership)
+		if err != nil {
+			return err
+		}
+		if controller == "memory" {
+			current.ref.MemoryCgroupPath, current.directory = membership, info
+		}
+	}
+	if !previous.sameInstance(current) {
+		return fmt.Errorf("guest container %q kernel binding changed", previous.pod.ID)
+	}
+	after, err := scanner.readProcess(process.pid)
+	if err != nil {
+		return err
+	}
+	if !process.sameIdentity(&after) {
+		return fmt.Errorf("guest process %d changed during validation", process.pid)
+	}
+	return nil
 }
 
 func representativeGuestProcess(group []guestProcess, all map[int]guestProcess) guestProcess {
