@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs/dev"
@@ -38,13 +39,10 @@ const (
 	XFSLABEL_MAX = 12
 )
 
-// xfsDevLogSizes stores the maximum log size (in bytes) for each XFS device
-var (
-	xfsLogSizeMap map[string]float64
-)
-
 type xfsCollector struct {
+	mutex         sync.Mutex
 	deviceMetrics map[string][]*metric.Data
+	logSizes      map[string]float64
 }
 
 // Only the magic number, block size and log block count are named;
@@ -75,59 +73,90 @@ func newXFSCollector() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
-	devMetrics := make(map[string][]*metric.Data)
+	devMetrics := make(map[string][]*metric.Data, len(statsList))
 	for _, stats := range statsList {
-		device := stats.Name
-		metrics := make([]*metric.Data, 0, metricsPerDevice)
-		label := map[string]string{"device": device}
-
-		metricMetas := []struct {
-			name        string
-			description string
-		}{
-			{"log_free_bytes", "Available space in XFS log space"},
-			{"log_space_sleep_total", "Total sleep times in XFS log space"},
-			{"alloc_blocks_total", "Blocks allocated on XFS filesystem"},
-			{"alloc_extents_total", "Extents allocated on XFS filesystem"},
-			{"inode_missed_total", "Missed times in XFS inode cache"},
-			{"inode_attempts_total", "Attempt times in XFS inode cache"},
-			{"buf_busy_locked_total", "Busy locked times in XFS buffer"},
-			{"buf_locked_waited_total", "Waited times in XFS locked buffer"},
-		}
-
-		for _, meta := range metricMetas {
-			newData := metric.NewCounterData
-			if meta.name == "log_free_bytes" {
-				newData = metric.NewGaugeData
-			}
-			metrics = append(metrics, newData(
-				meta.name,
-				0,
-				meta.description,
-				label,
-			))
-		}
-		devMetrics[device] = metrics
+		devMetrics[stats.Name] = newXFSDeviceMetrics(stats.Name)
 	}
-
-	xfsLogSizeMap = getXFSLogMaxSize(statsList)
 
 	return &tracing.EventTracingAttr{
 		TracingData: &xfsCollector{
 			deviceMetrics: devMetrics,
+			logSizes:      getXFSLogMaxSize(statsList),
 		},
 		Flag: tracing.FlagMetric,
 	}, nil
 }
 
+func newXFSDeviceMetrics(device string) []*metric.Data {
+	metrics := make([]*metric.Data, 0, metricsPerDevice)
+	label := map[string]string{"device": device}
+
+	metricMetas := []struct {
+		name        string
+		description string
+	}{
+		{"log_free_bytes", "Available space in XFS log space"},
+		{"log_space_sleep_total", "Total sleep times in XFS log space"},
+		{"alloc_blocks_total", "Blocks allocated on XFS filesystem"},
+		{"alloc_extents_total", "Extents allocated on XFS filesystem"},
+		{"inode_missed_total", "Missed times in XFS inode cache"},
+		{"inode_attempts_total", "Attempt times in XFS inode cache"},
+		{"buf_busy_locked_total", "Busy locked times in XFS buffer"},
+		{"buf_locked_waited_total", "Waited times in XFS locked buffer"},
+	}
+
+	for _, meta := range metricMetas {
+		newData := metric.NewCounterData
+		if meta.name == "log_free_bytes" {
+			newData = metric.NewGaugeData
+		}
+		metrics = append(metrics, newData(
+			meta.name,
+			0,
+			meta.description,
+			label,
+		))
+	}
+	return metrics
+}
+
+// Reconcile only a successfully read device snapshot. Forget removed devices so
+// a later mount using the same name cannot inherit an old superblock log size.
+func (c *xfsCollector) syncDevices(statsList []*xfs.Stats) {
+	present := make(map[string]struct{}, len(statsList))
+	for _, stats := range statsList {
+		device := stats.Name
+		present[device] = struct{}{}
+		if _, exists := c.deviceMetrics[device]; !exists {
+			c.deviceMetrics[device] = newXFSDeviceMetrics(device)
+		}
+		if _, exists := c.logSizes[device]; !exists {
+			size, err := xfsLogSize(dev.Path(device))
+			if err == nil {
+				c.logSizes[device] = size
+			}
+		}
+	}
+	for device := range c.deviceMetrics {
+		if _, exists := present[device]; !exists {
+			delete(c.deviceMetrics, device)
+			delete(c.logSizes, device)
+		}
+	}
+}
+
 func (c *xfsCollector) Update() ([]*metric.Data, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
 	statsList, err := getXFSStatsList()
 	if err != nil {
 		log.Warnf("failed to get XFS system statslist: %v", err)
 		return nil, err
 	}
 
-	logFreeSizeMap := getXFSLogFreeSize(statsList)
+	c.syncDevices(statsList)
+	logFreeSizeMap := getXFSLogFreeSize(statsList, c.logSizes)
 	allMetrics := make([]*metric.Data, 0, len(statsList)*metricsPerDevice)
 	snapshots := make([]metric.Data, len(statsList)*metricsPerDevice)
 
@@ -231,12 +260,12 @@ func xfsLogSize(path string) (float64, error) {
 }
 
 // devXLogFreeBytes returns the available xlog space (in bytes) for each XFS device
-func getXFSLogFreeSize(statsList []*xfs.Stats) map[string]float64 {
+func getXFSLogFreeSize(statsList []*xfs.Stats, logSizes map[string]float64) map[string]float64 {
 	logFreeSizeMap := make(map[string]float64)
 
 	for _, stats := range statsList {
 		dev := stats.Name
-		maxSize, exists := xfsLogSizeMap[dev]
+		maxSize, exists := logSizes[dev]
 		if !exists {
 			log.Infof("max log size not found for device: %s", dev)
 			continue
