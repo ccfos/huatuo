@@ -56,7 +56,12 @@ func TestInspectModuleSymbolOverflow(t *testing.T) {
 			var data bytes.Buffer
 			for _, value := range []any{
 				header,
-				elf.Prog64{Type: uint32(elf.PT_LOAD), Flags: uint32(elf.PF_R)},
+				elf.Prog64{
+					Type:   uint32(elf.PT_LOAD),
+					Flags:  uint32(elf.PF_R),
+					Filesz: 384 + uint64(len(names)),
+					Memsz:  0x10000,
+				},
 				elf.Section64{},
 				elf.Section64{Type: uint32(elf.SHT_STRTAB), Off: 384, Size: uint64(len(names))},
 				elf.Section64{Type: uint32(elf.SHT_DYNSYM), Off: 312, Size: 72, Link: 1, Entsize: 24},

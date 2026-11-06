@@ -201,6 +201,14 @@ Container targets also require access to the huatuo-bamai node API to resolve co
 
 C, C++, and Go use the native eBPF collector; change only `--language`. On-CPU mode converts samples to CPU time using the sampling frequency and includes resolvable user and kernel stacks.
 
+Go CPU sampling supports internally and externally linked regular and PIE binaries.
+After ELF symbols are stripped with `-ldflags="-s -w"`, retained Go metadata
+can still provide function names. If the metadata cannot reliably identify a
+function's address range, addresses remain unresolved rather than being assigned
+guessed function names. User stacks depend on frame
+pointers; inlined or frameless functions may be missing from the call chain.
+`--thread-group` includes OS threads in the process, not goroutine ID attribution.
+
 ```bash
 sudo _output/bin/profiler \
   --type cpu \
