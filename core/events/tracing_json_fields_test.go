@@ -16,15 +16,25 @@ package events
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/tracing"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -308,4 +318,213 @@ func TestDynamicWindow(t *testing.T) {
 			assert.Equal(t, tc.want, string(got))
 		})
 	}
+}
+
+// Only the kernel boundary is replaced; document enrichment and persistence
+// use the production writer so this cannot pass by saving a hand-built document.
+func TestTxqueueTimeoutPersistsMockEvents(t *testing.T) {
+	path := t.TempDir()
+	store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
+		LocalFile: &tracingstore.LocalFileConfig{
+			Path: path, RotationSizeMiB: 1, MaxRotatedFiles: 1,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, store.Close(context.Background())) })
+	require.NoError(t, tracing.EnableDocumentWriter(store, document.New("test")))
+	t.Cleanup(tracing.DisableDocumentWriter)
+
+	// Keep the persisted contract independent of the production JSON tags.
+	type storedTxqueueData struct {
+		QueueIndex uint32 `json:"queue_index"`
+		Name       string `json:"device_name"`
+		Driver     string `json:"driver_name"`
+	}
+	want := []storedTxqueueData{
+		{QueueIndex: 0, Name: "eth0", Driver: "virtio_net"},
+		{QueueIndex: 7, Name: "eth1", Driver: "ixgbe"},
+		{QueueIndex: ^uint32(0), Name: "123456789abcdef", Driver: "123456789abcdef"},
+		{QueueIndex: 1, Name: "123456789abcdefX", Driver: "123456789abcdefY"},
+		{},
+	}
+	reader := &txqueueMockReader{}
+	for _, data := range want {
+		event := abi.NetdevTxqueueTimeoutEvent{QueueIndex: data.QueueIndex}
+		for i := range event.Name {
+			event.Name[i], event.Driver[i] = 'x', 'x'
+		}
+		copy(event.Name[:], data.Name+"\x00")
+		copy(event.Driver[:], data.Driver+"\x00")
+		var raw bytes.Buffer
+		require.NoError(t, binary.Write(&raw, binary.NativeEndian, event))
+		reader.samples = append(reader.samples, raw.Bytes())
+	}
+	// A lost sample must not terminate collection or produce an empty document.
+	reader.loseSample = true
+	object := &txqueueMockBPF{reader: reader}
+	before := time.Now()
+	err = (&txqueueTimeout{}).start(t.Context(), func(name string, constants map[string]any) (bpf.BPF, error) {
+		assert.Equal(t, "netdev_txqueue_timeout.o", name)
+		assert.Nil(t, constants)
+		return object, nil
+	})
+	require.ErrorIs(t, err, io.EOF)
+	assert.True(t, object.closed)
+	assert.True(t, reader.closed)
+	assert.True(t, object.detachRegistered)
+	assert.Equal(t, "perf_events", object.mapName)
+	assert.Equal(t, uint32(bpf.DefaultPerfEventBufferBytes), object.bufferBytes)
+	require.NoError(t, store.Close(t.Context()))
+
+	files, err := filepath.Glob(filepath.Join(path, "*"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	raw, err := os.ReadFile(files[0])
+	require.NoError(t, err)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	ids := make(map[string]bool)
+	for _, expected := range want {
+		var doc struct {
+			types.Document
+			TracerData storedTxqueueData `json:"tracer_data"`
+		}
+		require.NoError(t, decoder.Decode(&doc))
+		assert.Equal(t, "netdev_txqueue_timeout", doc.TracerName)
+		assert.Equal(t, types.TracerRunTypeEvent, doc.TracerRunType)
+		assert.NotEmpty(t, doc.TracerID)
+		assert.False(t, ids[doc.TracerID], "event IDs must be unique")
+		ids[doc.TracerID] = true
+		require.NotNil(t, doc.ObservedTimestamp)
+		assert.False(t, doc.ObservedTimestamp.Before(before))
+		assert.False(t, doc.ObservedTimestamp.After(time.Now()))
+		assert.Equal(t, expected, doc.TracerData)
+	}
+	var extra any
+	require.ErrorIs(t, decoder.Decode(&extra), io.EOF)
+}
+
+type txqueueMockBPF struct {
+	bpf.BPF
+	reader           *txqueueMockReader
+	attachErr        error
+	mapName          string
+	bufferBytes      uint32
+	closed           bool
+	detachRegistered bool
+}
+
+func (b *txqueueMockBPF) AttachAndEventPipe(ctx context.Context, name string, size uint32) (bpf.PerfEventReader, error) {
+	b.mapName, b.bufferBytes = name, size
+	if b.reader != nil {
+		b.reader.ctx = ctx
+	}
+	return b.reader, b.attachErr
+}
+
+func (b *txqueueMockBPF) Close() error {
+	b.closed = true
+	return nil
+}
+
+func (b *txqueueMockBPF) DetachOnContextDone(context.Context, context.CancelFunc) {
+	b.detachRegistered = true
+}
+
+type txqueueMockReader struct {
+	bpf.PerfEventReader
+	ctx         context.Context
+	readStarted chan struct{}
+	samples     [][]byte
+	loseSample  bool
+	closed      bool
+}
+
+func (r *txqueueMockReader) ReadInto(dst any) error {
+	if r.readStarted != nil {
+		close(r.readStarted)
+		<-r.ctx.Done()
+		return types.ErrExitByCancelCtx
+	}
+	if r.loseSample {
+		r.loseSample = false
+		return bpf.ErrPerfEventSamplesLost
+	}
+	if len(r.samples) == 0 {
+		return io.EOF
+	}
+	sample := r.samples[0]
+	r.samples = r.samples[1:]
+	return binary.Read(bytes.NewReader(sample), binary.NativeEndian, dst)
+}
+
+func (r *txqueueMockReader) Close() error {
+	r.closed = true
+	return nil
+}
+
+func TestTxqueueTimeoutMockFailures(t *testing.T) {
+	failure := errors.New("mock BPF failure")
+	t.Run("load", func(t *testing.T) {
+		err := (&txqueueTimeout{}).start(t.Context(), func(string, map[string]any) (bpf.BPF, error) {
+			return nil, failure
+		})
+		require.ErrorIs(t, err, failure)
+	})
+	t.Run("attach", func(t *testing.T) {
+		object := &txqueueMockBPF{attachErr: failure}
+		err := (&txqueueTimeout{}).start(t.Context(), func(string, map[string]any) (bpf.BPF, error) {
+			return object, nil
+		})
+		require.ErrorIs(t, err, failure)
+		assert.True(t, object.closed)
+		assert.False(t, object.detachRegistered)
+	})
+	t.Run("truncated sample", func(t *testing.T) {
+		reader := &txqueueMockReader{samples: [][]byte{{1}}}
+		object := &txqueueMockBPF{reader: reader}
+		err := (&txqueueTimeout{}).start(t.Context(), func(string, map[string]any) (bpf.BPF, error) {
+			return object, nil
+		})
+		require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+		assert.True(t, object.closed)
+		assert.True(t, reader.closed)
+	})
+	t.Run("canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		reader := &txqueueMockReader{}
+		object := &txqueueMockBPF{reader: reader}
+		err := (&txqueueTimeout{}).start(ctx, func(string, map[string]any) (bpf.BPF, error) {
+			return object, nil
+		})
+		require.NoError(t, err)
+		assert.True(t, object.closed)
+		assert.True(t, reader.closed)
+	})
+	t.Run("canceled during read", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		reader := &txqueueMockReader{readStarted: make(chan struct{})}
+		object := &txqueueMockBPF{reader: reader}
+		result := make(chan error, 1)
+		go func() {
+			result <- (&txqueueTimeout{}).start(ctx, func(string, map[string]any) (bpf.BPF, error) {
+				return object, nil
+			})
+		}()
+		select {
+		case <-reader.readStarted:
+		case <-ctx.Done():
+			t.Fatal("event reader did not start before the deadline")
+		}
+		cancel()
+		select {
+		case err := <-result:
+			require.ErrorIs(t, err, types.ErrExitByCancelCtx)
+		case <-time.After(time.Second):
+			t.Fatal("event consumer did not exit within one second of cancellation")
+		}
+		assert.True(t, object.closed)
+		assert.True(t, reader.closed)
+	})
 }
