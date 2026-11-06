@@ -20,9 +20,7 @@
 #include <unistd.h>
 
 #define KEEP_FRAME __attribute__((noinline, noclone))
-#ifndef PAGES_PER_ITERATION
 #define PAGES_PER_ITERATION 64
-#endif
 #define ITERATIONS 300
 #define ITERATION_DELAY_US 10000
 
