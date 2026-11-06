@@ -178,6 +178,17 @@ write_config_bamai_netdev_rdma_link() {
 	write_config_bamai_netdev "${RDMA_PORT}"
 }
 
+# The case selects one PFC-capable device and keeps other collectors out.
+write_config_bamai_netdev_dcb() {
+	write_config_blacklist_except netdev_dcb
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_http "127.0.0.1:${NETDEV_DCB_PORT}"
+	cat << EOF
+[MetricCollector.NetdevDCB]
+    DeviceList = ["${netdev_dcb_pattern}"]
+EOF
+}
+
 write_config_bamai_include_filter() {
 	write_config_bamai_default
 	cat << 'EOF'
