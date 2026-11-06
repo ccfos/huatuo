@@ -14,10 +14,7 @@
 
 package flamegraph
 
-import (
-	"sort"
-	"strings"
-)
+import "sort"
 
 // Stack represents a single stack trace with an aggregate sample weight.
 type Stack struct {
@@ -26,15 +23,6 @@ type Stack struct {
 	// Samples holds the aggregate weight in the profile's selected unit.
 	Samples int64
 }
-
-var foldedReplacer = strings.NewReplacer(
-	";",
-	":",
-	"\r",
-	" ",
-	"\n",
-	" ",
-)
 
 type processor struct {
 	frames   []frame
@@ -48,8 +36,7 @@ func (p *processor) Process(stack Stack) {
 
 	depth := 0
 	for _, name := range stack.Names {
-		// Preserve folded output normalization without encoding and splitting stacks.
-		name = strings.TrimSpace(foldedReplacer.Replace(name))
+		// Names are already structured frames, not folded text to normalize.
 		if name == "" {
 			continue
 		}

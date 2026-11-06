@@ -35,7 +35,7 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 	}
 	var err error
 	meta.AggregationConfig.ContainerID = cfg.ContainerID
-	meta.AggregationConfig.ProfileType, err = sampleType(&cfg)
+	meta.AggregationConfig.ProfileType, err = sampleType(implementation, &cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +61,10 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 		meta.Description = "Python CPU profiler using py-spy"
 		meta.Impl = &pythonCPUProfiler{config: cfg}
 		meta.AggregationMode = pipeline.AggregationModeOneShot
+	case implementation == profiling.ImplementationPython && cfg.Type == profiling.TypeMemory:
+		meta.Description = "Python memory profiler using Memray"
+		meta.Impl = &pythonMemoryProfiler{config: cfg}
+		meta.AggregationMode = pipeline.AggregationModeOneShot
 	default:
 		return nil, fmt.Errorf("no profiler for implementation=%q type=%q", implementation, cfg.Type)
 	}
@@ -68,7 +72,7 @@ func New(implementation profiling.Implementation, config *Config) (*profile.Prof
 	return meta, nil
 }
 
-func sampleType(cfg *Config) (string, error) {
+func sampleType(implementation profiling.Implementation, cfg *Config) (string, error) {
 	switch cfg.Type {
 	case profiling.TypeCPU:
 		if cfg.Mode == profiling.ModeOffCPU {
@@ -77,6 +81,9 @@ func sampleType(cfg *Config) (string, error) {
 
 		return profiling.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
+		if implementation == profiling.ImplementationPython && (cfg.Mode == "" || cfg.Mode == profiling.ModeObjectUsage) {
+			return profiling.ProfileTypeInUseSpace, nil
+		}
 		if cfg.Mode == profiling.ModePhysicalUsage {
 			return profiling.ProfileTypePhysicalUsage, nil
 		}

@@ -451,7 +451,7 @@ func TestOffCPUProfileTypeUsesNanosecondsWithoutSampleRate(t *testing.T) {
 		Mode: profiling.ModeOffCPU,
 		Freq: 99,
 	}
-	profileType, err := sampleType(cfg)
+	profileType, err := sampleType(profiling.ImplementationNative, cfg)
 	require.NoError(t, err)
 	require.Equal(t, "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds", profileType)
 }

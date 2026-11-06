@@ -30,6 +30,16 @@ PPROF_TOOL := $(APP_CMD_OUTPUT)/tools/pprof-tool
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 GO_BUILD_PARALLELISM ?= 2
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
+MEMRAY_BUNDLE_OUTPUT := $(ROOT_DIR)/$(APP_CMD_OUTPUT)/tools/memray
+MEMRAY_BUNDLE_ENABLED ?= 1
+
+ifeq ($(MEMRAY_BUNDLE_ENABLED),1)
+MEMRAY_BUILD_TARGET := prep-memray-bundle
+else ifeq ($(MEMRAY_BUNDLE_ENABLED),0)
+MEMRAY_BUILD_TARGET :=
+else
+$(error MEMRAY_BUNDLE_ENABLED must be 0 or 1)
+endif
 
 GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
 GO_BUILD_LDFLAGS := \
@@ -165,7 +175,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
-build: gen-build $(GO_SRCS)
+build: gen-build $(GO_SRCS) $(MEMRAY_BUILD_TARGET)
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -p $(GO_BUILD_PARALLELISM) -o $(APP_CMD_OUTPUT)/bin/ $(addprefix ./,$(APP_CMD_SUBDIRS))
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
@@ -174,6 +184,9 @@ build: gen-build $(GO_SRCS)
 
 install-tools:
 	@build/install-tools.sh
+
+prep-memray-bundle:
+	@bash $(ROOT_DIR)/build/fetch-memray-bundle.sh "$(MEMRAY_BUNDLE_OUTPUT)"
 
 $(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
@@ -262,4 +275,4 @@ integration: build test-build
 e2e: build test-build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build portable-generated check vendor clean test test-build unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools prep-memray-bundle gen-build portable-generated check vendor clean test test-build unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

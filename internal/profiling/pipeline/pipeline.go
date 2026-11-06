@@ -176,7 +176,8 @@ func (p *Pipeline) consumeBatch(ctx context.Context, item queuedBatch) error {
 func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	// Remote storage currently needs live totals; future snapshot destinations
 	// can reuse this state while local summary formats continue receiving deltas.
-	retain := p.profileType == profiling.ProfileTypePhysicalUsage && p.formatter.Name() == output.FormatRemoteStore
+	retainedMemory := p.profileType == profiling.ProfileTypeInUseSpace && p.aggregationMode == AggregationModeOneShot
+	retain := (p.profileType == profiling.ProfileTypePhysicalUsage || retainedMemory) && p.formatter.Name() == output.FormatRemoteStore
 	if !retain && p.aggregator.Empty() && len(p.droppedSamples) == 0 {
 		return nil
 	}
@@ -187,8 +188,12 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 	}
 
 	if len(p.droppedSamples) > 0 {
-		if p.profileType == profiling.ProfileTypePhysicalUsage {
-			return fmt.Errorf("physical usage collection lost samples: %v", p.droppedSamples)
+		if p.profileType == profiling.ProfileTypePhysicalUsage || retainedMemory {
+			name := "physical usage"
+			if retainedMemory {
+				name = "Python retained memory"
+			}
+			return fmt.Errorf("%s collection lost samples: %v", name, p.droppedSamples)
 		}
 
 		log.WithField("tracer_id", p.tracerID).
@@ -215,6 +220,12 @@ func (p *Pipeline) snapshot(ctx context.Context, end time.Time) error {
 		sealed.Aggregated = p.aggregator.Drain()
 		sealed.Aggregated.TimeNanos = start.UnixNano()
 		sealed.Aggregated.DurationNanos = end.Sub(start).Nanoseconds()
+	}
+	if !retain && p.aggregationMode == AggregationModeOneShot &&
+		(p.profileType == profiling.ProfileTypeMemSample || p.profileType == profiling.ProfileTypeInUseSpace) {
+		if err := output.ClampNegativeSamples(ctx, p.tracerID, &sealed.Aggregated); err != nil {
+			return err
+		}
 	}
 	p.windowStart = time.Time{}
 	p.droppedSamples = nil

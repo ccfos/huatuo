@@ -381,6 +381,12 @@ run_guest_tests() {
 	storage_prefetch_pids=()
 	trap stop_storage_image_prefetch EXIT
 	prefetch_storage_images
+	# Pods use imagePullPolicy=Never; Docker's image store is not the CRI store.
+	# Fail preparation rather than silently skipping the Python memory API case.
+	export PYTHON_MEMORY_CONTAINER_IMAGE=docker.io/library/python:3.12-slim
+	vm_log "preloading Python memory API image: ${PYTHON_MEMORY_CONTAINER_IMAGE}"
+	timeout 5m crictl pull "${PYTHON_MEMORY_CONTAINER_IMAGE}"
+	crictl inspecti "${PYTHON_MEMORY_CONTAINER_IMAGE}" > /dev/null
 	make install-tools
 	if [[ -f _output/portable-generated.commit ]]; then
 		make test SKIP_PORTABLE_GENERATION=1

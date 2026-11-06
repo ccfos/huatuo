@@ -23,4 +23,6 @@ const (
 	ProfileTypeLockTimeSample   = "process_lock:lock:nanoseconds:lock:nanoseconds"
 	ProfileTypeIRQTracingSample = "irqtracing:irq:count:irq:count"
 	ProfileTypePhysicalUsage    = "memory:physical_usage:bytes:space:bytes"
+	// ProfileTypeInUseSpace reports retained allocation bytes, not allocation traffic.
+	ProfileTypeInUseSpace = "memory:inuse_space:bytes:space:bytes"
 )

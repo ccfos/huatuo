@@ -178,7 +178,7 @@ func buildSearchQuery(filter *Filter) driver.Query {
 		query.Offset = filter.Offset
 	}
 	timestampField := types.DocumentFieldUploadedTimestamp
-	if filter != nil && filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+	if filter != nil && (filter.ProfileType == profiling.ProfileTypePhysicalUsage || filter.ProfileType == profiling.ProfileTypeInUseSpace) {
 		timestampField = types.DocumentFieldStartedTimestamp
 	}
 	query.Sorts = []driver.Sort{{Field: timestampField, Desc: true}}
@@ -192,7 +192,7 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	}
 	// Live snapshots are selected by observation time, independent of delivery lag.
 	timestampField := types.DocumentFieldUploadedTimestamp
-	if filter.ProfileType == profiling.ProfileTypePhysicalUsage {
+	if filter.ProfileType == profiling.ProfileTypePhysicalUsage || filter.ProfileType == profiling.ProfileTypeInUseSpace {
 		timestampField = types.DocumentFieldStartedTimestamp
 	}
 	if !filter.StartTime.IsZero() {

@@ -246,24 +246,28 @@ func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
 	}
 }
 
-func TestPhysicalUsageQueryUsesObservationTime(t *testing.T) {
-	start := time.Unix(100, 0)
-	query := buildSearchQuery(&Filter{
-		ProfileType: "memory:physical_usage:bytes:space:bytes",
-		ID:          "task",
-		StartTime:   start,
-		EndTime:     start.Add(time.Second),
-	})
-	if len(query.Sorts) != 1 || query.Sorts[0].Field != types.DocumentFieldStartedTimestamp || !query.Sorts[0].Desc {
-		t.Fatalf("sorts=%+v", query.Sorts)
-	}
-
-	for _, filter := range query.Filters {
-		if filter.Op == driver.OpGte || filter.Op == driver.OpLte {
-			if filter.Field != types.DocumentFieldStartedTimestamp {
-				t.Fatalf("time filter=%+v", filter)
+func TestSnapshotQueriesUseObservationTime(t *testing.T) {
+	for _, profileType := range []string{"memory:physical_usage:bytes:space:bytes", "memory:inuse_space:bytes:space:bytes"} {
+		t.Run(profileType, func(t *testing.T) {
+			start := time.Unix(100, 0)
+			query := buildSearchQuery(&Filter{
+				ProfileType: profileType,
+				ID:          "task",
+				StartTime:   start,
+				EndTime:     start.Add(time.Second),
+			})
+			if len(query.Sorts) != 1 || query.Sorts[0].Field != types.DocumentFieldStartedTimestamp || !query.Sorts[0].Desc {
+				t.Fatalf("sorts=%+v", query.Sorts)
 			}
-		}
+
+			for _, filter := range query.Filters {
+				if filter.Op == driver.OpGte || filter.Op == driver.OpLte {
+					if filter.Field != types.DocumentFieldStartedTimestamp {
+						t.Fatalf("time filter=%+v", filter)
+					}
+				}
+			}
+		})
 	}
 }
 

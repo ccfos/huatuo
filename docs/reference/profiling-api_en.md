@@ -77,6 +77,35 @@ CPU profiling for `c`, `c++`, and `go` supports `oncpu` and `offcpu`; `java` and
 | `c`, `c++`, `go` | `physical_usage` | Live bytes of physical pages tracked in this collection |
 | `java` | `object_alloc` | JVM object allocations |
 | `java` | `object_usage` | JVM live objects |
+| `python` | `object_usage` | Allocations made after Memray attaches and still live at collection end; bytes, not RSS |
+
+Python memory jobs use the installed Memray runtime, require `gdb` and ptrace
+permission on the node, and upload one final retained profile. The API uses
+Python-only stacks. To collect one, use the Java memory request below with
+`"language": "python"`, keeping `"mode": "object_usage"` and
+`"scope": "container"`. A job fails before attachment if its selected Python
+processes exceed the node's positive `Profiling.MaxConcurrentProcesses` limit.
+Concurrent memory jobs against the same Python process are rejected without
+interrupting the active capture.
+
+Python memory results use `profile_type=memory:inuse_space:bytes:space:bytes`
+and the pprof sample type `inuse_space`, in bytes. Use this result type when
+querying retained-memory profiles, not `alloc_space` (cumulative allocations).
+Only allocations observed after attachment are included. The request still uses
+`"type": "memory"`; existing Java/native result types are unchanged.
+
+A successful Python memory job stores one snapshot timestamped at collection
+completion, with zero duration. If no samples were delivered, it still stores
+an empty profile representing zero bytes, not a missing result. A capture
+without a valid Memray trailer fails and does not publish a completed result.
+
+For Python memory jobs, `Profiling.ToolDir` on the node is the shared tools
+root: install the bundle at `<ToolDir>/memray`. When unset, the profiler uses
+`../tools/memray` relative to its actual executable. The node validates GDB and
+the selected bundle's runtime artifacts before launching the job; the child
+then selects the target's Python version. A configured but missing bundle
+fails validation instead of falling back to the default. The CLI's `--tool-path`
+differs: it takes the Memray bundle root itself, not the shared tools root.
 
 ## Create a Task
 
@@ -270,8 +299,19 @@ than `=` is rejected as well, including `hostname!="*"`.
 
 The shared dashboard UID is `continuous-profiling`; variables are ordered as Region, node,
 scope, container, profile type, and task. The timeline and flame graph use the same task filter.
-With All containers selected, the task still identifies one target. Physical usage always
-requires one task and selects only the latest snapshot.
+With All containers selected, the task still identifies one target. Physical usage and
+Python retained memory (`memory:inuse_space:bytes:space:bytes`) require one task `id`.
+An absent, empty, `*`, or `all` task ID is rejected for these profile types, even with
+a host or container filter. The flame graph selects the latest profile timestamp
+within that task and time range, including a latest result of zero bytes; it never
+sums snapshots or falls back to an older nonzero result. Time filtering and sorting
+use `started_timestamp`, not upload time. CPU and cumulative allocation profiles
+retain additive merging.
+
+Each Python retained result covers only allocations made after that capture attached
+and still live at its end; it is not a complete process-memory snapshot. Do not sum
+separate tasks to infer current retained memory. Raw per-task profile listing is
+unchanged by the flame graph's latest-only selection.
 The task summary uses the Infinity data source in `pyroscope.yaml`, with the same API token
 as the Pyroscope data source. `result_url` includes the stored windows' Region and actual
 profile type. Results without windows do not provide a dashboard link.
