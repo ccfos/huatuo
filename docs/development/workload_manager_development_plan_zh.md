@@ -618,3 +618,20 @@ Container 发现不再静默覆盖重复运行 ID。无论重复发生在同一 
 `logs/step04c-*` 保存 pod/autotracing race 测试、完整构建、现有 HTTP/CRI 到内核绑定集成测试，以及新增真实 HTTP 取消集成测试。用例覆盖迟到的完整空列表、初始化迟到成功、缓存保留、恢复全量刷新、CRI 取消和 configz 取消；提交检查使用 `make check`。
 
 步骤 04 仍需完成 `Source.Discover` 结果边界、来源类型与 ID 校验，以及 Container 子包和启动调用方迁移。当前改动为这些迁移准备了公共调度、正确的失败语义和取消链路，尚未开放 CubeSandbox 来源。
+
+
+### 步骤 04d：统一来源接口与 Manager 入口
+
+新增 `Source.Type/Discover`、`Discovery`、`GuestPeer` 及 `StartManager(Source, ManagerOptions)`。新入口复用已有唯一调度循环、超时、退避与停止清理，不创建来源注册表或第二个 Store；重复启动明确报错。零周期选项使用既定默认值，负值拒绝，来源选择的配置接入仍在步骤 05 完成。
+
+Manager 校验 map key、Pod ID 和来源类型。不匹配或空 ID 的结果不能授权删除，其他有效记录仍可提交；nil 成员、部分结果和来源错误按原约定处理。来源提供的 CSS、采集状态和同步时间不能直接进入缓存，公共绑定层重新验证各控制器、进程和网络，Store 生成实例状态与成功同步时间。
+
+Guest peer 与有效 Pod 同次提交，新增 `GuestPeerByID` 只读查询，同次返回实例 Key 与 peer，供连接方核对订阅实例是否仍然有效。nil 成员及发现失败保留旧 peer，有效更新缺失或无效 peer 时清除，对象删除一起清理；孤立 peer 不创建身份，也不成为 Process 或 Network。peer 能力变化复用全量通知。非容器对象以已确认启动时间识别重启；首次补齐或暂缺启动时间保留既有实例与已知身份，不引入资源替换机制。
+
+公共 Pod 到旧 Container 的投影保留原字段结构、Kata CPU CSS 范围和内存目标排除规则。旧视图需要可安全表示的 CPU/memory 位置及必需容器元数据，避免空路径读到宿主机根目录或缺失 namespace label 触发旧构造器 panic；公共 Pod 本身仍保留独立可用资源。独立网络 PID 不会被伪装成旧结构中代表进程的网络目标。
+
+本次新增统一入口并验证接口边界，**旧 `InitManager` 和 `InitGuestManager` 尚未切换**。现有 Container/Guest 发现仍走已验证的旧适配器；后续提交迁移真实来源及启动调用方，不把当前合成来源测试视为 Container 子包或 CubeSandbox 接入完成。
+
+`logs/step04d-*` 记录 pod/autotracing race 测试、完整构建、HTTP 取消及旧 Container 内核绑定回归通过。新增 Source 集成测试通过真实 v1 挂载验证发现、文件绑定、资源消失保留实例及完整空集删除，测试只创建独立空组并清理；同一测试在 `172.16.134.96` 的真实 v2 环境通过，无 SKIP，日志为该机任务目录的 `logs/step04d-cgroup-v2.log`。未操作现有沙箱。提交检查使用 `make check`。
+
+三次 benchmark 中位数：旧 ControllerRefresh/1024 为 8422405 ns/op、502279 B/op、3094 allocs/op；保存 peer 的记录增加约 16 KiB 快照空间，分配次数不变。公共事件投递（8 订阅者）为 1981 ns/op、零分配。新增 SourceDiscovery/1024 为 1429635 ns/op、约 803980 B/op、6048 allocs/op，包含读取实际 mountinfo、公共绑定与提交，但使用无进程及无 cgroup 位置的元数据对象，不代表真实来源 RPC 或大量 cgroup 文件采集性能，也不与旧 Controller 的耗时直接比较。

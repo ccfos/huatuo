@@ -316,3 +316,68 @@ func (p *Pod) copyMetadata() *Pod {
 	}
 	return &view
 }
+
+// containerFromWorkload builds the existing external shape from common metadata.
+// Binding readiness controls CSS; missing process/netns targets stay unavailable.
+func containerFromWorkload(discovered, bound *Pod) *Container {
+	if bound.Container == nil || (isKataRuntime(bound.Container.RuntimeType) && bound.Container.SandboxID == "") {
+		return nil
+	}
+	// Legacy document and metric builders require a string namespace label.
+	if _, ok := bound.Labels[labelHostNamespace].(string); !ok {
+		return nil
+	}
+	container := &Container{
+		ID: bound.ID, Name: bound.Name, StartedAt: bound.StartedAt,
+		SyncedAt: time.Now(), Labels: bound.Labels, CgroupCss: bound.Cgroups.CSS,
+	}
+	if info := bound.Container; info != nil {
+		container.Hostname, container.Type, container.Qos = info.Hostname, info.Type, info.Qos
+		container.RuntimeType, container.SandboxID = info.RuntimeType, info.SandboxID
+	}
+	var cpuPresent bool
+	container.CgroupPath, cpuPresent = discovered.Cgroups.Controllers["cpu"]
+	if !cpuPresent {
+		container.CgroupPath = discovered.Cgroups.Unified
+	}
+	memory, memoryPresent := discovered.Cgroups.Controllers["memory"]
+	if !memoryPresent {
+		memory = discovered.Cgroups.Unified
+	}
+	// Old collectors assume both locations exist; an empty path could read
+	// the host root. The public Pod still exposes independently usable resources.
+	for _, membership := range []string{container.CgroupPath, memory} {
+		if membership == "/" || !filepath.IsAbs(membership) || filepath.Clean(membership) != membership {
+			return nil
+		}
+	}
+	container.memoryCgroupPath = &memory
+	if discovered.Process != nil {
+		container.InitPid = discovered.Process.PID
+	}
+	if bound.Network != nil {
+		container.IPAddress = bound.Network.IPAddress
+		// The legacy shape has only one PID and cannot represent a separate network target.
+		if bound.Network.PID > 0 && bound.Network.PID == container.InitPid {
+			container.NetNamespaceInum, container.NetNamespaceCookie = bound.Network.NamespaceInum, bound.Network.NamespaceCookie
+		}
+	}
+	if container.HostKataSandboxID() != "" {
+		container.CgroupCss = map[string]uint64{}
+		if css := bound.Cgroups.CSS["cpu"]; css != 0 {
+			container.CgroupCss["cpu"] = css
+		}
+	}
+	return container
+}
+
+// GuestPeerByID returns the peer and workload instance from the same record.
+// Callers can reject a connection if the subscribed instance is no longer current.
+func GuestPeerByID(id string) (PodKey, GuestPeer, bool) {
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	if record := containerView.records[id]; record != nil && record.guestPeer.PID > 0 {
+		return record.ref.Key, record.guestPeer, true
+	}
+	return PodKey{}, GuestPeer{}, false
+}

@@ -16,10 +16,14 @@ package pod
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
@@ -192,4 +196,132 @@ func (c *workloadManager) run(ctx context.Context) {
 			timer.Reset(next)
 		}
 	}
+}
+
+type ManagerOptions struct {
+	SyncInterval     time.Duration
+	DiscoveryTimeout time.Duration
+}
+
+// StartManager selects exactly one source. Zero durations use the defaults.
+func StartManager(source Source, options ManagerOptions) error {
+	manager, err := newSourceManager(containerView, source, options)
+	if err != nil {
+		return err
+	}
+	workloadManagerMu.Lock()
+	defer workloadManagerMu.Unlock()
+	if activeManager != nil {
+		return errors.New("workload manager is already running")
+	}
+	manager.initialize = func(context.Context) error {
+		// Missing CSS must not disable metadata and basic cgroup file collection.
+		if err := initCgroupLifecycle(); err != nil {
+			log.WithError(err).Warn("cgroup CSS unavailable; workload file collection remains enabled")
+		}
+		return nil
+	}
+	activeManager = manager
+	manager.start()
+	return nil
+}
+
+func newSourceManager(store *containerStore, source Source, options ManagerOptions) (*workloadManager, error) {
+	if source == nil {
+		return nil, errors.New("workload discovery source is required")
+	}
+	kind := source.Type()
+	switch kind {
+	case TypeContainer, TypeCubeSandbox, TypeOpenSandbox:
+	default:
+		return nil, fmt.Errorf("unsupported workload source type %q", kind)
+	}
+	if options.SyncInterval < 0 || options.DiscoveryTimeout < 0 {
+		return nil, errors.New("workload sync interval and discovery timeout must not be negative")
+	}
+	manager := newWorkloadManager(store)
+	if options.SyncInterval > 0 {
+		manager.resyncInterval = options.SyncInterval
+	}
+	if options.DiscoveryTimeout > 0 {
+		manager.discoveryTimeout = options.DiscoveryTimeout
+	}
+	manager.discover = func(ctx context.Context, _ map[string]bool, _ bool) (containerSnapshot, error, bool) {
+		discovery, sourceErr := source.Discover(ctx)
+		if err := ctx.Err(); err != nil {
+			return containerSnapshot{}, err, true
+		}
+		snapshot, err := manager.bindDiscovery(ctx, kind, discovery)
+		err = errors.Join(sourceErr, err)
+		return snapshot, err, err != nil
+	}
+	return manager, nil
+}
+
+func (m *workloadManager) bindDiscovery(ctx context.Context, kind string, discovery Discovery) (containerSnapshot, error) {
+	snapshot := containerSnapshot{records: make(map[string]*containerRecord, len(discovery.Pods)), isComplete: discovery.Complete}
+	mounts, _ := cgroupMounts()
+	var resultErr error
+	for id, discovered := range discovery.Pods {
+		if err := ctx.Err(); err != nil {
+			return containerSnapshot{}, err
+		}
+		if id == "" || (discovered != nil && (discovered.ID != id || discovered.Type != kind)) {
+			snapshot.isComplete = false
+			resultErr = errors.Join(resultErr, fmt.Errorf("source %q returned mismatched workload identity for key %q", kind, id))
+			if id != "" {
+				snapshot.records[id] = nil
+			}
+			continue
+		}
+		if discovered == nil {
+			snapshot.records[id] = nil
+			continue
+		}
+		workload := discovered.copyMetadata()
+		workload.lifeResources = nil
+		workload.SyncedAt = time.Time{}
+		locations := CgroupBinding{Unified: workload.Cgroups.Unified, Controllers: workload.Cgroups.Controllers}
+		workload.Cgroups = bindCgroups(locations, mounts)
+		bindHostResources(workload, procfs.DefaultPath())
+		record := &containerRecord{pod: workload, cgroupLocations: locations}
+		if kind == TypeContainer {
+			record.container = containerFromWorkload(discovered, workload)
+			if discovered.Process != nil {
+				record.ref.InitPID = discovered.Process.PID
+			}
+			if workload.Process != nil {
+				record.startTime = workload.Process.startTime
+			}
+			isHostKata := workload.Container != nil && isKataRuntime(workload.Container.RuntimeType)
+			if membership, ok := workload.Cgroups.Path("memory"); ok && !isHostKata {
+				record.ref.MemoryCgroupPath = membership
+				if directory, err := workload.Cgroups.Directory("memory"); err == nil {
+					record.directory, _ = os.Lstat(directory)
+				}
+			}
+			// Missing resource readiness is not proof of a new container instance.
+			m.store.mu.RLock()
+			if previous := m.store.records[id]; previous != nil && previous.pod.Type == TypeContainer {
+				if record.ref.InitPID == 0 {
+					record.ref.InitPID = previous.ref.InitPID
+				}
+				if record.startTime == 0 && record.ref.InitPID == previous.ref.InitPID {
+					record.startTime = previous.startTime
+				}
+				if record.ref.MemoryCgroupPath == "" {
+					record.ref.MemoryCgroupPath = previous.ref.MemoryCgroupPath
+				}
+				if record.directory == nil && record.ref.MemoryCgroupPath == previous.ref.MemoryCgroupPath {
+					record.directory = previous.directory
+				}
+			}
+			m.store.mu.RUnlock()
+		}
+		if peer := discovery.GuestPeers[id]; peer.PID > 0 {
+			record.guestPeer = peer
+		}
+		snapshot.records[id] = record
+	}
+	return snapshot, resultErr
 }

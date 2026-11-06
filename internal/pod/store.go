@@ -30,11 +30,16 @@ type containerRecord struct {
 	ref       ContainerRef
 	startTime uint64
 	guest     *guestScanner
+	guestPeer GuestPeer
 	directory os.FileInfo
 }
 
 func (r *containerRecord) sameInstance(other *containerRecord) bool {
 	if r.pod != nil && other.pod != nil && r.pod.Type != other.pod.Type {
+		return false
+	}
+	if r.pod != nil && other.pod != nil && r.pod.Type != TypeContainer &&
+		!r.pod.StartedAt.IsZero() && !other.pod.StartedAt.IsZero() && !r.pod.StartedAt.Equal(other.pod.StartedAt) {
 		return false
 	}
 	// Completing previously unknown identity is not evidence of a restart.
@@ -140,6 +145,9 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 		}
 		record.prepareView(now)
 		if previous != nil && previous.sameInstance(record) {
+			if record.pod.Type != TypeContainer && record.pod.StartedAt.IsZero() {
+				record.pod.StartedAt = previous.pod.StartedAt
+			}
 			if record.container != nil && previous.container != nil && (record.guest != nil ||
 				(record.container.HostKataSandboxID() != "" &&
 					record.container.HostKataSandboxID() == previous.container.HostKataSandboxID())) {
@@ -148,7 +156,8 @@ func (v *containerStore) commit(snapshot containerSnapshot, syncErr error) {
 				record.pod.StartedAt = previous.pod.StartedAt
 			}
 			record.ref.Key = previous.ref.Key
-			resourcesChanged = resourcesChanged || previous.ref != record.ref ||
+			resourcesChanged = resourcesChanged || previous.ref != record.ref || previous.guestPeer != record.guestPeer ||
+				(previous.container == nil) != (record.container == nil) ||
 				!previous.pod.sameResources(record.pod) || (previous.directory == nil && record.directory != nil) ||
 				(previous.startTime == 0 && record.startTime != 0)
 			record.setLifeResources(previous.pod.lifeResources)

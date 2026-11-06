@@ -62,3 +62,31 @@ func BenchmarkContainerControllerRefresh(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkSourceDiscovery measures the public discovery boundary and Store
+// commit for metadata-only workloads, without hiding binding allocations.
+func BenchmarkSourceDiscovery(b *testing.B) {
+	for _, size := range []int{1, 1024} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			pods := make(map[string]*Pod, size)
+			for index := range size {
+				id := fmt.Sprintf("checkout-sandbox-%d", index)
+				pods[id] = &Pod{ID: id, Type: TypeCubeSandbox}
+			}
+			source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return Discovery{Pods: pods, Complete: true}, nil }}
+			store := newTestContainerStore()
+			manager, err := newSourceManager(store, source, ManagerOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				snapshot, err, _ := manager.discover(b.Context(), nil, true)
+				if err != nil {
+					b.Fatal(err)
+				}
+				store.commit(snapshot, nil)
+			}
+		})
+	}
+}

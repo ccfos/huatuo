@@ -851,3 +851,177 @@ func TestUnboundCgroupIsNotIndexed(t *testing.T) {
 		t.Errorf("lost directory binding retained CSS ownership: id=%q", id)
 	}
 }
+
+// TestSourceGuestPeers 验证 peer 只随有效 Pod 提交，失败和 nil 成员保留旧值，
+// 有效更新未提供 peer 时清除；peer 不得被当作采集进程或网络目标。
+func TestSourceGuestPeers(t *testing.T) {
+	previous := containerView
+	store := newTestContainerStore()
+	containerView = store
+	t.Cleanup(func() { containerView = previous })
+	discovery := Discovery{}
+	var sourceErr error
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return discovery, sourceErr }}
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	raw := &Pod{
+		ID: "checkout-sandbox", Type: TypeCubeSandbox, StartedAt: time.Unix(80, 0), SyncedAt: time.Unix(1, 0),
+		Cgroups: CgroupBinding{CSS: map[string]uint64{"cpu": 8500}}, lifeResources: map[string]any{"untrusted": true},
+	}
+	for _, test := range []struct {
+		name      string
+		pod       *Pod
+		peer      int
+		sourceErr error
+		complete  bool
+		wantPeer  int
+		absent    bool
+	}{
+		{name: "valid peer", pod: raw, peer: 4200, complete: true, wantPeer: 4200},
+		{name: "nil member", peer: 4300, complete: true, wantPeer: 4200},
+		{name: "source failure", sourceErr: errors.New("cubelet unavailable"), wantPeer: 4200},
+		{name: "valid metadata clears peer", pod: raw, complete: true},
+		{name: "negative peer", pod: raw, peer: -1, complete: true},
+		{name: "confirmed deletion", complete: true, absent: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			discovery = Discovery{Complete: test.complete, GuestPeers: map[string]GuestPeer{"checkout-sandbox": {PID: test.peer}, "orphan": {PID: 4500}}}
+			if !test.absent && test.sourceErr == nil {
+				discovery.Pods = map[string]*Pod{raw.ID: test.pod}
+			}
+			sourceErr = test.sourceErr
+			snapshot, err, _ := manager.discover(t.Context(), nil, true)
+			store.commit(snapshot, err)
+			key, peer, exists := GuestPeerByID(raw.ID)
+			if exists != (test.wantPeer > 0) || peer.PID != test.wantPeer {
+				t.Errorf("guest peer=%+v exists=%t", peer, exists)
+			}
+			if _, _, exists := GuestPeerByID("orphan"); exists || store.records["orphan"] != nil {
+				t.Error("orphan peer created workload identity")
+			}
+			if exists && key != store.records[raw.ID].ref.Key {
+				t.Error("peer query returned a different workload instance")
+			}
+			if record := store.records[raw.ID]; record != nil {
+				if record.pod.Process != nil || record.pod.Network != nil {
+					t.Error("transport peer became a collection target")
+				}
+				if len(record.pod.Cgroups.CSS) != 0 || record.pod.LifeResources("untrusted") != nil || record.pod.SyncedAt.Equal(raw.SyncedAt) {
+					t.Error("source injected CSS, collection state, or sync time")
+				}
+			} else if !test.absent {
+				t.Error("unresolved workload disappeared")
+			}
+		})
+	}
+	if raw.lifeResources["untrusted"] != true || raw.Cgroups.CSS["cpu"] != 8500 {
+		t.Error("binding mutated source metadata")
+	}
+}
+
+// TestSourceSandboxStartedAt 验证已确认启动时间变化创建新实例，首次补齐
+// 启动信息及仅 peer 变化保留实例状态，并通知连接能力变化。
+func TestSourceSandboxStartedAt(t *testing.T) {
+	store := newTestContainerStore()
+	started := time.Time{}
+	peer := 0
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) {
+		return Discovery{
+			Pods: map[string]*Pod{"checkout-sandbox": {ID: "checkout-sandbox", Type: TypeCubeSandbox, StartedAt: started}}, Complete: true,
+			GuestPeers: map[string]GuestPeer{"checkout-sandbox": {PID: peer}},
+		}, nil
+	}}
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	commit := func() {
+		snapshot, err, _ := manager.discover(t.Context(), nil, true)
+		if err != nil {
+			t.Error(err)
+		}
+		store.commit(snapshot, err)
+	}
+	commit()
+	original := store.records["checkout-sandbox"]
+	original.pod.lifeResources["baseline"] = uint64(6400)
+	subscriber, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	t.Cleanup(subscriber.Close)
+	_, _ = subscriber.DrainEvents()
+	started, peer = time.Unix(80, 0), 4200
+	commit()
+	current := store.records["checkout-sandbox"]
+	if current.ref.Key != original.ref.Key || current.pod.LifeResources("baseline") != uint64(6400) {
+		t.Error("first readiness reset the instance")
+	}
+	update, err := subscriber.DrainEvents()
+	if err != nil || update.Mode != PodUpdateFull || len(update.Events) != 1 {
+		t.Errorf("peer readiness notification=%+v err=%v", update, err)
+	}
+	started = time.Time{}
+	commit()
+	if current := store.records["checkout-sandbox"]; current.ref.Key != original.ref.Key || !current.pod.StartedAt.Equal(time.Unix(80, 0)) {
+		t.Error("unknown start time discarded confirmed instance identity")
+	}
+	started = time.Unix(90, 0)
+	commit()
+	current = store.records["checkout-sandbox"]
+	if current.ref.Key == original.ref.Key || current.pod.LifeResources("baseline") != nil {
+		t.Error("confirmed sandbox restart retained instance state")
+	}
+}
+
+// TestSourceContainerProjection 验证公共来源仍生成旧容器查询视图；暂时失去
+// 资源时只清除公共采集能力，不能仅因无法验证资源就重置已知实例。
+func TestSourceContainerProjection(t *testing.T) {
+	oldView := containerView
+	store := newTestContainerStore()
+	containerView = store
+	t.Cleanup(func() { containerView = oldView })
+	previous := containerRecordForTest("checkout-container")
+	previous.ref.InitPID, previous.container.InitPid = 1073741824, 1073741824
+	store.commit(containerSnapshot{records: map[string]*containerRecord{previous.container.ID: previous}, isComplete: true}, nil)
+	previous.pod.lifeResources["baseline"] = uint64(6400)
+	source := &sourceFixture{kind: TypeContainer, discover: func(context.Context) (Discovery, error) {
+		return Discovery{Pods: map[string]*Pod{previous.container.ID: {
+			ID: previous.container.ID, Type: TypeContainer, Name: "checkout-api", Labels: map[string]any{labelHostNamespace: "default"},
+			Container: &ContainerInfo{Hostname: "checkout-pod", Type: ContainerTypeNormal, Qos: ContainerQosLevelMin},
+			Cgroups:   CgroupBinding{Controllers: map[string]string{"cpu": "/unavailable-checkout", "memory": "/unavailable-checkout"}},
+			Process:   &HostProcess{PID: 1073741824}, Network: &HostNetwork{IPAddress: "172.16.0.2"},
+		}}, Complete: true}, nil
+	}}
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	snapshot, err, _ := manager.discover(t.Context(), nil, true)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	store.commit(snapshot, nil)
+	current := store.records[previous.container.ID]
+	if current.ref.Key != previous.ref.Key || current.pod.LifeResources("baseline") != uint64(6400) {
+		t.Error("missing resource reset the container instance")
+	}
+	if current.pod.Process != nil || current.pod.Network.PID != 0 || len(current.pod.Cgroups.CSS) != 0 {
+		t.Error("unavailable resources remained collection targets")
+	}
+	legacy, err := ContainerByID(previous.container.ID)
+	if err != nil || legacy == nil {
+		t.Errorf("legacy query=%+v err=%v", legacy, err)
+		return
+	}
+	if legacy.Name != "checkout-api" || legacy.Hostname != "checkout-pod" || legacy.Type != ContainerTypeNormal || legacy.IPAddress != "172.16.0.2" || legacy.CgroupPath != "/unavailable-checkout" || legacy.MemoryCgroupPath() != "/unavailable-checkout" {
+		t.Errorf("legacy projection=%+v", legacy)
+	}
+}

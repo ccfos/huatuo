@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
+
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -178,5 +180,95 @@ func TestWorkloadManagerHTTPDeadline(t *testing.T) {
 	store.mu.RUnlock()
 	if complete || count != 0 {
 		t.Error("HTTP timeout published an authoritative snapshot")
+	}
+}
+
+// TestSourceCgroupBindingIntegration 验证公共 Source 到真实 cgroup 文件的链路。
+// 测试仅创建独立空组，不迁移进程；资源消失保留实例，来源确认空集才删除。
+func TestSourceCgroupBindingIntegration(t *testing.T) {
+	membership := "/huatuo-source-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	locations := CgroupBinding{Controllers: map[string]string{"cpu": membership, "memory": membership}}
+	roots := []string{cgroups.RootFsFilePath("cpu"), cgroups.RootFsFilePath("memory")}
+	if cgroups.CgroupMode() == cgroups.Unified {
+		locations = CgroupBinding{Unified: membership}
+		roots = []string{cgroups.RootfsDefaultPath()}
+	}
+	directories := make(map[string]struct{})
+	for _, root := range roots {
+		root, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Errorf("resolve cgroup mount: %v", err)
+			return
+		}
+		directory := filepath.Join(root, membership)
+		if _, created := directories[directory]; created {
+			continue
+		}
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Errorf("create isolated cgroup: %v", err)
+			return
+		}
+		directories[directory] = struct{}{}
+		t.Cleanup(func() {
+			if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("remove isolated cgroup: %v", err)
+			}
+		})
+	}
+	raw := &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, StartedAt: time.Unix(80, 0), Cgroups: locations}
+	raw.Cgroups.CSS = map[string]uint64{"cpu": 1}
+	discovery := Discovery{Pods: map[string]*Pod{raw.ID: raw}, Complete: true, GuestPeers: map[string]GuestPeer{raw.ID: {PID: os.Getpid()}}}
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return discovery, nil }}
+	store := newTestContainerStore()
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	commit := func() {
+		snapshot, err, _ := manager.discover(t.Context(), nil, true)
+		if err != nil {
+			t.Error(err)
+		}
+		store.commit(snapshot, err)
+	}
+	commit()
+	record := store.records[raw.ID]
+	if record == nil {
+		t.Error("source did not publish workload")
+		return
+	}
+	for _, controller := range []string{"cpu", "memory"} {
+		directory, err := record.pod.Cgroups.Directory(controller)
+		if err != nil {
+			t.Errorf("bind %s: %v", controller, err)
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(directory, controller+".stat")); err != nil {
+			t.Errorf("read %s metrics location: %v", controller, err)
+		}
+	}
+	if record.pod.Cgroups.CSS["cpu"] == 1 || record.pod.Process != nil || record.pod.Network != nil {
+		t.Error("source CSS or peer became a collection binding")
+	}
+	record.pod.lifeResources["baseline"] = uint64(6400)
+	for directory := range directories {
+		if err := os.Remove(directory); err != nil {
+			t.Errorf("remove bound cgroup: %v", err)
+			return
+		}
+	}
+	commit()
+	current := store.records[raw.ID]
+	if current.ref.Key != record.ref.Key || current.pod.LifeResources("baseline") != uint64(6400) {
+		t.Error("resource disappearance replaced the instance")
+	}
+	if _, err := current.pod.Cgroups.Directory("cpu"); err == nil {
+		t.Error("removed cgroup remains a collection target")
+	}
+	discovery = Discovery{Complete: true}
+	commit()
+	if len(store.records) != 0 || len(store.cgroupOwners)+len(store.cssOwners) != 0 {
+		t.Error("complete empty discovery retained workload state")
 	}
 }

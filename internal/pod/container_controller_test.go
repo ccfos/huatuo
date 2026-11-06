@@ -718,3 +718,140 @@ func TestWorkloadManagerInitializationDeadline(t *testing.T) {
 		}
 	}
 }
+
+// sourceFixture provides one discovery attempt without a second producer loop.
+type sourceFixture struct {
+	kind     string
+	discover func(context.Context) (Discovery, error)
+}
+
+func (s *sourceFixture) Type() string                                    { return s.kind }
+func (s *sourceFixture) Discover(ctx context.Context) (Discovery, error) { return s.discover(ctx) }
+
+// TestSourceDiscoveryCompleteness 验证公共来源的成员完整性与错误独立处理，
+// 身份冲突阻止删除；nil 成员保留上次视图，来源不能注入采集状态或 CSS。
+func TestSourceDiscoveryCompleteness(t *testing.T) {
+	raw := func(id string) *Pod { return &Pod{ID: id, Type: TypeCubeSandbox} }
+	offline := errors.New("cubelet unavailable")
+	for _, test := range []struct {
+		name      string
+		discovery Discovery
+		sourceErr error
+		want      []string
+		wantErr   bool
+		complete  bool
+	}{
+		{name: "complete empty", discovery: Discovery{Complete: true}, complete: true},
+		{name: "nil retains membership", discovery: Discovery{Pods: map[string]*Pod{"checkout-api": nil}, Complete: true}, want: []string{"checkout-api"}, complete: true},
+		{name: "complete with conversion error", discovery: Discovery{Pods: map[string]*Pod{"checkout-api": nil}, Complete: true}, sourceErr: offline, want: []string{"checkout-api"}, wantErr: true, complete: true},
+		{name: "incomplete adds valid records", discovery: Discovery{Pods: map[string]*Pod{"checkout-worker": raw("checkout-worker")}}, want: []string{"checkout-api", "checkout-old", "checkout-worker"}},
+		{name: "query failure", sourceErr: offline, want: []string{"checkout-api", "checkout-old"}, wantErr: true},
+		{name: "wrong id", discovery: Discovery{Pods: map[string]*Pod{"checkout-api": raw("conflicting-id")}, Complete: true}, want: []string{"checkout-api", "checkout-old"}, wantErr: true},
+		{name: "wrong type", discovery: Discovery{Pods: map[string]*Pod{"checkout-api": {ID: "checkout-api", Type: TypeContainer}}, Complete: true}, want: []string{"checkout-api", "checkout-old"}, wantErr: true},
+		{name: "empty member id", discovery: Discovery{Pods: map[string]*Pod{"": nil}, Complete: true}, want: []string{"checkout-api", "checkout-old"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newTestContainerStore()
+			previous := &containerRecord{pod: raw("checkout-api")}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{"checkout-api": previous, "checkout-old": {pod: raw("checkout-old")}}, isComplete: true}, nil)
+			source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return test.discovery, test.sourceErr }}
+			manager, err := newSourceManager(store, source, ManagerOptions{})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			snapshot, err, retry := manager.discover(t.Context(), nil, true)
+			if (err != nil) != test.wantErr || retry != test.wantErr || snapshot.isComplete != test.complete {
+				t.Errorf("discovery complete=%t retry=%t err=%v", snapshot.isComplete, retry, err)
+			}
+			store.commit(snapshot, err)
+			if len(store.records) != len(test.want) {
+				t.Errorf("members=%d, want %d", len(store.records), len(test.want))
+			}
+			for _, id := range test.want {
+				if store.records[id] == nil {
+					t.Errorf("missing retained member %q", id)
+				}
+			}
+			if current := store.records["checkout-api"]; current != nil && current != previous {
+				t.Error("unresolved member replaced the last successful view")
+			}
+		})
+	}
+}
+
+// TestSourceManagerValidation 验证只接受明确来源和有效周期，重复启动不能
+// 覆盖已选来源；检查发生在探针初始化或后台查询之前。
+func TestSourceManagerValidation(t *testing.T) {
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return Discovery{}, nil }}
+	for _, test := range []struct {
+		name    string
+		source  Source
+		options ManagerOptions
+	}{
+		{name: "missing source"},
+		{name: "unknown source", source: &sourceFixture{kind: "unknown"}},
+		{name: "negative interval", source: source, options: ManagerOptions{SyncInterval: -time.Second}},
+		{name: "negative timeout", source: source, options: ManagerOptions{DiscoveryTimeout: -time.Second}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := newSourceManager(newContainerStore(), test.source, test.options); err == nil {
+				t.Error("invalid source configuration accepted")
+			}
+		})
+	}
+	manager, err := newSourceManager(newContainerStore(), source, ManagerOptions{SyncInterval: time.Minute, DiscoveryTimeout: time.Second})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if manager.resyncInterval != time.Minute || manager.discoveryTimeout != time.Second {
+		t.Error("source scheduling options were not applied")
+	}
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = manager
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
+	if err := StartManager(source, ManagerOptions{}); err == nil {
+		t.Error("second source replaced the active manager")
+	}
+}
+
+// TestSourceManagerCancellation 验证 Source.Discover 接收公共调度的截止时间，
+// 停止会等待当前调用结束；取消后返回的结果不进入 Store。
+func TestSourceManagerCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(ctx context.Context) (Discovery, error) {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Error("source received no discovery deadline")
+		}
+		close(entered)
+		<-ctx.Done()
+		return Discovery{Complete: true, Pods: map[string]*Pod{"late": {ID: "late", Type: TypeCubeSandbox}}}, nil
+	}}
+	store := newContainerStore()
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Error("source did not start")
+		return
+	}
+	manager.cancel()
+	select {
+	case <-manager.done:
+	case <-time.After(time.Second):
+		t.Error("source cancellation did not complete")
+		return
+	}
+	if store.revision != 0 || len(store.records) != 0 {
+		t.Error("late source result was published")
+	}
+}
