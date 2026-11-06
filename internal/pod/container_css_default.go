@@ -90,13 +90,14 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 		return fmt.Errorf("knode name is not containterID")
 	}
 
+	changed := false
 	for index, css := range data.CSS {
 		if css == 0 {
 			continue
 		}
 
 		if sysName, ok := cgroupCssID2SubSysNameMap[index]; ok {
-			m := &containerCssMetaData{
+			m := containerCssMetaData{
 				CSS:         css,
 				Inode:       data.Inode,
 				Cgroup:      data.Cgroup,
@@ -105,11 +106,22 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 				ContainerID: containerID,
 				SubSys:      sysName,
 			}
-			log.Debugf("update container css data: %+v", m)
-			cgroupCssMetaDataMap.Store(css, m)
+			if previous, ok := cgroupCssMetaDataMap.Load(css); ok && *previous.(*containerCssMetaData) == m {
+				continue
+			}
+			updated := m
+			log.Debugf("update container css data: %+v", &updated)
+			cgroupCssMetaDataMap.Store(css, &updated)
+			changed = true
 		}
 	}
 
+	// Read notifications arrive asynchronously, possibly after the bound view
+	// was published. Only new information may trigger another discovery;
+	// unchanged notifications from that discovery must not feed back into it.
+	if changed && data.Operation == abi.CgroupCSSOperationRefresh {
+		requestWorkloadRefresh("", false)
+	}
 	return nil
 }
 

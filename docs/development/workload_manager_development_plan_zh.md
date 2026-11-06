@@ -766,3 +766,12 @@ CI 暴露了新 cgroup 已出现而 kubelet 尚未更新状态的时序：成功
 验证记录位于测试机 `rebase-20261106/logs/step05-*`：完整构建、全量 `make unit`、启动/config/handler race 测试通过。新增 HTTPS 集成测试通过生产启动入口验证一秒同步周期及一秒发现超时，真实 HTTP 请求在 Manager 截止时间到达后取消；测试不启动真实 kubelet 或操作已有容器。提交前运行 `make check`。
 
 步骤 05 完成；下一步迁移 CPU 采集及 workload 输出边界。CubeSandbox 来源、沙箱指标、GuestBridge 与真实场景验收仍按 06–22 推进，本次不开放。
+
+
+### 2026-11-07：迟到的 CSS 绑定回归修复
+
+继续步骤 06 前先处理最新 CI：四个系统的容器 IO 用例已通过，openEuler 22.03 仍出现已发现容器却缺少 blkio CSS 的失败。针对读文件探针异步返回晚于首次绑定的时序，新增 `TestLateCSSRefreshPublishesBinding`；旧代码可稳定复现公共视图缺少 CSS、直到周期同步才重试的问题。
+
+CSS 缓存只在 Refresh 带来新信息时请求合并全量发现，重复通知不触发发现，避免绑定读文件与探针形成循环。回归覆盖首次补齐及实例不变，原重复通知测试验证不会自我唤醒。同步比较发生在栈上，重复事件无需创建新缓存对象。
+
+测试机 `rebase-20261106/logs/late-css-*` 记录 Pod/Container race、完整构建、真实 cgroup/BPF 绑定和删除集成验证通过。重复 CSS 通知 benchmark 三次中位数由 240.1 ns/op、120 B/op、3 allocs/op 降为 67.74 ns/op、0 B/op、0 allocs/op。提交前执行 `make check`；真实 QEMU 的 blkio 用例仍待新一轮 CI 确认。本次未开始 CPU 指标迁移。

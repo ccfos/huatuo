@@ -80,3 +80,18 @@ func BenchmarkWorkloadCgroupEvent(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkCgroupCSSRefresh measures duplicate read notifications in the perf event path.
+func BenchmarkCgroupCSSRefresh(b *testing.B) {
+	previous := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "blkio"}
+	const css = uint64(765434)
+	b.Cleanup(func() { cgroupCssID2SubSysNameMap = previous; cgroupCssMetaDataMap.Delete(css) })
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: 8200}
+	event.CSS[0] = css
+	updateCgroupCSSCache(event, "")
+	b.ReportAllocs()
+	for b.Loop() {
+		updateCgroupCSSCache(event, "")
+	}
+}

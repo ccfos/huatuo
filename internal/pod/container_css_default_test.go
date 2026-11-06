@@ -252,6 +252,78 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	}
 }
 
+// TestLateCSSRefreshPublishesBinding 验证首次发现后才到达的 blkio CSS 会触发
+// 公共 Manager 重新绑定并发布同一实例，而不是等待周期同步。
+func TestLateCSSRefreshPublishesBinding(t *testing.T) {
+	root := t.TempDir()
+	procRoot, cgroupRoot := filepath.Join(root, "proc"), filepath.Join(root, "blkio")
+	guestFile(t, procRoot, "self/mountinfo", fmt.Sprintf("40 1 0:40 / %s rw - cgroup none rw,blkio\n", cgroupRoot))
+	guestFile(t, cgroupRoot, "sandbox/8/cgroup.clone_children", "0")
+	info, err := os.Stat(filepath.Join(cgroupRoot, "sandbox/8"))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	const css = uint64(765433)
+	oldNames := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "blkio"}
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldNames; cgroupCssMetaDataMap.Delete(css) })
+	store := newContainerStore()
+	workload := &Pod{
+		ID: "checkout-sandbox", Type: TypeCubeSandbox,
+		Cgroups: CgroupBinding{Controllers: map[string]string{"blkio": "/sandbox/8"}},
+	}
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) {
+		return Discovery{Pods: map[string]*Pod{workload.ID: workload}, Complete: true}, nil
+	}}
+	manager := sourceManagerForTest(t, store, source)
+	manager.procRoot, manager.resyncInterval = procRoot, time.Hour
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = manager
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	waitForBinding := func(want uint64) bool {
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			store.mu.RLock()
+			record := store.records[workload.ID]
+			ready := record != nil && record.pod.Cgroups.CSS["blkio"] == want
+			store.mu.RUnlock()
+			if ready {
+				return true
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return false
+	}
+	if !waitForBinding(0) {
+		t.Error("initial workload was not published")
+		return
+	}
+	store.mu.RLock()
+	key := store.records[workload.ID].ref.Key
+	store.mu.RUnlock()
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: info.Sys().(*syscall.Stat_t).Ino}
+	event.CSS[0] = css
+	reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := cgroupCssEventSyncHandler(ctx, reader, true)
+	t.Cleanup(func() { cancel(); _ = reader.Close(); <-done })
+	if !waitForBinding(css) {
+		t.Error("late blkio CSS remained absent from the published workload")
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if store.records[workload.ID].ref.Key != key {
+		t.Error("CSS readiness changed workload identity")
+	}
+}
+
+// TestCPURefreshDoesNotRetriggerDiscovery 验证重复读取已缓存的 CPU CSS 不产生
+// 发现提示，避免绑定阶段读取 cgroup 文件导致 Manager 持续自我唤醒。
 func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
 	oldNames := cgroupCssID2SubSysNameMap
 	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu"}
@@ -265,7 +337,9 @@ func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
 	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: 42}
 	event.CSS[0] = 765432
-	copy(event.KnodeName[:], strings.Repeat("a", 64))
+	containerID := strings.Repeat("c", 64)
+	copy(event.KnodeName[:], containerID)
+	cgroupCssMetaDataMap.Store(event.CSS[0], &containerCssMetaData{CSS: event.CSS[0], Inode: event.Inode, SubSys: "cpu", ContainerID: containerID})
 	processed := make(chan struct{})
 	reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event, processed: processed}
 	ctx, cancel := context.WithCancel(t.Context())
