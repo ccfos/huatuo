@@ -19,12 +19,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/cilium/ebpf"
 
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 	"github.com/ccfos/huatuo/internal/profiling/profile"
 
@@ -973,5 +975,182 @@ func TestNativeReaderCreationPreservesCleanupFailure(t *testing.T) {
 	_, err := newRingBufferContext(obj, t.Context(), 4096, false)
 	if !errors.Is(err, createErr) || !errors.Is(err, closeErr) || !first.closed {
 		t.Fatalf("creation error=%v cleanup attempted=%t", err, first.closed)
+	}
+}
+
+type availableBatchRouteReader struct {
+	bpf.PerfEventReader
+	blockingErr, errorAvailable error
+}
+
+func (r *availableBatchRouteReader) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+	return bpf.PerfEventBatch{}, r.blockingErr
+}
+
+func (r *availableBatchRouteReader) ReadBatchAvailable(func() any) (bpf.PerfEventBatch, error) {
+	return bpf.PerfEventBatch{}, r.errorAvailable
+}
+
+func TestNativeFrozenDrainUsesAvailableBatch(t *testing.T) {
+	fastErr := errors.New("available read sentinel")
+	rd := &availableBatchRouteReader{blockingErr: errors.New("blocking read must not be called"), errorAvailable: fastErr}
+	r := &ringBufferContext{}
+	_, _, err := r.drainRingBuffer(frozenRingBuffer{reader: rd}, func() any { return nil }, nil, nil)
+	if !errors.Is(err, fastErr) {
+		t.Fatalf("drain error=%v,want available sentinel", err)
+	}
+}
+
+func TestCompactRetainedEvents(t *testing.T) {
+	e := func(pid uint64, stack int32, value int64) *abi.ProfilerEventBase {
+		return &abi.ProfilerEventBase{PIDTGID: pid, Userstack: stack, Value: value}
+	}
+	convert := func(v int64) (int64, error) { return v * 4096, nil }
+	a, b, c := e(1, 2, 10), e(1, 2, -3), e(2, 2, 4)
+	got, err := compactRetainedEvents([]any{a, b, c}, convert)
+	if err != nil || len(got) != 2 || got[0].(*abi.ProfilerEventBase).Value != 7*4096 || got[1].(*abi.ProfilerEventBase).Value != 4*4096 {
+		t.Fatalf("got=%v err=%v", got, err)
+	}
+	if a.Value != 10 || b.Value != -3 {
+		t.Fatal("input mutated")
+	}
+	_, err = compactRetainedEvents([]any{e(1, 2, math.MaxInt64), e(1, 2, 1)}, func(v int64) (int64, error) { return v, nil })
+	if err == nil {
+		t.Fatal("overflow accepted")
+	}
+	_, err = compactRetainedEvents([]any{e(1, 2, math.MinInt64), e(1, 2, -1)}, func(v int64) (int64, error) { return v, nil })
+	if err == nil {
+		t.Fatal("underflow accepted")
+	}
+	want := errors.New("conversion")
+	_, err = compactRetainedEvents([]any{a}, func(int64) (int64, error) { return 0, want })
+	if !errors.Is(err, want) {
+		t.Fatal(err)
+	}
+	_, err = compactRetainedEvents([]any{42}, convert)
+	if err == nil {
+		t.Fatal("invalid type accepted")
+	}
+}
+
+func TestCompactRetainedSourceKeysAndScaling(t *testing.T) {
+	base := abi.ProfilerEventBase{PIDTGID: 1, Userstack: -1, Kernstack: -1, Value: 3}
+	events := []any{&base}
+	for i := 0; i < 4; i++ {
+		e := base
+		switch i {
+		case 0:
+			e.PIDTGID = 2
+		case 1:
+			e.Userstack = 2
+		case 2:
+			e.Kernstack = 2
+		case 3:
+			e.Comm[0] = 'x'
+		}
+		events = append(events, &e)
+	}
+	got, err := compactRetainedEvents(events, func(v int64) (int64, error) { return v / 2, nil })
+	if err != nil || len(got) != 5 {
+		t.Fatalf("len=%d err=%v", len(got), err)
+	}
+	got, err = compactRetainedEvents([]any{&base, &base}, func(v int64) (int64, error) { return v / 2, nil })
+	if err != nil || got[0].(*abi.ProfilerEventBase).Value != 2 {
+		t.Fatal("conversion must precede summing")
+	}
+}
+
+func TestRetainedCompactionPreservesPerfAccounting(t *testing.T) {
+	reader := &frozenRingReaderStub{batches: []bpf.PerfEventBatch{{Events: []any{&abi.ProfilerEventBase{PIDTGID: 1, Userstack: -1, Kernstack: -1, Value: 3}, &abi.ProfilerEventBase{PIDTGID: 1, Userstack: -1, Kernstack: -1, Value: -1}}, LostSamples: 1}}}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{bpfmap.SampleCountAIdx: 3}}
+	r := &ringBufferContext{bpf: obj, transferStateMapID: 1, needsFallback: true}
+	var total int64
+	var samples int
+	var dropped uint64
+	accounted, expected, err := r.drainRingBuffer(frozenRingBuffer{reader: reader, sampleCountIdx: bpfmap.SampleCountAIdx}, func() any { return &abi.ProfilerEventBase{} }, func(b *pipeline.SampleBatch) error {
+		samples += len(b.Samples)
+		for _, s := range b.Samples {
+			total += s.Value
+		}
+		dropped += b.DroppedSamples["collection"]
+		return nil
+	}, func(v int64) (int64, error) { return v * 4096, nil })
+	if err != nil || accounted != 3 || expected != 3 || samples != 1 || total != 8192 || dropped != 1 {
+		t.Fatalf("err=%v accounted=%d expected=%d samples=%d total=%d lost=%d", err, accounted, expected, samples, total, dropped)
+	}
+}
+
+// BenchmarkRetainedBurstDelivery isolates repeated per-event labels, frame
+// validation and delivery. It excludes BPF reads and first-use symbol loading.
+func BenchmarkRetainedBurstDelivery(b *testing.B) {
+	const count = 32768
+	events := make([]any, count)
+	var expected int64
+	for i := range events {
+		value := int64(1)
+		if i%4 == 0 {
+			value = -1
+		}
+		event := &abi.ProfilerEventBase{PIDTGID: 100 << 32, Userstack: int32(i % 8), Value: value}
+		copy(event.Comm[:], "redis-server")
+		events[i] = event
+		expected += value * 4096
+	}
+	frames := make([]types.ProfileFrame, 32)
+	for i := range frames {
+		frames[i] = types.ProfileFrame{Name: "je_pages_map", File: "pages.c"}
+	}
+	p := &memNativeProfiler{internalMode: profiling.ModePhysicalUsage, pageSize: 4096}
+	for _, compact := range []bool{false, true} {
+		name := "per-event"
+		if compact {
+			name = "compacted"
+		}
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				records := events
+				if compact {
+					var err error
+					records, err = compactRetainedEvents(events, p.convertValueToBytes)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				var total int64
+				enqueue := func(batch *pipeline.SampleBatch) error {
+					for _, sample := range batch.Samples {
+						total += sample.Value
+					}
+					return nil
+				}
+				var builder pipeline.BatchBuilder
+				for _, raw := range records {
+					event := raw.(*abi.ProfilerEventBase)
+					value := event.Value
+					if !compact {
+						var err error
+						value, err = p.convertValueToBytes(value)
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+					labels, err := types.NormalizeLabels(nativeLabels(uint32(event.PIDTGID>>32), taskCommString(event.Comm)))
+					if err != nil {
+						b.Fatal(err)
+					}
+					sample := aggregation.Sample{UserFrames: frames, Labels: labels, Value: value}
+					if err := builder.Append(&sample, enqueue); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if err := builder.Flush(enqueue); err != nil {
+					b.Fatal(err)
+				}
+				if total != expected {
+					b.Fatalf("total %d want %d", total, expected)
+				}
+			}
+		})
 	}
 }

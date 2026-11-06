@@ -92,6 +92,12 @@ type PerfEventReader interface {
 	Close() error
 }
 
+// PerfEventBatchDrainer optionally supports nonblocking reads of frozen output.
+// Readers without this capability retain the bounded ReadBatch fallback.
+type PerfEventBatchDrainer interface {
+	ReadBatchAvailable(newEvent func() any) (PerfEventBatch, error)
+}
+
 // PerfEventRawReader reads variable-size records without decoding them.
 type PerfEventRawReader interface {
 	// ReadRawInto blocks until one sample or loss record is available. Flush
