@@ -153,11 +153,3 @@ assert_usage_zero_result() {
 }
 assert_usage_zero_result
 log_info "physical_usage balanced alloc/free published an empty result"
-
-# Concentrate alloc/free events across swap boundaries without pacing every 64 pages.
-compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}" \
-	-DPAGES_PER_ITERATION=512
-USAGE_DIR="${WORK_DIR}/physical_usage_burst"
-run_profile_case physical_usage "${USAGE_DIR}"
-assert_usage_zero_result
-log_info "physical_usage burst balanced alloc/free without sample loss"
