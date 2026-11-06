@@ -121,6 +121,22 @@ Counts periods and time using burst CPU capacity. Emitted only when the kernel p
 | `cpu_stat_container_burst_time` | Cumulative time using burst CPU capacity | Nanoseconds | Container | — |
 | `cpu_stat_container_nr_bursts` | Cumulative periods using burst CPU capacity | Count | Container | — |
 
+### Sandbox CPU File Metrics
+
+`cpu_util` and `cpu_stat` can collect from common workload cgroup bindings while preserving existing `container_` metrics and labels. Sandboxes use the corresponding metrics below. CubeSandbox/OpenSandbox discovery is not yet enabled in configuration; this collection path is currently validated with synthetic sources.
+
+| Metric | Meaning and unit |
+| --- | --- |
+| `cpu_util_workload_cores` | Available CPU capacity, cores |
+| `cpu_util_workload_usr`, `cpu_util_workload_sys`, `cpu_util_workload_total` | User, kernel and total utilization, % |
+| `cpu_stat_workload_nr_throttled`, `cpu_stat_workload_throttled_time` | Cumulative throttled periods and time (nanoseconds) |
+| `cpu_stat_workload_wait_sum_percent` | Interval wait ratio, % |
+| `cpu_stat_workload_nr_bursts`, `cpu_stat_workload_burst_time` | Cumulative burst periods and time (nanoseconds) |
+
+The fixed common labels are `host`, `region`, `workload_id`, `workload_type`, `workload_name` and `workload_namespace`. Missing names use the ID; unknown namespaces keep an empty value. Collector labels are retained, source Labels are not expanded, and container-specific labels are not added.
+
+CPU file metrics require no representative PID, network or CSS. V1 reads independently bound cpu, cpuacct and cpuset directories; v2 reads the bound unified directory, including mounted subtrees. Missing resources never fall back to host directories. Without cpuacct, utilization and wait ratio are unavailable, but readable throttle and burst counters remain available. Absent kernel fields are omitted. Capacity retains the effective-cpuset, quota and online-core rules. Metadata refreshes preserve per-instance accounting baselines. This does not add sandbox Guest metrics.
+
 ### Load
 
 Hosts report 1-, 5-, and 15-minute load averages. Containers report current runnable and uninterruptible task counts, which use a different time basis.

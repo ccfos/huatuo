@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–05 已完成；下一步为 06（CPU 指标迁移并建立 workload 输出边界）。CubeSandbox 发现与采集尚未开放。
+当前进度：步骤 00–06 已完成；下一步为 07（内存指标迁移）。CubeSandbox 发现来源及生产采集配置尚未开放。
 
 ## 开发与提交原则
 
@@ -782,3 +782,23 @@ CSS 缓存只在 Refresh 带来新信息时请求合并全量发现，重复通�
 四个 QEMU 系统已通过容器 IO 集成测试，随后在 cpuidle E2E 生命周期阶段因预期发现告警失败。容器退出时，kubelet 的 Running 状态可短暂晚于 CRI 或 `/proc`；公共 Manager 会重试，但原测试只接受旧的创建延迟告警。
 
 仅扩展该用例的日志检查，接受来自公共 Manager 的单条“无匹配运行中 CRI 状态”或“目标 `/proc/<pid>` 已消失”告警。继续保留其他告警、权限错误和混合错误的失败判定，也保留原目标身份、运行负载和火焰图断言，不改变生产日志级别。对 CI 保存的 Ubuntu 26.04、Rocky 8、openEuler 24.03 生命周期日志回放由失败变为通过；额外注入权限错误或拼接错误仍失败。`bash -n` 通过，提交前运行 `make check`；完整 QEMU E2E 仍由新一轮 CI 验证。
+
+
+### 步骤 06：CPU 文件采集与 workload 指标输出
+
+`cpu_util` 与 `cpu_stat` 改为遍历公共 Pod，使用已验证的 cpu/cpuacct/cpuset 或 unified 目录及同一实例的 LifeResources。容器仍筛选普通容器和 sidecar，保留现有分类、Kata 身份约束、指标名和标签；沙箱不要求 ContainerInfo、PID、网络或 CSS。v1/v2 的解析逻辑抽出按实际目录读取的函数，旧 Cgroup 接口复用它们，未新增采集器接口或重复解析实现。独立控制器路径和挂载子树不再被旧共享路径覆盖。
+
+`NewPodGaugeData` 在输出边界区分 `container_` 和 `workload_`。沙箱固定携带六个公共身份标签，名称为空取 ID，命名空间缺失保持空字符串；保留采集器标签，不展开来源 Labels，也不允许附加标签覆盖沙箱身份。新增公共 `LabelWorkloadNamespace`，后续来源使用同一 key。容器输出与旧入口逐字段比较，保持一致。
+
+CPU 使用率保留原差值、配额/cpuset 容量和回退在线核数规则。资源目录消失不回退到宿主机目录。限流和突发计数独立于 cpuacct：没有使用时间时只禁用等待占比，保留可用 cpu.stat 计数；等待基线恢复后重新建立。元数据刷新不清除已有差值状态。CPU runqlat 等 BPF 采集器仍在步骤 08 逐项迁移，不计入本次文件采集范围。
+
+验证记录在测试机 `rebase-20261106/logs/step06-*`：metrics/metric/cgroups race 测试通过；新增集成测试经真实 Source/Manager 和临时文件验证 v1 分挂载及子树、v2、容器、两类无 PID 沙箱、CPU 差值、等待占比、元数据刷新和资源消失。测试未操作已有容器或沙箱。完整构建、全量单测及提交前 `make check` 纳入本步检查；沙箱实机发现与采集验收仍留待步骤 10 及之后。
+
+性能（三次中位数，同一 Linux 主机）：
+
+- 原容器输出与 Pod 容器输出均为 376 B/op、6 allocs/op；Pod 沙箱输出为 328 B/op、5 allocs/op。
+- CPU 差值计算保持约 200 ns/op、0 B/op、0 allocs/op。
+- 同一文件 fixture 下对比旧、新 `cpu_util.Update` 循环：102012 → 106058 ns/op（约 +4%），约 18 KB/op，111 → 106 allocs/op。额外目录存在性检查保证资源消失不读宿主机数据，不引入 kubelet/runtime 查询。
+- cgroup-only 沙箱完整采集循环：v1 约 77 μs、82 allocs/op；v2 约 54 μs、77 allocs/op，主要开销仍为文件读取与解析。
+
+已更新中英文 CPU 指标参考。步骤 06 完成，下一步迁移内存文件指标；配置仍仅允许 Container 来源，不宣称 CubeSandbox 已可用，也未新增沙箱 Guest 指标。

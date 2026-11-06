@@ -116,6 +116,22 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 | `cpu_stat_container_burst_time` | 使用突发 CPU 容量的累计时间 | 纳秒 | 容器 | — |
 | `cpu_stat_container_nr_bursts` | 使用突发 CPU 容量的累计周期数 | 计数 | 容器 | — |
 
+### 沙箱 CPU 文件指标
+
+`cpu_util` 和 `cpu_stat` 已支持从公共 workload 的 cgroup 绑定采集，保留容器原有 `container_` 指标及标签。沙箱使用下列对应指标；当前配置尚未开放 CubeSandbox/OpenSandbox 发现，这些能力先通过合成来源验证，不代表沙箱已可部署采集。
+
+| 指标 | 含义与单位 |
+| --- | --- |
+| `cpu_util_workload_cores` | 可用 CPU 容量，核 |
+| `cpu_util_workload_usr`、`cpu_util_workload_sys`、`cpu_util_workload_total` | 用户态、内核态、总利用率，% |
+| `cpu_stat_workload_nr_throttled`、`cpu_stat_workload_throttled_time` | 累计限流周期数、累计限流时间（纳秒） |
+| `cpu_stat_workload_wait_sum_percent` | 区间等待占比，% |
+| `cpu_stat_workload_nr_bursts`、`cpu_stat_workload_burst_time` | 累计突发周期数、累计突发时间（纳秒） |
+
+固定公共标签为 `host`、`region`、`workload_id`、`workload_type`、`workload_name`、`workload_namespace`。名称缺失时取 ID，未知命名空间保留空字符串；保留采集器自己的标签，不展开来源 Labels，也不添加容器专有标签。
+
+CPU 文件指标不要求代表 PID、网络或 CSS。v1 分别使用已绑定的 cpu、cpuacct、cpuset 目录，v2 使用已绑定的 unified 目录，支持挂载子树。资源缺失不回退到宿主机目录；缺少 cpuacct 时不输出利用率或等待占比，但仍输出可读取的限流和突发计数。字段未由内核提供时不补零；容量计算仍沿用有效 cpuset、配额和在线核数规则。元数据刷新保留实例的差值基线。本次不增加沙箱 Guest 指标。
+
 ### 负载
 
 宿主机输出 1、5、15 分钟平均负载；容器输出当前可运行和不可中断任务数，两者不是相同时间窗口的统计。

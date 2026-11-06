@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 type cpuUsageCgroup struct {
@@ -247,4 +248,29 @@ func TestRunqlatAggregatePerCPUValue(t *testing.T) {
 			t.Error("aggregatePerCPUValue() accepted a partial record")
 		}
 	})
+}
+
+// TestCPUWorkloadSelection 验证容器仍限于原普通/sidecar 类型及有效元数据，
+// Kata 需要 VM 身份；仅有 cgroup 的两类沙箱不要求进程或 ContainerInfo。
+func TestCPUWorkloadSelection(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		workload pod.Pod
+		want     bool
+	}{
+		{name: "cube cgroup only", workload: pod.Pod{Type: pod.TypeCubeSandbox}, want: true},
+		{name: "open cgroup only", workload: pod.Pod{Type: pod.TypeOpenSandbox}, want: true},
+		{name: "normal", workload: pod.Pod{Type: pod.TypeContainer, Container: &pod.ContainerInfo{Type: pod.ContainerTypeNormal}, Labels: map[string]any{pod.LabelHostNamespace: "checkout"}}, want: true},
+		{name: "sidecar", workload: pod.Pod{Type: pod.TypeContainer, Container: &pod.ContainerInfo{Type: pod.ContainerTypeSidecar}, Labels: map[string]any{pod.LabelHostNamespace: "checkout"}}, want: true},
+		{name: "daemon", workload: pod.Pod{Type: pod.TypeContainer, Container: &pod.ContainerInfo{Type: pod.ContainerTypeDaemonSet}, Labels: map[string]any{pod.LabelHostNamespace: "checkout"}}},
+		{name: "incomplete container", workload: pod.Pod{Type: pod.TypeContainer}},
+		{name: "incomplete namespace", workload: pod.Pod{Type: pod.TypeContainer, Container: &pod.ContainerInfo{Type: pod.ContainerTypeNormal}}},
+		{name: "unresolved Kata", workload: pod.Pod{Type: pod.TypeContainer, Container: &pod.ContainerInfo{Type: pod.ContainerTypeNormal, RuntimeType: "io.containerd.kata.v2"}, Labels: map[string]any{pod.LabelHostNamespace: "checkout"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isCPUWorkload(&test.workload); got != test.want {
+				t.Errorf("selected=%t, want %t", got, test.want)
+			}
+		})
+	}
 }

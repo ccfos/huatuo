@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -95,13 +96,18 @@ func (c *CgroupV1) Procs(path string) ([]int32, error) {
 }
 
 func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
-	statPath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.stat")
+	return ReadCPUUsage(paths.Path(subsystem.SubsystemCPUAcct, path))
+}
+
+// ReadCPUUsage reads an already resolved cpuacct directory.
+func ReadCPUUsage(directory string) (*stats.CpuUsage, error) {
+	statPath := filepath.Join(directory, "cpuacct.stat")
 	raw, err := parseutil.RawKV(statPath)
 	if err != nil {
 		return nil, err
 	}
 
-	usagePath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.usage")
+	usagePath := filepath.Join(directory, "cpuacct.usage")
 	usage, err := parseutil.ReadUint(usagePath)
 	if err != nil {
 		return nil, err
@@ -118,7 +124,12 @@ func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
 }
 
 func (c *CgroupV1) CpuStatRaw(path string) (map[string]uint64, error) {
-	f, err := os.Open(paths.Path(subsystem.SubsystemCPU, path, "cpu.stat"))
+	return ReadCPUStat(paths.Path(subsystem.SubsystemCPU, path))
+}
+
+// ReadCPUStat reads counters from an already resolved cpu directory.
+func ReadCPUStat(directory string) (map[string]uint64, error) {
+	f, err := os.Open(filepath.Join(directory, "cpu.stat"))
 	if err != nil {
 		return nil, err
 	}
@@ -155,21 +166,29 @@ func (c *CgroupV1) CpuStatRaw(path string) (map[string]uint64, error) {
 }
 
 func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
-	periodPath := paths.Path(subsystem.SubsystemCPU, path, "cpu.cfs_period_us")
+	return ReadCPUQuota(paths.Path(subsystem.SubsystemCPU, path), paths.Path(subsystem.SubsystemCPUSet, path, "cpuset.cpus"))
+}
+
+// ReadCPUQuota accepts an independent cpuset file; empty means no cpuset binding.
+func ReadCPUQuota(directory, cpusetFile string) (*stats.CpuQuota, error) {
+	periodPath := filepath.Join(directory, "cpu.cfs_period_us")
 	period, err := parseutil.ReadUint(periodPath)
 	if err != nil {
 		return nil, err
 	}
 
-	quotaPath := paths.Path(subsystem.SubsystemCPU, path, "cpu.cfs_quota_us")
+	quotaPath := filepath.Join(directory, "cpu.cfs_quota_us")
 	quota, err := parseutil.ReadInt(quotaPath)
 	if err != nil {
 		return nil, err
 	}
 
-	effectiveCPUCount, err := readEffectiveCPUCount(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+	var effectiveCPUCount uint64
+	if cpusetFile != "" {
+		effectiveCPUCount, err = cpuutil.ParseOnlineCores(cpusetFile)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
 	}
 
 	if quota == -1 {
@@ -185,10 +204,6 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		Period:            period,
 		EffectiveCPUCount: effectiveCPUCount,
 	}, nil
-}
-
-func readEffectiveCPUCount(path string) (uint64, error) {
-	return cpuutil.ParseOnlineCores(paths.Path(subsystem.SubsystemCPUSet, path, "cpuset.cpus"))
 }
 
 func (c *CgroupV1) MemoryStatRaw(path string) (map[string]uint64, error) {

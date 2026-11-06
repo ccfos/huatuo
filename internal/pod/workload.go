@@ -32,6 +32,8 @@ const (
 	TypeContainer   = "container"
 	TypeCubeSandbox = "cubesandbox"
 	TypeOpenSandbox = "opensandbox"
+
+	LabelWorkloadNamespace = "workload_namespace"
 )
 
 // Pod is one monitored workload, independent of its discovery source.

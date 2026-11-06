@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"math"
+	"path/filepath"
 	"strconv"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -148,11 +149,21 @@ func (c *CgroupV2) Procs(path string) ([]int32, error) {
 }
 
 func (c *CgroupV2) CpuStatRaw(path string) (map[string]uint64, error) {
-	return parseutil.RawKV(paths.Path(path, "cpu.stat"))
+	return ReadCPUStat(paths.Path(path))
+}
+
+// ReadCPUStat reads counters from an already resolved unified directory.
+func ReadCPUStat(directory string) (map[string]uint64, error) {
+	return parseutil.RawKV(filepath.Join(directory, "cpu.stat"))
 }
 
 func (c *CgroupV2) CpuUsage(path string) (*stats.CpuUsage, error) {
-	raw, err := c.CpuStatRaw(path)
+	return ReadCPUUsage(paths.Path(path))
+}
+
+// ReadCPUUsage reads usage from an already resolved unified directory.
+func ReadCPUUsage(directory string) (*stats.CpuUsage, error) {
+	raw, err := ReadCPUStat(directory)
 	if err != nil {
 		return nil, err
 	}
@@ -165,16 +176,24 @@ func (c *CgroupV2) CpuUsage(path string) (*stats.CpuUsage, error) {
 }
 
 func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
-	maxpath := paths.Path(path, "cpu.max")
+	return ReadCPUQuota(paths.Path(path), paths.Path(path, "cpuset.cpus.effective"))
+}
+
+// ReadCPUQuota accepts an independent cpuset file; empty means no cpuset binding.
+func ReadCPUQuota(directory, cpusetFile string) (*stats.CpuQuota, error) {
+	maxpath := filepath.Join(directory, "cpu.max")
 
 	maxQuota, period, err := parseutil.KV(maxpath)
 	if err != nil {
 		return nil, err
 	}
 
-	effectiveCPUCount, err := readEffectiveCPUCount(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+	var effectiveCPUCount uint64
+	if cpusetFile != "" {
+		effectiveCPUCount, err = cpuutil.ParseOnlineCores(cpusetFile)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
 	}
 
 	if maxQuota == "max" {
@@ -195,10 +214,6 @@ func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		Period:            period,
 		EffectiveCPUCount: effectiveCPUCount,
 	}, nil
-}
-
-func readEffectiveCPUCount(path string) (uint64, error) {
-	return cpuutil.ParseOnlineCores(paths.Path(path, "cpuset.cpus.effective"))
 }
 
 func (c *CgroupV2) MemoryStatRaw(path string) (map[string]uint64, error) {
