@@ -41,19 +41,15 @@ type pidRuntimeService struct {
 	response     *runtimeapi.ContainerStatusResponse
 	err          error
 	calls        int
-	containerID  string
-	verbose      bool
 	checkContext bool
 }
 
 func (s *pidRuntimeService) ContainerStatus(
 	ctx context.Context,
-	id string,
-	verbose bool,
+	_ string,
+	_ bool,
 ) (*runtimeapi.ContainerStatusResponse, error) {
 	s.calls++
-	s.containerID = id
-	s.verbose = verbose
 	if s.checkContext {
 		return nil, ctx.Err()
 	}
@@ -64,60 +60,6 @@ func runningRuntimeResponse(info string) *runtimeapi.ContainerStatusResponse {
 	return &runtimeapi.ContainerStatusResponse{
 		Status: &runtimeapi.ContainerStatus{Id: "test", State: runtimeapi.ContainerState_CONTAINER_RUNNING},
 		Info:   map[string]string{"info": info},
-	}
-}
-
-func TestReadContainerdRuntimeInfo(t *testing.T) {
-	old := containerdClient
-	t.Cleanup(func() { containerdClient = old })
-	exited := runningRuntimeResponse(`{"runtimeType":"io.containerd.kata.v2"}`)
-	exited.Status.State = runtimeapi.ContainerState_CONTAINER_EXITED
-	wrongID := runningRuntimeResponse(`{"runtimeType":"io.containerd.kata.v2"}`)
-	wrongID.Status.Id = "another"
-	for _, tt := range []struct {
-		name     string
-		response *runtimeapi.ContainerStatusResponse
-		err      error
-		wantErr  string
-	}{
-		{
-			name:     "Kata",
-			response: runningRuntimeResponse(`{"pid":1234,"runtimeType":"io.containerd.kata-qemu.v2","sandboxID":"sandbox"}`),
-		},
-		{
-			name:     "runc",
-			response: runningRuntimeResponse(`{"pid":1234,"runtimeType":"io.containerd.runc.v2","sandboxID":"sandbox"}`),
-		},
-		{name: "missing runtime", response: runningRuntimeResponse(`{"pid":1234}`), wantErr: "no CRI runtime type"},
-		{name: "missing info", response: runningRuntimeResponse(""), wantErr: "decode containerd container info"},
-		{name: "bad JSON", response: runningRuntimeResponse("invalid"), wantErr: "decode containerd container info"},
-		{name: "exited", response: exited, wantErr: "no matching running CRI status"},
-		{name: "wrong ID", response: wrongID, wantErr: "no matching running CRI status"},
-		{name: "nil response", wantErr: "no matching running CRI status"},
-		{name: "nil status", response: &runtimeapi.ContainerStatusResponse{}, wantErr: "no matching running CRI status"},
-		{name: "CRI error", err: errors.New("runtime unavailable"), wantErr: "runtime unavailable"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &pidRuntimeService{response: tt.response, err: tt.err}
-			containerdClient = client
-			info, err := readContainerdRuntimeInfo(t.Context(), "test")
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Errorf("error = %v, want %q", err, tt.wantErr)
-				}
-			} else if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			} else if info.PID != 1234 || info.SandboxID != "sandbox" || info.RuntimeType == "" {
-				t.Errorf("runtime info = %+v", info)
-			}
-			if client.calls != 1 || client.containerID != "test" || !client.verbose {
-				t.Errorf("unexpected CRI request: %+v", client)
-			}
-		})
-	}
-	containerdClient = nil
-	if _, err := readContainerdRuntimeInfo(t.Context(), "test"); err == nil {
-		t.Error("uninitialized CRI client must fail")
 	}
 }
 

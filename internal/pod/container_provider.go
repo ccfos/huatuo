@@ -16,16 +16,12 @@ package pod
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"path"
 	"sync"
-	"time"
 
-	dockerclient "github.com/docker/docker/client"
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	criapi "k8s.io/cri-api/pkg/apis"
-	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
-	k8sremote "k8s.io/cri-client/pkg"
 )
 
 // containerProvider identifies the container runtime in use on the node.
@@ -83,88 +79,30 @@ func initContainerProviderEnv(ctx context.Context, provider containerProvider, a
 }
 
 func initDockerProviderEnv(ctx context.Context, apiVersion string) error {
-	client, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithVersion(apiVersion))
+	root, err := containerdiscovery.DockerRoot(ctx, apiVersion)
 	if err != nil {
-		return fmt.Errorf("create docker client: %w", err)
+		return err
 	}
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	info, err := client.Info(ctx)
-	if err != nil {
-		return fmt.Errorf("get docker info: %w", err)
-	}
-
-	dockerRootDir = info.DockerRootDir
+	dockerRootDir = root
 	currContainerProvider = containerProviderDocker
 	return nil
 }
 
 func initContainerdProviderEnv(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+	client, state, err := containerdiscovery.ConnectContainerd(ctx, kubeletRuntimeEndpoint)
+	if err != nil {
 		return err
 	}
-	// The CRI constructor has no context parameter and retains its own
-	// five-second bound. Subsequent RPCs use the discovery context.
-	client, err := k8sremote.NewRemoteRuntimeService(kubeletRuntimeEndpoint, 5*time.Second, nil, nil)
-	if err != nil {
-		return fmt.Errorf("create containerd client: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	status, err := client.Status(ctx, true)
-	if err != nil {
-		return fmt.Errorf("get containerd status: %w", err)
-	}
-
-	config := struct {
-		StateDir string `json:"stateDir"`
-	}{}
-	if err := json.Unmarshal([]byte(status.Info["config"]), &config); err != nil {
-		return fmt.Errorf("unmarshal containerd config: %w", err)
-	}
-
-	containerdStateDir = path.Dir(config.StateDir)
-	containerdClient = client
+	containerdClient, containerdStateDir = client, state
 	currContainerProvider = containerProviderContainerd
 	return nil
 }
 
-// containerdRuntimeInfo is containerd's verbose CRI status. For Kata, PID is
-// the Host hypervisor PID, not the container's init PID inside the Guest.
-type containerdRuntimeInfo struct {
-	PID         int    `json:"pid"`
-	RuntimeType string `json:"runtimeType"`
-	SandboxID   string `json:"sandboxID"`
-}
+type containerdRuntimeInfo = containerdiscovery.RuntimeInfo
 
 func readContainerdRuntimeInfo(ctx context.Context, containerID string) (*containerdRuntimeInfo, error) {
 	initMu.Lock()
 	client := containerdClient
 	initMu.Unlock()
-	if client == nil {
-		return nil, fmt.Errorf("containerd client not initialized")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	response, err := client.ContainerStatus(ctx, containerID, true)
-	if err != nil {
-		return nil, fmt.Errorf("get containerd container status: %w", err)
-	}
-	status := response.GetStatus()
-	if status.GetId() != containerID || status.GetState() != runtimeapi.ContainerState_CONTAINER_RUNNING {
-		return nil, fmt.Errorf("container %s has no matching running CRI status", containerID)
-	}
-	info := &containerdRuntimeInfo{}
-	if err := json.Unmarshal([]byte(response.GetInfo()["info"]), info); err != nil {
-		return nil, fmt.Errorf("decode containerd container info: %w", err)
-	}
-	if info.RuntimeType == "" {
-		return nil, fmt.Errorf("container %s has no CRI runtime type", containerID)
-	}
-	return info, nil
+	return containerdiscovery.ReadContainerdRuntimeInfo(ctx, client, containerID)
 }

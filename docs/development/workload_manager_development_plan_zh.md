@@ -673,3 +673,11 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 按用户确认，configz 查询失败且所有默认本地 kubelet 配置不可读或不可解析时，仍沿用原有 panic 退出行为，不改成 Manager 重试。`container.Kubelet.MustConfiguration` 接管远端优先、本地文件顺序兜底和该失败策略；取消或超时仍返回 context 错误，不误入本地配置兜底。根包只暂存旧 runtime 初始化所需的 driver/endpoint，尚未完成 Source 切换。
 
 原 `kubelet_panic_test.go` 随实现迁入来源子包，替换此前未实际执行目标函数的占位测试，覆盖真正的 panic、取消不 panic、配置优先级、损坏/缺失文件跳过以及空配置保持默认字段。生产启动集成测试改用真实 HTTPS configz 和证书，不依赖根包配置路径全局变量。`logs/step04i-*` 记录 pod/container/autotracing race、HTTP/HTTPS 发现与取消、无 CSS 启动、完整构建及 `make check`。
+
+### 步骤 04j：迁移 Docker/containerd 协议及 PID 解析
+
+将 Docker Info、containerd CRI 初始化及状态解析、Docker 配置文件和 containerd PID 文件读取迁入 `container/runtime.go`。根包暂时保留现有 provider 状态和旧查询适配入口，调用同一份来源实现；保持短 ID 匹配、歧义拒绝、运行态核验、Kata Host PID 选择及原有超时语义。未新增 runtime 注册接口或另一套实例缓存。CRI 构造函数不能继承上层 context 的既有 5 秒边界仍保留，不修改 vendor。
+
+原 PID 文件测试迁为 `container/runtime_test.go`，CRI 状态解析用例同步迁入，根包保留旧调用链路的 Kata 分类和实例校验回归。新增外部依赖集成测试使用原生 Docker HTTP 客户端和原生 CRI Unix socket gRPC 客户端，验证连接、状态目录、Kata 元数据、异常配置不发布结果及取消传递。测试服务是本次独立 fixture，不操作现有容器或沙箱；不能据此宣称真实 CubeSandbox 已接入。
+
+`logs/step04j-*` 记录 pod/container/autotracing race、HTTP/CRI socket 集成、旧 Host 生产启动、内核实例校验、完整构建及 `make check`。真实 `Source.Discover` 和启动调用方切换仍未完成，根包到协议子包的迁移期依赖仍待在该切换时消除。
