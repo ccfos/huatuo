@@ -246,13 +246,28 @@ func (r *ringBufferContext) drainRingBuffer(
 	kernelCache := make(map[int32][]types.ProfileFrame)
 	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
 	for {
-		batch, readErr := ring.reader.ReadBatch(newEvent)
+		var batch bpf.PerfEventBatch
+		var readErr error
+		if drainer, ok := ring.reader.(bpf.PerfEventBatchDrainer); ok {
+			batch, readErr = drainer.ReadBatchAvailable(newEvent)
+		} else {
+			batch, readErr = ring.reader.ReadBatch(newEvent)
+		}
 		if batch.LostSamples > math.MaxUint64-uint64(len(batch.Events)) ||
 			uint64(len(batch.Events))+batch.LostSamples > math.MaxUint64-accounted {
 			return accounted, expected, fmt.Errorf("BPF transfer event count overflows uint64")
 		}
 
 		accounted += uint64(len(batch.Events)) + batch.LostSamples
+		valuesConverted := false
+		if r.needsFallback {
+			events, compactErr := compactRetainedEvents(batch.Events, convert)
+			if compactErr != nil {
+				return accounted, expected, compactErr
+			}
+			batch.Events = events
+			valuesConverted = true
+		}
 		var builder pipeline.BatchBuilder
 		for _, record := range batch.Events {
 			var base *abi.ProfilerEventBase
@@ -295,7 +310,11 @@ func (r *ringBufferContext) drainRingBuffer(
 				kernelCache[base.Kernstack] = kernel
 			}
 
-			value, err := convert(base.Value)
+			value := base.Value
+			var err error
+			if !valuesConverted {
+				value, err = convert(base.Value)
+			}
 			if err != nil {
 				return accounted, expected, err
 			}

@@ -39,8 +39,9 @@ type perfEventReader struct {
 
 // _ is a type assertion
 var (
-	_ PerfEventReader    = (*perfEventReader)(nil)
-	_ PerfEventRawReader = (*perfEventReader)(nil)
+	_ PerfEventReader       = (*perfEventReader)(nil)
+	_ PerfEventRawReader    = (*perfEventReader)(nil)
+	_ PerfEventBatchDrainer = (*perfEventReader)(nil)
 )
 
 // newPerfEventReader creates a new perfEventReader.
@@ -88,19 +89,23 @@ func (r *perfEventReader) Close() error {
 
 const (
 	readIntoPollTimeout = 100 * time.Millisecond
-
-	// readBatchDeadline bounds how long ReadBatch waits for the first event of a
-	// round. Once events start arriving, subsequent reads return quickly until the
-	// rings are drained and the deadline fires again, ending the batch.
-	readBatchDeadline = 500 * time.Millisecond
+	readBatchDeadline   = 500 * time.Millisecond
 )
 
-// ReadBatch drains all per-CPU ring buffers currently available and returns the
-// parsed events and sample loss. It returns partial results with read or decode
-// errors so callers can preserve progress.
+// ReadBatch waits for events until its deadline and returns the available data.
 func (r *perfEventReader) ReadBatch(newEvent func() any) (PerfEventBatch, error) {
-	deadline := time.Now().Add(readBatchDeadline)
+	return r.readBatch(newEvent, time.Now().Add(readBatchDeadline))
+}
 
+// ReadBatchAvailable drains available per-CPU data without waiting for new events.
+func (r *perfEventReader) ReadBatchAvailable(newEvent func() any) (PerfEventBatch, error) {
+	// An expired deadline still scans every CPU ring, including data below the
+	// notification watermark. Frozen-buffer consumers must not wait on an empty
+	// ring while producers are filling the other output.
+	return r.readBatch(newEvent, time.Now())
+}
+
+func (r *perfEventReader) readBatch(newEvent func() any, deadline time.Time) (PerfEventBatch, error) {
 	var batch PerfEventBatch
 	var rec perf.Record
 
