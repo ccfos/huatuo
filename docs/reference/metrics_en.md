@@ -177,6 +177,8 @@ No CPU, process or CSS binding is required. Missing memory bindings or files ski
 
 Container fields come from `memory.stat`; host fields from `/proc/vmstat`. Both are subject to `MetricCollector.Vmstat` filters. Field availability and meanings depend on kernel and cgroup versions.
 
+Sandbox equivalents use `memory_vmstat_workload_<field>` names (for example, `memory_vmstat_workload_active_file`) and the six fixed workload labels. Container names remain unchanged. Collection reads only bound memory/unified directories and requires no CPU, PID or CSS. Missing or malformed workload files do not discard other workloads or Host metrics. Sandboxes reuse the legacy `IncludedOnContainer` / `ExcludedOnContainer` filters until a separate naming and compatibility migration. Sandbox discovery is not yet enabled in configuration.
+
 **Container memory**
 
 | Metric | Description | Unit | Scope | Additional Labels |

@@ -1155,7 +1155,7 @@ This section configures system, network, and device metrics. `Included` and `Exc
 #
 # This metric supports host vmstat and cgroup vmstat.
 # - IncludedOnHost / ExcludedOnHost: same as above, for host /proc/vmstat.
-# - IncludedOnContainer / ExcludedOnContainer: same, for cgroup containers memory.stat.
+# - IncludedOnContainer / ExcludedOnContainer: same, for container and sandbox cgroup memory.stat (legacy names).
 #
 [MetricCollector.Vmstat]
     IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
@@ -1167,7 +1167,9 @@ This section configures system, network, and device metrics. `Included` and `Exc
 | Field | Description |
 | --- | --- |
 | `IncludedOnHost` / `ExcludedOnHost` | Field filtering expressions for host `/proc/vmstat`. Both default to `""`. The configuration file explicitly sets the inclusion list above and excludes fields matching `total`. |
-| `IncludedOnContainer` / `ExcludedOnContainer` | Field filtering expressions for container cgroup `memory.stat`. Both default to `""`. The configuration file explicitly sets the inclusion list above and excludes fields matching `total`. |
+| `IncludedOnContainer` / `ExcludedOnContainer` | Field filtering expressions for container and sandbox cgroup `memory.stat`. Both default to `""`. The configuration file explicitly sets the inclusion list above and excludes fields matching `total`. |
+
+`IncludedOnContainer` / `ExcludedOnContainer` retain their legacy names while also filtering sandbox fields; Host filters remain independent. Workload filter naming and semantics will be unified separately with an explicit compatibility migration. No aliases or default changes are introduced now.
 
 #### 9.6 Memory events
 

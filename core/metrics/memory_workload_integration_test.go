@@ -27,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const memoryMetricMembership = "/tenant/sandbox/8"
@@ -65,6 +66,7 @@ func startMemoryMetricFixture(t testing.TB, kind string, legacy bool) string {
 	writeCPUFixture(t, filepath.Join(mount, "memory.events"), "low 999\noom 999\n")
 	// Poison both legacy and unified host roots to catch accidental empty-path reads.
 	for _, hostRoot := range []string{root, filepath.Join(root, "memory")} {
+		writeCPUFixture(t, filepath.Join(hostRoot, "memory.stat"), "active_file 999\nrss 999\n")
 		writeCPUFixture(t, filepath.Join(hostRoot, "memory.events"), "low 999\noom 999\n")
 		writeCPUFixture(t, filepath.Join(hostRoot, "memory.local_direct_reclaim_time"), "999")
 	}
@@ -256,6 +258,131 @@ func BenchmarkMemoryExtensionsCollection(b *testing.B) {
 		data, err := collector.Update()
 		if err != nil || len(data) != 3 {
 			b.Fatalf("extensions=%d err=%v", len(data), err)
+		}
+	}
+}
+
+// TestMemoryVmstatWorkload 验证容器和沙箱复用旧字段过滤，Host 过滤仍独立；
+// 覆盖 v1/v2 memory-only 对象、运行时过滤更新、坏文件及资源消失、Host 读取失败。
+func TestMemoryVmstatWorkload(t *testing.T) {
+	previous := configSnapshot()
+	t.Cleanup(func() { Set(previous) })
+	cfg := previous.Clone()
+	cfg.Vmstat.IncludedOnContainer = "^(active_file|total_active_file|rss)$"
+	cfg.Vmstat.ExcludedOnContainer = "^total_"
+	cfg.Vmstat.IncludedOnHost = "^(nr_free_pages|pgfault)$"
+	cfg.Vmstat.ExcludedOnHost = "^pgfault$"
+	for _, test := range []struct {
+		name, kind string
+		legacy     bool
+	}{
+		{"container v1", pod.TypeContainer, true},
+		{"cube v1", pod.TypeCubeSandbox, true},
+		{"cube v2", pod.TypeCubeSandbox, false},
+		{"open v2", pod.TypeOpenSandbox, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			Set(cfg)
+			directory := startMemoryMetricFixture(t, test.kind, test.legacy)
+			file := filepath.Join(directory, "memory.stat")
+			writeCPUFixture(t, file, "active_file 4096\ntotal_active_file 8192\nrss 16384\npgfault 6\n")
+			originalPrefix := filepath.Dir(procfs.DefaultPath())
+			procRoot := t.TempDir()
+			procfs.RootPrefix(procRoot)
+			t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
+			hostFile := procfs.Path("vmstat")
+			writeCPUFixture(t, hostFile, "nr_free_pages 7\npgfault 9\n")
+			prefix := "workload_"
+			if test.kind == pod.TypeContainer {
+				prefix = "container_"
+			}
+			collector := &memoryVmStat{}
+			data, err := collector.Update()
+			values := map[string]float64{}
+			for _, item := range data {
+				values[item.Name()] = item.Value
+			}
+			if err != nil || len(data) != 3 || values[prefix+"active_file"] != 4096 || values[prefix+"rss"] != 16384 || values["nr_free_pages"] != 7 {
+				t.Errorf("vmstat values=%v err=%v", values, err)
+			}
+			updated := cfg.Clone()
+			updated.Vmstat.IncludedOnContainer = "^rss$"
+			Set(updated)
+			data, err = collector.Update()
+			values = map[string]float64{}
+			for _, item := range data {
+				values[item.Name()] = item.Value
+			}
+			if err != nil || len(data) != 2 || values[prefix+"rss"] != 16384 || values["nr_free_pages"] != 7 {
+				t.Errorf("live filter update=%v err=%v", values, err)
+			}
+			updated.Vmstat.IncludedOnContainer = "["
+			Set(updated)
+			if _, err := collector.Update(); err == nil {
+				t.Error("invalid legacy filter accepted")
+			}
+			Set(cfg)
+			if err := os.Remove(hostFile); err != nil {
+				t.Error(err)
+				return
+			}
+			data, err = collector.Update()
+			if err != nil || len(data) != 2 {
+				t.Errorf("Host failure discarded cgroup metrics: count=%d err=%v", len(data), err)
+			}
+			writeCPUFixture(t, hostFile, "nr_free_pages 7\npgfault 9\n")
+			writeCPUFixture(t, file, "rss invalid\n")
+			data, err = collector.Update()
+			if err != nil || len(data) != 1 || data[0].Name() != "nr_free_pages" {
+				t.Errorf("bad cgroup file discarded host metrics: %v %v", data, err)
+			}
+			if err := os.Remove(file); err != nil {
+				t.Error(err)
+				return
+			}
+			data, err = collector.Update()
+			if err != nil || len(data) != 1 || data[0].Name() != "nr_free_pages" {
+				t.Errorf("absent file used root cgroup data: %v %v", data, err)
+			}
+			if err := os.RemoveAll(directory); err != nil {
+				t.Error(err)
+				return
+			}
+			data, err = collector.Update()
+			if err != nil || len(data) != 1 || data[0].Name() != "nr_free_pages" {
+				t.Errorf("absent binding used root cgroup data: %v %v", data, err)
+			}
+		})
+	}
+}
+
+func BenchmarkMemoryVmstatCollection(b *testing.B) {
+	directory := startMemoryMetricFixture(b, pod.TypeContainer, true)
+	writeCPUFixture(b, filepath.Join(directory, "memory.stat"), "active_file 4096\nrss 16384\npgfault 6\n")
+	root := b.TempDir()
+	alias := filepath.Join(root, "memory", memoryMetricMembership)
+	if err := os.MkdirAll(filepath.Dir(alias), 0o700); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.Symlink(directory, alias); err != nil {
+		b.Fatal(err)
+	}
+	previousRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	b.Cleanup(func() { paths.RootfsDefaultPath = previousRoot })
+	previous := configSnapshot()
+	Set(&Config{})
+	b.Cleanup(func() { Set(previous) })
+	attr, err := newMemoryVmStat()
+	if err != nil {
+		b.Fatal(err)
+	}
+	collector := attr.TracingData.(*memoryVmStat)
+	b.ReportAllocs()
+	for b.Loop() {
+		data, err := collector.workloadVmstat()
+		if err != nil || len(data) != 3 {
+			b.Fatalf("vmstat=%d err=%v", len(data), err)
 		}
 	}
 }

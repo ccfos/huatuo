@@ -470,6 +470,12 @@ Manager 为选定来源维护初始化、同步状态、超时和重试，复用
 
 保留采集器自身的 CPU、设备等标签，不自动将 `Pod.Labels` 全量转换为指标标签，避免标签集合随来源数据变化。不为沙箱补充容器专有标签。
 
+### 过滤配置的兼容与后续统一
+
+2026-11-07 确认：沙箱的 `memory.stat` 字段过滤先复用 `MetricCollector.Vmstat.IncludedOnContainer` 和 `ExcludedOnContainer`。这两个字段作用于容器和沙箱的原始 `memory.stat` 字段名；宿主机 `/proc/vmstat` 继续独立使用 `IncludedOnHost` / `ExcludedOnHost`。本版保留旧字段名，不新增一套沙箱专用过滤配置。
+
+**后续统一事项（未实施）**：统一面向 workload 的过滤配置命名与作用范围，首先处理 vmstat 中带 `OnContainer` 的兼容名称。统一名称、旧配置迁移方式、同时提供新旧字段时的规则及弃用安排另行确定；保留旧配置行为并补充兼容测试后再切换。本次复用不视为这项统一工作已完成，也不在当前迁移中删除旧字段。
+
 ### 事件、tracing 与 profiling 存储映射
 
 沙箱记录使用顶层字段 `workload_id`、`workload_type`、`workload_name` 和 `workload_namespace`，名称和命名空间沿用前述取值规则，不填写 `container_*` 字段。现有容器记录的字段与含义保持原样。

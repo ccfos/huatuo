@@ -172,6 +172,8 @@ CPU 文件指标不要求代表 PID、网络或 CSS。v1 分别使用已绑定�
 
 容器字段来自 `memory.stat`，宿主机字段来自 `/proc/vmstat`，均受 `MetricCollector.Vmstat` 过滤规则影响。字段是否存在及其含义取决于内核和 cgroup 版本。
 
+沙箱使用对应的 `memory_vmstat_workload_<字段>` 名称（如 `memory_vmstat_workload_active_file`）和六个固定 workload 标签，容器原名称保持不变。只读取已绑定的 memory/unified 目录，不要求 CPU、PID 或 CSS；缺失或无法解析的对象文件不会影响其他对象及宿主机指标。沙箱先复用旧 `IncludedOnContainer` / `ExcludedOnContainer` 规则，后续统一配置命名与语义。当前沙箱发现配置尚未开放。
+
 **容器内存**
 
 | 指标 | 说明 | 单位 | 范围 | 附加标签 |

@@ -16,8 +16,8 @@ package collector
 
 import (
 	"fmt"
+	"path/filepath"
 
-	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/matcher"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -28,63 +28,58 @@ import (
 	"github.com/ccfos/huatuo/pkg/metric"
 )
 
-type memoryVmStat struct {
-	cgroup cgroups.Cgroup
-}
+type memoryVmStat struct{}
 
 func init() {
 	tracing.RegisterEventTracing("memory_vmstat", newMemoryVmStat)
 }
 
 func newMemoryVmStat() (*tracing.EventTracingAttr, error) {
-	cgroup, err := cgroups.NewManager()
-	if err != nil {
-		return nil, err
-	}
-
 	return &tracing.EventTracingAttr{
-		TracingData: &memoryVmStat{
-			cgroup: cgroup,
-		},
-		Flag: tracing.FlagMetric,
+		TracingData: &memoryVmStat{},
+		Flag:        tracing.FlagMetric,
 	}, nil
 }
 
 func (c *memoryVmStat) Update() ([]*metric.Data, error) {
-	container, err := c.containerVmstat()
+	workloads, err := c.workloadVmstat()
 	if err != nil {
 		return nil, err
 	}
 
 	host, err := c.hostVmstat()
 	if err != nil {
-		return container, nil
+		return workloads, nil
 	}
 
-	return append(container, host...), nil
+	return append(workloads, host...), nil
 }
 
-func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
+func (c *memoryVmStat) workloadVmstat() ([]*metric.Data, error) {
 	cfg := configSnapshot()
+	// Keep legacy configuration names until workload filter settings are unified.
 	f, err := matcher.NewValueMatcher(cfg.Vmstat.IncludedOnContainer, cfg.Vmstat.ExcludedOnContainer)
 	if err != nil {
-		return nil, fmt.Errorf("vmstat container filter: %w", err)
+		return nil, fmt.Errorf("vmstat cgroup filter: %w", err)
 	}
 
-	containers, err := pod.NormalContainers()
+	workloads, err := pod.Pods()
 	if err != nil {
 		return nil, err
 	}
 
 	var metrics []*metric.Data
-	for _, container := range containers {
-		memoryPath := container.MemoryCgroupPath()
-		if memoryPath == "" {
+	for _, workload := range workloads {
+		if !isMemoryWorkload(workload) {
 			continue
 		}
-		raw, err := c.cgroup.MemoryStatRaw(memoryPath)
+		directory, err := workload.Cgroups.Directory("memory")
 		if err != nil {
-			log.Infof("parse %s memory.stat %v", memoryPath, err)
+			continue
+		}
+		raw, err := parseutil.RawKV(filepath.Join(directory, "memory.stat"))
+		if err != nil {
+			log.Infof("parse %s memory.stat %v", directory, err)
 			continue
 		}
 
@@ -94,7 +89,7 @@ func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
 				continue
 			}
 
-			metrics = append(metrics, metric.NewContainerGaugeData(container, m, float64(v), fmt.Sprintf("cgroup memory.stat %s", m), nil))
+			metrics = append(metrics, metric.NewPodGaugeData(workload, m, float64(v), fmt.Sprintf("cgroup memory.stat %s", m), nil))
 		}
 	}
 

@@ -1154,7 +1154,7 @@ SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒�
 #
 # This metric supports host vmstat and cgroup vmstat.
 # - IncludedOnHost / ExcludedOnHost: same as above, for host /proc/vmstat.
-# - IncludedOnContainer / ExcludedOnContainer: same, for cgroup containers memory.stat.
+# - IncludedOnContainer / ExcludedOnContainer: same, for container and sandbox cgroup memory.stat (legacy names).
 #
 [MetricCollector.Vmstat]
     IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
@@ -1166,7 +1166,9 @@ SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒�
 | 字段 | 说明 |
 | --- | --- |
 | `IncludedOnHost` / `ExcludedOnHost` | 宿主机 `/proc/vmstat` 的字段过滤正则，内置默认值均为 `""`。配置文件显式指定上方纳入列表，并排除匹配 `total` 的字段。 |
-| `IncludedOnContainer` / `ExcludedOnContainer` | 容器 cgroup `memory.stat` 的字段过滤正则，内置默认值均为 `""`。配置文件显式指定上方纳入列表，并排除匹配 `total` 的字段。 |
+| `IncludedOnContainer` / `ExcludedOnContainer` | 容器和沙箱 cgroup `memory.stat` 的字段过滤正则，内置默认值均为 `""`。配置文件显式指定上方纳入列表，并排除匹配 `total` 的字段。 |
+
+`IncludedOnContainer` / `ExcludedOnContainer` 暂时保留旧名称，沙箱复用同一规则，宿主机过滤独立。后续将统一 workload 过滤配置命名与语义，并另行规定旧配置迁移方式；当前不新增别名或改变默认值。
 
 #### 9.6 内存事件
 

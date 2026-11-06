@@ -53,8 +53,9 @@ type Config struct {
 	}
 
 	Vmstat struct {
-		IncludedOnHost      string
-		ExcludedOnHost      string
+		IncludedOnHost string
+		ExcludedOnHost string
+		// Legacy names also filter sandbox memory.stat; unify naming separately.
 		IncludedOnContainer string
 		ExcludedOnContainer string
 	}

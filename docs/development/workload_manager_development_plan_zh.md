@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–06 已完成；步骤 07 进行中（memory_events、memory_others 已完成，memory_vmstat 待过滤兼容策略确认）。CubeSandbox 发现来源及生产采集配置尚未开放。
+当前进度：步骤 00–07 已完成；下一步为 08（其余资源采集器逐项迁移）。CubeSandbox 发现来源及生产采集配置尚未开放。
 
 ## 开发与提交原则
 
@@ -819,4 +819,19 @@ CPU 使用率保留原差值、配额/cpuset 容量和回退在线核数规则�
 
 metrics race、v1/v2 memory-only 文件集成和 unified 根目录能力检查通过。集成 fixture 在 legacy/unified 宿主机根目录写入哨兵值，确保资源消失不会误读宿主机数据。旧、新扩展采集循环 benchmark 三次中位数为 49617 → 45400 ns/op、约 13289 → 12585 B/op、62 → 55 allocs/op。构建、全量单测及提交前 `make check` 纳入本步检查。
 
-步骤 07 仍缺 memory_vmstat；其 IncludedOnContainer/ExcludedOnContainer 对沙箱的作用范围待用户确认，当前不改动该配置语义。
+步骤 07b 交付时仍缺 memory_vmstat；当时暂未修改其过滤语义。后续用户确认及实施结果见步骤 07c。
+
+
+### 步骤 07c：memory.stat 迁移及过滤配置兼容决策
+
+2026-11-07 用户确认：沙箱先复用 `MetricCollector.Vmstat.IncludedOnContainer` / `ExcludedOnContainer`，同时记录后续统一事项。代码保留旧字段名和默认值，两者按原始 memory.stat 字段名同时过滤容器与沙箱；`IncludedOnHost` / `ExcludedOnHost` 独立控制宿主机 `/proc/vmstat`。不新增沙箱专用配置或新字段别名。具体兼容决定已同步到方案、示例配置及中英文使用文档。
+
+`memory_vmstat` 改为使用公共 Pod 和已验证的 memory/unified 目录，复用既有内存对象选择与 Pod 指标输出边界；容器原名称/标签保持，沙箱输出 `memory_vmstat_workload_<字段>`。缺少 CPU、PID 或 CSS 不妨碍文件采集；坏文件、缺失目录仍按原策略跳过对象，不丢弃其他对象及宿主机指标，也不回退到宿主机 cgroup。
+
+测试机 `rebase-20261106/logs/step07-vmstat-*`：metrics race 和所有内存文件集成用例通过，覆盖 v1/v2、容器与两类沙箱、包含/排除规则复用、运行时过滤更新、Host 过滤独立、坏文件及目录消失、Host 文件缺失时保留 workload 输出。相同文件的 cgroup 采集循环 benchmark 三次中位数为 20462 → 21438 ns/op（约 +4.8%），6728 → 6744 B/op、47 → 46 allocs/op；增加目录存在性检查，不增加来源查询。构建、全量单测及提交前 `make check` 纳入本步检查。
+
+步骤 07 的三个文件采集器已分别完成迁移。下一步 08 按采集器迁移剩余 BPF、IO、网络等资源访问；实际 CubeSandbox 来源和生产开关仍待后续步骤，未增加沙箱 Guest 指标。
+
+## 后续统一事项
+
+- [ ] **统一 workload 过滤配置命名与语义**：当前 vmstat 暂时复用 `IncludedOnContainer` / `ExcludedOnContainer`，这项兼容处理不等于统一工作已完成。后续另行确定统一名称、作用范围、新旧字段并存规则、旧配置迁移和弃用安排，并补齐兼容测试；完成前保留旧字段行为。该事项不阻塞本版资源采集迁移，详见方案中的“过滤配置的兼容与后续统一”。
