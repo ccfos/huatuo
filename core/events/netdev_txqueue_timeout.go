@@ -49,7 +49,11 @@ func newTxqueueTimeout() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *txqueueTimeout) Start(ctx context.Context) error {
-	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
+	return c.start(ctx, bpf.LoadBPF)
+}
+
+func (c *txqueueTimeout) start(ctx context.Context, load func(string, map[string]any) (bpf.BPF, error)) error {
+	b, err := load(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
