@@ -41,6 +41,16 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 	if cfg.PromReg != nil {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
+	// Rate limiting must precede authentication: the auth middleware aborts the
+	// gin chain on rejected credentials, so a limiter appended after it never
+	// runs for unauthenticated or invalid-token requests and the authentication
+	// boundary stays unthrottled.
+	if cfg.RateLimit != nil {
+		chain = append(chain, newRateLimitMiddleware(
+			rate.Limit(cfg.RateLimit.RequestsPerSecond),
+			cfg.RateLimit.Burst,
+		))
+	}
 	publicPaths := append(
 		[]string{"/metrics", "/version"},
 		cfg.PublicPaths...,
@@ -62,12 +72,6 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 			chain,
 			wrapHandler(NewAuthMiddleware(authService, publicPaths, adminPaths)),
 		)
-	}
-	if cfg.RateLimit != nil {
-		chain = append(chain, newRateLimitMiddleware(
-			rate.Limit(cfg.RateLimit.RequestsPerSecond),
-			cfg.RateLimit.Burst,
-		))
 	}
 	return chain
 }
@@ -138,6 +142,9 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 	limiters := make(map[string]limiterEntry)
 	var requests uint64
 	return func(c *httpGin.Context) {
+		// The limiter runs before authentication, where the principal is still
+		// unknown, so requests are keyed by client address. UserID is only set
+		// once a chain has authenticated the request.
 		key := internalContext(c).UserID
 		if key == "" {
 			key = c.Request.RemoteAddr
