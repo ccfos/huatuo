@@ -225,3 +225,86 @@ func TestLocalDestinationReportsCloseFailureOnce(t *testing.T) {
 		t.Fatalf("Close repeated failure: %v", err)
 	}
 }
+
+func TestLocalDestinationPreservesExplicitPaths(t *testing.T) {
+	for _, tc := range []struct {
+		path                string
+		existing, directory bool
+	}{
+		{path: "stdout/", directory: true},
+		{path: "./stdout/", existing: true, directory: true},
+		{path: "./stdout", existing: true},
+		{path: "./-", existing: true},
+		{path: "./-/", directory: true},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if tc.existing {
+				if tc.directory {
+					if err := os.Mkdir(tc.path, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.WriteFile(tc.path, []byte("previous data"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			destination, err := NewLocalDestination(Config{Format: FormatCollapsed, Destination: tc.path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := destination.WriteAndClose(func(w io.Writer) error {
+				_, err := io.WriteString(w, "work 2\n")
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			path := tc.path
+			if tc.directory {
+				files, err := filepath.Glob(filepath.Join(path, "perf_*.folded"))
+				if err != nil || len(files) != 1 {
+					t.Fatalf("output files = %v, error = %v", files, err)
+				}
+				path = files[0]
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != "work 2\n" {
+				t.Fatalf("output = %q, error = %v", data, err)
+			}
+		})
+	}
+}
+
+func TestLocalDestinationPreservesStdoutAliases(t *testing.T) {
+	for _, path := range []string{"stdout", "-", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1", "/dev/./stdout"} {
+		t.Run(path, func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "capture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			previous := os.Stdout
+			os.Stdout = file
+			defer func() { os.Stdout = previous }()
+			destination, err := NewLocalDestination(Config{Destination: path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := destination.WriteAndClose(func(w io.Writer) error {
+				_, err := io.WriteString(w, "work 2\n")
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := destination.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.WriteString("still open\n"); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(file.Name())
+			if err != nil || string(data) != "work 2\nstill open\n" {
+				t.Fatalf("stdout = %q, error = %v", data, err)
+			}
+		})
+	}
+}
