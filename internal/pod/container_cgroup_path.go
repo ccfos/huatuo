@@ -101,7 +101,7 @@ func containerCgroupSuffix(containerID string, pod *corev1.Pod) (string, error) 
 		return "", err
 	}
 
-	if kubeletPodCgroupDriver == "systemd" {
+	if kubeletRuntimeSnapshot().podCgroupDriver == "systemd" {
 		return name.ToSystemd(), nil
 	}
 
@@ -158,7 +158,7 @@ func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error
 
 	paths = append(paths, fmt.Sprintf("pod%s", pod.UID))
 
-	if kubeletPodCgroupDriver == "systemd" {
+	if kubeletRuntimeSnapshot().podCgroupDriver == "systemd" {
 		scope, err := containerScopeName(containerID)
 		if err != nil {
 			return cgroupPath{}, fmt.Errorf("container scope name: %w", err)
