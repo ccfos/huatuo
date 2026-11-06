@@ -300,6 +300,14 @@ Java uses `bin/asprof` and `lib/libasyncProfiler.so` under `ToolDir`; Python use
 | `RotationSizeMiB` | Rotation size for each tracer's record file, in MiB. Default: `100`. |
 | `MaxRotatedFiles` | Maximum historical files retained per tracer. Default: `10`. The oldest files are deleted when this limit is exceeded. |
 
+- **Shutdown behavior**: Local file writers are opened lazily, one per tracer,
+  and are closed during process shutdown.
+
+  **Description**: Each open writer holds one file descriptor. The backend
+  closes every writer when the process exits and rejects later writes with
+  `storage: localfile backend closed`; records written before shutdown are
+  already flushed to disk.
+
 ### 7. Automatic tracing
 
 Automatic tracing triggers performance collection based on resource usage and configured thresholds.
