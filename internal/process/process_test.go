@@ -68,6 +68,289 @@ func TestExecutableMissing(t *testing.T) {
 	}
 }
 
+func TestResolveExecutablePath(t *testing.T) {
+	dir := t.TempDir()
+	oldExecutable := filepath.Join(dir, "old-python")
+	newExecutable := filepath.Join(dir, "python")
+	literalExecutable := filepath.Join(dir, "python (deleted)")
+	for _, path := range []string{oldExecutable, newExecutable, literalExecutable} {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	if err := os.Symlink("/", filepath.Join(procDir, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+
+	tests := []struct {
+		name    string
+		path    string
+		procExe string
+		want    string
+	}{
+		{
+			name:    "plain path",
+			path:    newExecutable,
+			procExe: newExecutable,
+			want:    newExecutable,
+		},
+		{
+			name:    "literal suffix points at the running image",
+			path:    literalExecutable,
+			procExe: literalExecutable,
+			want:    literalExecutable,
+		},
+		{
+			name:    "marked path is not the running image",
+			path:    literalExecutable,
+			procExe: oldExecutable,
+			want:    newExecutable,
+		},
+		{
+			name:    "kernel marker with both paths removed",
+			path:    filepath.Join(dir, "gone", "python (deleted)"),
+			procExe: oldExecutable,
+			want:    filepath.Join(dir, "gone", "python"),
+		},
+		{
+			name:    "deleted literal suffix",
+			path:    filepath.Join(dir, "gone", "python (deleted) (deleted)"),
+			procExe: oldExecutable,
+			want:    filepath.Join(dir, "gone", "python (deleted)"),
+		},
+		{
+			name:    "replacement at the original path",
+			path:    newExecutable + unlinkedExecutableMarker,
+			procExe: oldExecutable,
+			want:    newExecutable,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.Remove(procExePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("Remove(%q) error = %v", procExePath, err)
+			}
+			if err := os.Symlink(test.procExe, procExePath); err != nil {
+				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
+			}
+			got, err := ResolveExecutablePath(test.path, procExePath)
+			if err != nil {
+				t.Fatalf("ResolveExecutablePath(%q, %q) error = %v", test.path, test.procExe, err)
+			}
+			if got != test.want {
+				t.Errorf("ResolveExecutablePath(%q, %q) = %q, want %q", test.path, test.procExe, got, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveExecutablePathUsesTargetProcessRoot(t *testing.T) {
+	dir := t.TempDir()
+	targetRoot := filepath.Join(dir, "container-root")
+	literalPath := filepath.Join(targetRoot, "app", "java (deleted)")
+	replacementPath := filepath.Join(targetRoot, "app", "java")
+	oldHostPath := filepath.Join(dir, "old-java")
+	for _, path := range []string{literalPath, replacementPath, oldHostPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	if err := os.Symlink(targetRoot, filepath.Join(procDir, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+
+	tests := []struct {
+		name    string
+		procExe string
+		want    string
+	}{
+		{
+			name:    "literal suffix exists in the target root",
+			procExe: literalPath,
+			want:    "/app/java (deleted)",
+		},
+		{
+			name:    "kernel marker with a replacement in the target root",
+			procExe: oldHostPath,
+			want:    "/app/java",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.Remove(procExePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("Remove(%q) error = %v", procExePath, err)
+			}
+			if err := os.Symlink(test.procExe, procExePath); err != nil {
+				t.Fatalf("Symlink(%q) error = %v", test.procExe, err)
+			}
+			got, err := ResolveExecutablePath("/app/java (deleted)", procExePath)
+			if err != nil {
+				t.Fatalf("ResolveExecutablePath() error = %v", err)
+			}
+			if got != test.want {
+				t.Errorf("ResolveExecutablePath() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveExecutablePathRejectsUnreadableTargetRoot(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "python")
+	if err := os.WriteFile(executable, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", executable, err)
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	// A regular file at root makes every candidate lookup fail with ENOTDIR
+	// instead of reporting the marked path as missing.
+	if err := os.WriteFile(filepath.Join(procDir, "root"), nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+	if err := os.Symlink(executable, procExePath); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", executable, err)
+	}
+
+	if _, err := ResolveExecutablePath("/app/python (deleted)", procExePath); err == nil {
+		t.Fatal("ResolveExecutablePath() error = nil, want a stat error")
+	}
+}
+
+func TestResolveExecutablePathKeepsAnAmbiguousHardLink(t *testing.T) {
+	dir := t.TempDir()
+	original := filepath.Join(dir, "python3.10")
+	if err := os.WriteFile(original, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", original, err)
+	}
+	// A hard link ending in the marker keeps the running image reachable after
+	// the original name is unlinked. /proc/<pid>/exe then reports the same text
+	// for a kernel marker and for this literal name, so the contract is that the
+	// live path is returned unchanged.
+	linked := original + unlinkedExecutableMarker
+	if err := os.Link(original, linked); err != nil {
+		t.Fatalf("Link(%q, %q) error = %v", original, linked, err)
+	}
+	if err := os.Remove(original); err != nil {
+		t.Fatalf("Remove(%q) error = %v", original, err)
+	}
+
+	procDir := filepath.Join(dir, "proc", "100")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procDir, err)
+	}
+	if err := os.Symlink("/", filepath.Join(procDir, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	procExePath := filepath.Join(procDir, "exe")
+	if err := os.Symlink(linked, procExePath); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", linked, err)
+	}
+
+	got, err := ResolveExecutablePath(linked, procExePath)
+	if err != nil {
+		t.Fatalf("ResolveExecutablePath(%q) error = %v", linked, err)
+	}
+	if got != linked {
+		t.Errorf("ResolveExecutablePath(%q) = %q, want the live path", linked, got)
+	}
+}
+
+func TestExecutableName(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{name: "plain executable", target: "/usr/bin/java", want: "java"},
+		{name: "unlinked python", target: "/huatuo-nonexistent/bin/python3.10 (deleted)", want: "python3.10"},
+		{name: "unlinked platform python", target: "/huatuo-nonexistent/libexec/platform-python3.6 (deleted)", want: "platform-python3.6"},
+		{name: "unrelated executable", target: "/huatuo-nonexistent/bin/ruby3.1 (deleted)", want: "ruby3.1"},
+		{name: "marker outside the basename", target: "/opt/(deleted)/python3", want: "python3"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tmpRoot := setProcRoot(t)
+			procPath := filepath.Join(tmpRoot, "proc", "100")
+			if err := os.MkdirAll(procPath, 0o755); err != nil {
+				t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+			}
+			if err := os.Symlink(test.target, filepath.Join(procPath, "exe")); err != nil {
+				t.Fatalf("Symlink(%q) error = %v", test.target, err)
+			}
+
+			got, err := ExecutableName(100)
+			if err != nil {
+				t.Fatalf("ExecutableName(100) error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("ExecutableName(100) = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestExecutableNameKeepsLiteralDeletedSuffix(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "python (deleted)")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", target, err)
+	}
+
+	tmpRoot := setProcRoot(t)
+	procPath := filepath.Join(tmpRoot, "proc", "100")
+	if err := os.MkdirAll(procPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+	}
+	if err := os.Symlink("/", filepath.Join(procPath, "root")); err != nil {
+		t.Fatalf("Symlink(root) error = %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(procPath, "exe")); err != nil {
+		t.Fatalf("Symlink(%q) error = %v", target, err)
+	}
+
+	got, err := ExecutableName(100)
+	if err != nil {
+		t.Fatalf("ExecutableName(100) error = %v", err)
+	}
+	if got != "python (deleted)" {
+		t.Fatalf("ExecutableName(100) = %q, want %q", got, "python (deleted)")
+	}
+}
+
+func TestExecutableNameMissing(t *testing.T) {
+	tmpRoot := setProcRoot(t)
+	procPath := filepath.Join(tmpRoot, "proc", "100")
+	if err := os.MkdirAll(procPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", procPath, err)
+	}
+
+	if _, err := ExecutableName(100); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("ExecutableName(100) error = %v, want fs.ErrNotExist", err)
+	}
+}
+
 func TestPPID(t *testing.T) {
 	tmpRoot := setProcRoot(t)
 	procPath := filepath.Join(tmpRoot, "proc", "100")

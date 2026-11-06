@@ -16,7 +16,6 @@ package provider
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/process"
@@ -34,10 +33,14 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 		return nil
 	}
 	for _, pid := range pids {
-		actualPath, err := process.Executable(pid)
+		actualPath, err := process.ExecutablePath(pid)
 		if err != nil {
 			return err
 		}
+		// ExecutablePath only removes a marker that procfs identifies as the
+		// kernel's unlinked-file suffix. The value supplied through
+		// --binary-match-path stays literal, including a real filename that
+		// ends in the same text.
 		if actualPath != execPath {
 			return fmt.Errorf("PID %d executable %q, want %q", pid, actualPath, execPath)
 		}
@@ -62,16 +65,18 @@ func validateMaxProfilerProcesses(profilerName string, pids []int, maximum int) 
 
 func validateProcessExecutables(profilerName, executablePrefix string, pids []int) error {
 	for _, pid := range pids {
-		path, err := process.Executable(pid)
+		// ExecutableName drops the kernel's unlinked marker, so a target whose
+		// binary was replaced in place is still recognized as its runtime.
+		name, err := process.ExecutableName(pid)
 		if err != nil {
 			return err
 		}
-		if !hasExecutablePrefix(filepath.Base(path), executablePrefix) {
+		if !hasExecutablePrefix(name, executablePrefix) {
 			return fmt.Errorf(
-				"%s PID %d executable %q, want prefix %q",
+				"%s PID %d executable name %q, want prefix %q",
 				profilerName,
 				pid,
-				path,
+				name,
 				executablePrefix,
 			)
 		}
@@ -79,6 +84,9 @@ func validateProcessExecutables(profilerName, executablePrefix string, pids []in
 	return nil
 }
 
+// hasExecutablePrefix reports whether name is the executable of the requested
+// runtime. Callers pass a basename from process.ExecutableName, which removes
+// the kernel's unlinked marker only when it does not belong to a literal name.
 func hasExecutablePrefix(name, prefix string) bool {
 	if strings.HasPrefix(name, prefix) {
 		return true

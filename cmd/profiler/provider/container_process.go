@@ -20,11 +20,12 @@ import (
 	"io/fs"
 	"path/filepath"
 	"slices"
-	"strings"
+	"strconv"
 	"syscall"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/pod"
+	hostprocess "github.com/ccfos/huatuo/internal/process"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -101,15 +102,29 @@ func findProcessesInCgroups(cgroupSuffix string, filter executableFilter) (map[i
 	if err != nil {
 		return nil, err
 	}
-	procFS, err := procfs.NewDefaultFS()
+	return findProcesses(pids, filter)
+}
+
+// findProcesses resolves PIDs through the default procfs mount.
+func findProcesses(pids []int32, filter executableFilter) (map[int][]int, error) {
+	procRoot := procfs.DefaultPath()
+	procFS, err := procfs.NewFS(procRoot)
 	if err != nil {
 		return nil, fmt.Errorf("open procfs: %w", err)
 	}
 
-	return findProcesses(pids, procFS, filter)
+	return findProcessesInFS(pids, procFS, procRoot, filter)
 }
 
-func findProcesses(pids []int32, procFS procfs.FS, filter executableFilter) (map[int][]int, error) {
+// findProcessesInFS is the test seam. The executable link and the inode check
+// share one root, so a caller that mounts procfs elsewhere keeps both lookups
+// in the same tree.
+func findProcessesInFS(
+	pids []int32,
+	procFS procfs.FS,
+	procRoot string,
+	filter executableFilter,
+) (map[int][]int, error) {
 	targetProcs := make([]procInfo, 0, len(pids))
 	for _, rawPID := range pids {
 		pid := int(rawPID)
@@ -132,8 +147,18 @@ func findProcesses(pids []int32, procFS procfs.FS, filter executableFilter) (map
 		if resolvedExecutable == "" {
 			continue
 		}
-		// The kernel's unlinked-file marker does not change executable identity.
-		resolvedExecutable = strings.TrimSuffix(resolvedExecutable, " (deleted)")
+		// Drop the marker only when procfs confirms that it describes the
+		// running image rather than a literal filename component.
+		resolvedExecutable, err = hostprocess.ResolveExecutablePath(
+			resolvedExecutable,
+			filepath.Join(procRoot, strconv.Itoa(pid), "exe"),
+		)
+		if processNoLongerExists(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve executable for PID %d: %w", pid, err)
+		}
 
 		if !filter.matchesName(filepath.Base(resolvedExecutable)) {
 			continue

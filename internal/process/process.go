@@ -20,8 +20,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/procfs"
 
@@ -44,6 +46,89 @@ func Executable(pid int) (string, error) {
 	}
 
 	return executable, nil
+}
+
+// unlinkedExecutableMarker is appended by the Linux kernel to the
+// /proc/<pid>/exe target once the running executable is unlinked or replaced.
+// In-place upgrades unlink the old image while the process keeps running, so
+// the marker describes the file rather than the process.
+const unlinkedExecutableMarker = " (deleted)"
+
+// ResolveExecutablePath returns path with the kernel's unlinked marker removed
+// unless path itself is the live file. It stats procExePath and the candidate
+// inside the target process root, so it reports I/O errors rather than editing
+// an unverified path. The same suffix is a legal filename component, so the
+// marked path is compared with /proc/<pid>/exe before it is preserved. The
+// candidate is resolved through /proc/<pid>/root because path describes the
+// target process's mount namespace, which may not exist in the profiler's
+// namespace.
+// When the original path already contains a replacement binary, the marked
+// path no longer identifies the running image and the marker must be dropped.
+// A target root that cannot be inspected returns an error instead of rewriting
+// the path, because an unverified rewrite could select a different executable.
+//
+// A hard link whose literal name ends in the marker points at the same inode,
+// so once the original name is gone the filesystem cannot say which reading
+// produced the text. The live path wins: a path that still names the running
+// image is never rewritten, because rewriting it could select a different file.
+// The marker is dropped only when the marked path no longer identifies the
+// running image, and callers match the resulting path exactly.
+func ResolveExecutablePath(path, procExePath string) (string, error) {
+	trimmed, found := strings.CutSuffix(path, unlinkedExecutableMarker)
+	if !found {
+		return path, nil
+	}
+	if !filepath.IsAbs(path) {
+		return trimmed, nil
+	}
+
+	procInfo, err := os.Stat(procExePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return trimmed, nil
+		}
+
+		return "", fmt.Errorf("stat %s: %w", procExePath, err)
+	}
+
+	candidatePath := filepath.Join(filepath.Dir(procExePath), "root", path)
+	rawInfo, err := os.Stat(candidatePath)
+	switch {
+	case err == nil:
+		if os.SameFile(rawInfo, procInfo) {
+			return path, nil
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("stat %s: %w", candidatePath, err)
+	}
+
+	return trimmed, nil
+}
+
+// ExecutablePath returns pid's executable path with a kernel unlinked marker
+// removed only when the marker belongs to the procfs entry.
+func ExecutablePath(pid int) (string, error) {
+	path, err := Executable(pid)
+	if err != nil {
+		return "", err
+	}
+
+	return ResolveExecutablePath(path, procfs.Path(strconv.Itoa(pid), "exe"))
+}
+
+// ExecutableName returns the basename of pid's executable with a kernel
+// unlinked marker removed when procfs confirms it.
+//
+// Runtime recognition must match this value: filepath.Base of the raw link
+// reports "python3.10 (deleted)", which no longer matches the interpreter name
+// once the binary is unlinked.
+func ExecutableName(pid int) (string, error) {
+	path, err := ExecutablePath(pid)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Base(path), nil
 }
 
 // PPID returns pid's current parent PID.
