@@ -173,6 +173,9 @@ func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error
 // containerMemoryBinding resolves kernel membership rather than reconstructing
 // the memory hierarchy from the kubelet's cgroup driver or container name.
 func containerMemoryBinding(container *Container) (*containerRecord, error) {
+	// Reference validation can pass a published view; never mutate its resources.
+	view := *container
+	container = &view
 	process, err := procfs.NewProc(container.InitPid)
 	if err != nil {
 		return nil, err
@@ -191,6 +194,11 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 	}
 	locations := CgroupBinding{Unified: paths.Unified, Controllers: paths.Controllers}
 	workload := podFromContainer(container)
+	if container.HostKataSandboxID() == "" {
+		workload.Network = &HostNetwork{PID: container.InitPid, IPAddress: container.IPAddress}
+	} else {
+		workload.Network = &HostNetwork{IPAddress: container.IPAddress}
+	}
 	record := &containerRecord{
 		container: container, pod: workload, cgroupLocations: locations,
 		ref:       ContainerRef{Key: ContainerKey{ID: container.ID}, InitPID: container.InitPid},
@@ -214,6 +222,7 @@ func containerMemoryBinding(container *Container) (*containerRecord, error) {
 	if before.Starttime != after.Starttime {
 		return nil, fmt.Errorf("container %q init process was replaced", container.ID)
 	}
+	container.applyResources(workload)
 
 	if memoryErr != nil {
 		return record, memoryErr

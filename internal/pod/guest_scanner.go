@@ -357,7 +357,6 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 		qos = corev1.PodQOSGuaranteed
 	}
 	level, _ := parseContainerQos(ContainerTypeNormal, &corev1.Pod{Status: corev1.PodStatus{QOSClass: qos}})
-	css, _ := parseContainerCSS(process.containerID)
 	now := time.Now()
 	container := &Container{
 		ID:         process.containerID,
@@ -367,7 +366,6 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 		Qos:        level,
 		InitPid:    process.pid,
 		CgroupPath: cpu,
-		CgroupCss:  css,
 		StartedAt:  now,
 		SyncedAt:   now,
 		Labels:     map[string]any{labelHostNamespace: s.options.PodNamespace},
@@ -426,6 +424,7 @@ func (s *guestScanner) bind(ctx context.Context, process *guestProcess) (*contai
 		!maps.Equal(current.cgroups.Controllers, process.cgroups.Controllers) {
 		return nil, fmt.Errorf("guest process %d changed during discovery", process.pid)
 	}
+	container.applyResources(workload)
 	return &containerRecord{
 		container:       container,
 		pod:             workload,

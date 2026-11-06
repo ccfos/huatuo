@@ -19,9 +19,6 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-
-	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/utils/netutil"
 )
 
 // populateContainerRuntime selects the runtime before reading any PID file or
@@ -44,18 +41,6 @@ func populateContainerRuntime(ctx context.Context, container *Container, pod *co
 		return fmt.Errorf("failed to get InitPid: %w", err)
 	}
 	container.InitPid = initPID
-	container.NetNamespaceInum, err = netutil.NetNamespaceInumByPID(initPID)
-	if err != nil {
-		return fmt.Errorf("failed to get net namespace inode by pid: %w", err)
-	}
-	container.NetNamespaceCookie, err = netutil.NetNamespaceCookieByPID(initPID)
-	if err != nil {
-		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPID, err)
-	}
-	container.CgroupCss, err = parseContainerCSS(container.ID)
-	if err != nil {
-		return fmt.Errorf("failed to parse container css: %w", err)
-	}
 	container.CgroupPath, err = containerCgroupSuffix(container.ID, pod)
 	if err != nil {
 		return fmt.Errorf("failed to get cgroup path: %w", err)

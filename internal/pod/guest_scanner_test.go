@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -493,6 +494,19 @@ func TestGuestScannerPublicResources(t *testing.T) {
 				guestDirectory(t, scanner.options.CgroupRoot, directory)
 			}
 			guestProc(t, scanner, 150, 1, 100, tc.membership)
+			memoryDirectory := filepath.Join(scanner.options.CgroupRoot, tc.want["memory"])
+			if strings.Contains(tc.membership, ":memory:") {
+				memoryDirectory = filepath.Join(scanner.options.CgroupRoot, "memory", tc.want["memory"])
+			}
+			var stat syscall.Stat_t
+			if err := syscall.Stat(memoryDirectory, &stat); err != nil {
+				t.Error(err)
+				return
+			}
+			// Resource ownership comes from the directory, not a parsed container ID.
+			const memoryCSS = 8500
+			cgroupCssMetaDataMap.Store(uint64(memoryCSS), &containerCssMetaData{CSS: memoryCSS, Inode: stat.Ino, SubSys: "memory"})
+			t.Cleanup(func() { cgroupCssMetaDataMap.Delete(uint64(memoryCSS)) })
 			snapshot, err := scanner.scan(t.Context())
 			if err != nil {
 				t.Errorf("scan Guest: %v", err)
@@ -509,6 +523,9 @@ func TestGuestScannerPublicResources(t *testing.T) {
 				if got, available := record.pod.Cgroups.Path(controller); !available || got != want {
 					t.Errorf("%s path=%q available=%t, want %q", controller, got, available, want)
 				}
+			}
+			if record.container.CgroupCss["memory"] != memoryCSS || record.pod.Cgroups.CSS["memory"] != memoryCSS {
+				t.Error("Guest legacy and public views did not share the verified memory CSS")
 			}
 			if record.container.CgroupPath != tc.want["cpu"] || record.container.MemoryCgroupPath() != tc.want["memory"] {
 				t.Error("legacy Guest paths changed")

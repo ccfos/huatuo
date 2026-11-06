@@ -73,8 +73,8 @@ func TestPopulateKataContainerWithoutCPUCSS(t *testing.T) {
 	if container.InitPid != pid || container.SandboxID != "vm" || container.CgroupPath != cgroupPath {
 		t.Fatalf("Kata binding = %+v", container)
 	}
-	if container.CgroupCss == nil || len(container.CgroupCss) != 0 {
-		t.Fatalf("CgroupCss = %v, want empty non-nil map", container.CgroupCss)
+	if len(container.CgroupCss) != 0 {
+		t.Fatalf("CgroupCss = %v, want no CSS before resource binding", container.CgroupCss)
 	}
 }
 

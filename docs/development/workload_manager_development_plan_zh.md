@@ -635,3 +635,15 @@ Guest peer 与有效 Pod 同次提交，新增 `GuestPeerByID` 只读查询，�
 `logs/step04d-*` 记录 pod/autotracing race 测试、完整构建、HTTP 取消及旧 Container 内核绑定回归通过。新增 Source 集成测试通过真实 v1 挂载验证发现、文件绑定、资源消失保留实例及完整空集删除，测试只创建独立空组并清理；同一测试在 `172.16.134.96` 的真实 v2 环境通过，无 SKIP，日志为该机任务目录的 `logs/step04d-cgroup-v2.log`。未操作现有沙箱。提交检查使用 `make check`。
 
 三次 benchmark 中位数：旧 ControllerRefresh/1024 为 8422405 ns/op、502279 B/op、3094 allocs/op；保存 peer 的记录增加约 16 KiB 快照空间，分配次数不变。公共事件投递（8 订阅者）为 1981 ns/op、零分配。新增 SourceDiscovery/1024 为 1429635 ns/op、约 803980 B/op、6048 allocs/op，包含读取实际 mountinfo、公共绑定与提交，但使用无进程及无 cgroup 位置的元数据对象，不代表真实来源 RPC 或大量 cgroup 文件采集性能，也不与旧 Controller 的耗时直接比较。
+
+### 步骤 04e：真实发现使用公共资源绑定结果
+
+普通 Container runtime 解析和 Kata 定位不再查询 CSS 或网络命名空间，只提供已有身份和位置。Host 绑定完成后，旧 Container 视图的 CSS、网络 inode/cookie 从同次公共 Pod 绑定结果生成；Guest 扫描使用同一投影，移除按容器 ID 单独获取 CSS 的路径。保留旧 cgroup 字段与时间语义、空 CSS 的 JSON map 形态、Kata 仅 CPU CSS、Host VM 不成为 Guest 网络目标及应用内存目标等规则。
+
+本次覆盖现有生产发现链路。`containerMemoryBinding` 在更新兼容视图前复制对象，避免 `ValidateContainerRef` 重校验修改正在被采集器读取的缓存。缺失 CSS、netns 不影响其他已绑定资源。Guest 的 CSS 由实际目录 inode 匹配，即使内核缓存没有容器 ID 也可完成归属。
+
+验证记录位于测试机任务目录 `logs/step04e-*`：pod/autotracing race、HTTP 发现与内核绑定、进程/目录/代次变化校验、Kata Host 内存排除及公共 cgroup 绑定集成测试、完整构建。扩展已有用例覆盖 CSS/netns 缺失、已发布视图不变、Guest v1/v2 兼容视图共享同一 CSS。实际 Kata runtime 集成用例同步改为经过公共绑定后断言；本次未提供运行中的 Kata 实例，不将该用例记为实机通过。提交前运行 `make check`。
+
+来源与启动入口的最终迁移仍未完成：本次先移除真实来源中的重复资源查询，不将旧调度回调转换成隐藏的 Source 适配层。
+
+GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、约 152647 B/op、1510 allocs/op；公共事件投递仍为零分配。这里只记录本次成本，不据此声称相对旧版本提升。

@@ -62,16 +62,6 @@ func updateCgroupCSSCache(data *containerCssPerfEvent, containerID string) {
 	}
 }
 
-func parseContainerCSS(containerID string) (map[string]uint64, error) {
-	msg := make(map[string]uint64)
-	cssList := cgroupListCssDataByKnode(containerID)
-	for _, css := range cssList {
-		msg[css.SubSys] = css.CSS
-	}
-
-	return msg, nil
-}
-
 const (
 	kubeletContainerIDKnodeNameMinlen = 64
 )

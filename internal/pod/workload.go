@@ -355,20 +355,30 @@ func containerFromWorkload(discovered, bound *Pod) *Container {
 	if discovered.Process != nil {
 		container.InitPid = discovered.Process.PID
 	}
-	if bound.Network != nil {
-		container.IPAddress = bound.Network.IPAddress
-		// The legacy shape has only one PID and cannot represent a separate network target.
-		if bound.Network.PID > 0 && bound.Network.PID == container.InitPid {
-			container.NetNamespaceInum, container.NetNamespaceCookie = bound.Network.NamespaceInum, bound.Network.NamespaceCookie
-		}
-	}
-	if container.HostKataSandboxID() != "" {
-		container.CgroupCss = map[string]uint64{}
-		if css := bound.Cgroups.CSS["cpu"]; css != 0 {
-			container.CgroupCss["cpu"] = css
-		}
-	}
+	container.applyResources(bound)
 	return container
+}
+
+// applyResources keeps the legacy view on the same verified targets as Pod.
+func (c *Container) applyResources(bound *Pod) {
+	c.CgroupCss = bound.Cgroups.CSS
+	if c.CgroupCss == nil {
+		c.CgroupCss = map[string]uint64{}
+	}
+	c.NetNamespaceInum, c.NetNamespaceCookie = 0, 0
+	if bound.Network != nil {
+		c.IPAddress = bound.Network.IPAddress
+		// The legacy shape has only one PID and cannot represent a separate network target.
+		if c.HostKataSandboxID() == "" && bound.Network.PID > 0 && bound.Network.PID == c.InitPid {
+			c.NetNamespaceInum, c.NetNamespaceCookie = bound.Network.NamespaceInum, bound.Network.NamespaceCookie
+		}
+	}
+	if c.HostKataSandboxID() != "" {
+		c.CgroupCss = map[string]uint64{}
+		if css := bound.Cgroups.CSS["cpu"]; css != 0 {
+			c.CgroupCss["cpu"] = css
+		}
+	}
 }
 
 // GuestPeerByID returns the peer and workload instance from the same record.

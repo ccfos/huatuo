@@ -53,11 +53,13 @@ func TestKataRuntimeIntegration(t *testing.T) {
 	if err := populateKataContainer(c, info); err != nil {
 		t.Fatal(err)
 	}
+	record, err := containerMemoryBinding(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = record.container
 	if c.CgroupCss[subsystem.SubsystemCPU] == 0 || c.SandboxID == "" || c.InitPid <= 0 {
 		t.Fatalf("incomplete binding: %+v", c)
-	}
-	if _, err := containerMemoryBinding(c); err != nil {
-		t.Fatal(err)
 	}
 	if c.NetNamespaceInum != 0 || c.NetNamespaceCookie != 0 {
 		t.Fatal("Host VM namespace must not identify a Guest network namespace")
@@ -71,6 +73,11 @@ func TestKataRuntimeIntegration(t *testing.T) {
 		if err := populateKataContainer(peer, peerInfo); err != nil {
 			t.Fatal(err)
 		}
+		peerRecord, err := containerMemoryBinding(peer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		peer = peerRecord.container
 		if peer.InitPid != c.InitPid ||
 			peer.SandboxID != c.SandboxID ||
 			peer.CgroupPath != c.CgroupPath ||
