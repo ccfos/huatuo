@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -270,5 +271,88 @@ func TestSourceCgroupBindingIntegration(t *testing.T) {
 	commit()
 	if len(store.records) != 0 || len(store.cgroupOwners)+len(store.cssOwners) != 0 {
 		t.Error("complete empty discovery retained workload state")
+	}
+}
+
+// TestContainerManagerWithoutCSS exercises the production startup path using
+// real HTTP and procfs while CSS initialization fails before loading BPF.
+func TestContainerManagerWithoutCSS(t *testing.T) {
+	useContainerdForTest(t)
+	id := strings.Repeat("b", 64)
+	runtimeRoot := t.TempDir()
+	guestFile(t, runtimeRoot, filepath.Join("io.containerd.runtime.v2.task", "k8s.io", id, "init.pid"), strconv.Itoa(os.Getpid()))
+	configuration := filepath.Join(t.TempDir(), "kubelet.json")
+	if err := os.WriteFile(configuration, []byte(`{"cgroupDriver":"cgroupfs"}`), 0o600); err != nil {
+		t.Error(err)
+		return
+	}
+	list := runningPodListForTest(id)
+	list.Items[0].Status.Phase = corev1.PodRunning
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode(list); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 32)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	previousView, previousLoader := containerView, cgroupSubSysLoader
+	previousIDs := cgroupCssID2SubSysNameMap
+	previousRoot, previousClient := containerdStateDir, containerdClient
+	previousEnabled, previousURL, previousHTTP := kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient
+	previousFiles, previousDriver := kubeletDefaultConfigPath, kubeletPodCgroupDriver
+	previousEndpoint, previousAPIVersion := kubeletRuntimeEndpoint, dockerAPIVersion
+	t.Cleanup(func() {
+		ReleaseManager()
+		containerView, cgroupSubSysLoader = previousView, previousLoader
+		cgroupCssID2SubSysNameMap = previousIDs
+		containerdStateDir, containerdClient = previousRoot, previousClient
+		kubeletPodListRunningEnabled, kubeletPodListURL, kubeletPodListClient = previousEnabled, previousURL, previousHTTP
+		kubeletDefaultConfigPath, kubeletPodCgroupDriver = previousFiles, previousDriver
+		kubeletRuntimeEndpoint, dockerAPIVersion = previousEndpoint, previousAPIVersion
+	})
+	containerView = newContainerStore()
+	containerdStateDir = runtimeRoot
+	response := runningRuntimeResponse(`{"runtimeType":"io.containerd.runc.v2"}`)
+	response.Status.Id = id
+	containerdClient = &pidRuntimeService{response: response}
+	kubeletDefaultConfigPath = []string{configuration}
+	cgroupCssID2SubSysNameMap = map[int]string{}
+	attempted := make(chan struct{}, 1)
+	cgroupSubSysLoader = func() error {
+		attempted <- struct{}{}
+		return errors.New("test kernel has no CSS probe support")
+	}
+	if err := InitManager(&ManagerCtx{PodReadOnlyPort: uint32(portNumber)}); err != nil {
+		t.Error(err)
+		return
+	}
+	subscriber := subscribeForTest(t, containerView)
+	waitContainerViewForTest(t, subscriber, 1)
+	select {
+	case <-attempted:
+	default:
+		t.Error("startup did not attempt CSS initialization")
+	}
+	containerView.mu.RLock()
+	record := containerView.records[id]
+	containerView.mu.RUnlock()
+	if record == nil || record.container == nil || record.pod == nil {
+		t.Error("CSS failure prevented container discovery")
+		return
+	}
+	if record.ref.InitPID != os.Getpid() || record.directory == nil || record.pod.Process == nil {
+		t.Error("CSS failure prevented kernel resource binding")
+	}
+	if record.container.CgroupCss == nil {
+		t.Error("legacy empty CSS must remain a JSON object")
 	}
 }

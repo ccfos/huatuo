@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/log"
+
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -70,7 +72,11 @@ func InitManager(config *ManagerCtx) error {
 		if err := kubeletConfigCacheMustUpdate(ctx, &managerConfig); err != nil {
 			return err
 		}
-		return initCgroupLifecycle()
+		// File metrics and metadata remain usable without CSS probes.
+		if err := initCgroupLifecycle(); err != nil {
+			log.WithError(err).Warn("cgroup CSS unavailable; workload file collection remains enabled")
+		}
+		return nil
 	}
 	activeManager = controller.workloadManager
 	controller.start()

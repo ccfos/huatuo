@@ -647,3 +647,9 @@ Guest peer 与有效 Pod 同次提交，新增 `GuestPeerByID` 只读查询，�
 来源与启动入口的最终迁移仍未完成：本次先移除真实来源中的重复资源查询，不将旧调度回调转换成隐藏的 Source 适配层。
 
 GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、约 152647 B/op、1510 allocs/op；公共事件投递仍为零分配。这里只记录本次成本，不据此声称相对旧版本提升。
+
+### 步骤 04f：CSS 初始化失败不阻断 Host 发现
+
+旧 Host 启动入口在 kubelet 查询配置成功后，CSS 初始化失败只记录告警并继续发现。行为与 Guest 入口、公共 Source 入口一致；基础文件指标与元数据不依赖 CSS 探针能力，不额外增加初始化线程。kubelet 或 runtime 的错误处理保持原有重试语义。
+
+新增生产启动路径集成用例，使用真实 HTTP 和本机 procfs、模拟 CSS 初始化失败，确认 Host 仍发布容器和内核绑定；同时回归 Guest 同场景。`logs/step04f-*` 记录上述集成测试、pod/autotracing race、完整构建及提交检查 `make check`。本次不启动或改动测试机上的现有沙箱。
