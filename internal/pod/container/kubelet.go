@@ -22,11 +22,13 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/ccfos/huatuo/internal/log"
 )
@@ -268,7 +270,7 @@ func (k *Kubelet) Pods(ctx context.Context) (corev1.PodList, error) {
 	return FetchPodList(ctx, k.client, k.podURL)
 }
 
-func (k *Kubelet) Configuration(ctx context.Context) (KubeletConfiguration, error) {
+func (k *Kubelet) remoteConfiguration(ctx context.Context) (KubeletConfiguration, error) {
 	if err := ctx.Err(); err != nil {
 		return KubeletConfiguration{}, err
 	}
@@ -276,4 +278,49 @@ func (k *Kubelet) Configuration(ctx context.Context) (KubeletConfiguration, erro
 		return KubeletConfiguration{}, fmt.Errorf("initialize kubelet client before reading configuration")
 	}
 	return FetchKubeletConfig(ctx, k.client, fmt.Sprintf("https://127.0.0.1:%d/configz", k.options.AuthorizedPort))
+}
+
+var kubeletDefaultConfigPath = []string{
+	"/var/lib/kubelet/config.yaml",
+	"/var/lib/kubelet/ack-managed-config.yaml",
+	"/etc/kubernetes/kubelet/config.json",
+	"/host/etc/kubernetes/kubelet/config.json",
+}
+
+func kubeletConfigFileDefault() (KubeletConfiguration, error) {
+	empty := KubeletConfiguration{}
+
+	for _, name := range kubeletDefaultConfigPath {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			continue
+		}
+
+		config := KubeletConfiguration{}
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			continue
+		}
+
+		return config, nil
+	}
+
+	return empty, fmt.Errorf("not found kubelet config")
+}
+
+// MustConfiguration preserves fatal startup behavior when both configz and local
+// configuration are unavailable. Cancellation must not trigger that fallback.
+func (k *Kubelet) MustConfiguration(ctx context.Context) (KubeletConfiguration, error) {
+	config, err := k.remoteConfiguration(ctx)
+	if err == nil {
+		return config, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return KubeletConfiguration{}, err
+	}
+	log.Debugf("kubelet config port is not available, try to read config files: %v", kubeletDefaultConfigPath)
+	config, err = kubeletConfigFileDefault()
+	if err != nil {
+		panic(fmt.Sprintf("we cannot find any cgroup driver of kubelet after requesting configz and default files: %v", err))
+	}
+	return config, nil
 }

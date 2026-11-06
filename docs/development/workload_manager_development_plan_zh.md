@@ -667,3 +667,9 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 `container.Kubelet` 接管只读端口探测、证书加载、HTTPS 回退和选定的 HTTP 连接。旧 Host 入口创建实例并将 `Pods` 查询注入 controller，移除根包的 kubelet URL、HTTP client、启用状态三个全局变量及私有证书字段。实例不启动后台任务，初始化失败不发布连接状态，由现有 Manager 重试。保留单文件证书和逗号分隔证书/私钥的配置方式、只读端口优先及原 TLS 校验行为。
 
 配置文件兜底和 runtime 配置暂仍由旧初始化适配器处理，后续随来源一并迁移。新增已有测试文件中的 HTTP/TLS 用例覆盖端口选择、客户端证书、configz、未初始化调用及取消后不触发证书回退；根包取消回归继续覆盖不误入本地配置兜底。`logs/step04h-*` 记录 root/container/autotracing race、生产启动及 HTTP 取消集成测试、完整构建和提交检查 `make check`。
+
+### 步骤 04i：迁移 kubelet 配置兜底，保留退出行为
+
+按用户确认，configz 查询失败且所有默认本地 kubelet 配置不可读或不可解析时，仍沿用原有 panic 退出行为，不改成 Manager 重试。`container.Kubelet.MustConfiguration` 接管远端优先、本地文件顺序兜底和该失败策略；取消或超时仍返回 context 错误，不误入本地配置兜底。根包只暂存旧 runtime 初始化所需的 driver/endpoint，尚未完成 Source 切换。
+
+原 `kubelet_panic_test.go` 随实现迁入来源子包，替换此前未实际执行目标函数的占位测试，覆盖真正的 panic、取消不 panic、配置优先级、损坏/缺失文件跳过以及空配置保持默认字段。生产启动集成测试改用真实 HTTPS configz 和证书，不依赖根包配置路径全局变量。`logs/step04i-*` 记录 pod/container/autotracing race、HTTP/HTTPS 发现与取消、无 CSS 启动、完整构建及 `make check`。

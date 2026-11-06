@@ -17,7 +17,6 @@ package pod
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -25,18 +24,11 @@ import (
 	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/yaml"
 )
 
 var (
-	kubeletPodCgroupDriver   = "cgroupfs"
-	kubeletRuntimeEndpoint   = "unix:///run/containerd/containerd.sock"
-	kubeletDefaultConfigPath = []string{
-		"/var/lib/kubelet/config.yaml",
-		"/var/lib/kubelet/ack-managed-config.yaml",
-		"/etc/kubernetes/kubelet/config.json",
-		"/host/etc/kubernetes/kubelet/config.json",
-	}
+	kubeletPodCgroupDriver = "cgroupfs"
+	kubeletRuntimeEndpoint = "unix:///run/containerd/containerd.sock"
 )
 
 type ManagerCtx struct {
@@ -130,71 +122,19 @@ func parseContainerIPAddress(pod *corev1.Pod) string {
 	return pod.Status.PodIP
 }
 
-func kubeletConfigFileDefault() (containerdiscovery.KubeletConfiguration, error) {
-	empty := containerdiscovery.KubeletConfiguration{}
-
-	for _, name := range kubeletDefaultConfigPath {
-		data, err := os.ReadFile(name)
-		if err != nil {
-			continue
-		}
-
-		config := containerdiscovery.KubeletConfiguration{}
-		if err := yaml.Unmarshal(data, &config); err != nil {
-			continue
-		}
-
-		return config, nil
-	}
-
-	return empty, fmt.Errorf("not found kubelet config")
-}
-
-// kubeletConfigCacheMustUpdate updates the kubelet configuration cache.
-//
-// This function MUST succeed: if the kubelet configz endpoint and all
-// default config file paths are unavailable, it panics because downstream
-// services that depend on kubelet pod information would be broken.
-//
-// Updated cache vars:
-//   - CgroupDriver
-//   - ContainerRuntimeEndpoint
-func kubeletConfigCacheMustUpdate(requestCtx context.Context, client *containerdiscovery.Kubelet) error {
-	var (
-		config containerdiscovery.KubeletConfiguration
-		err    error
-	)
-
-	defer func() {
-		if config.CgroupDriver != "" {
-			kubeletPodCgroupDriver = config.CgroupDriver
-		}
-		if config.ContainerRuntimeEndpoint != "" {
-			kubeletRuntimeEndpoint = config.ContainerRuntimeEndpoint
-		}
-
-		log.Debugf("kubelet config cache updated, cgroup driver: %s, runtime: %s",
-			kubeletPodCgroupDriver, kubeletRuntimeEndpoint)
-	}()
-
-	config, err = client.Configuration(requestCtx)
-	if err == nil {
-		return nil
-	}
-
-	if err := requestCtx.Err(); err != nil {
+// kubeletConfigCacheMustUpdate retains the legacy runtime settings during migration.
+func kubeletConfigCacheMustUpdate(ctx context.Context, client *containerdiscovery.Kubelet) error {
+	config, err := client.MustConfiguration(ctx)
+	if err != nil {
 		return err
 	}
-
-	log.Debugf("kubelet config port is not available, try to read config files: %v", kubeletDefaultConfigPath)
-
-	config, err = kubeletConfigFileDefault()
-	if err != nil {
-		panic(fmt.Sprintf(
-			"we cannot find any cgroup driver of kubelet after requesting configz and default files: %v",
-			err,
-		))
+	if config.CgroupDriver != "" {
+		kubeletPodCgroupDriver = config.CgroupDriver
 	}
-
+	if config.ContainerRuntimeEndpoint != "" {
+		kubeletRuntimeEndpoint = config.ContainerRuntimeEndpoint
+	}
+	log.Debugf("kubelet config cache updated, cgroup driver: %s, runtime: %s",
+		kubeletPodCgroupDriver, kubeletRuntimeEndpoint)
 	return nil
 }

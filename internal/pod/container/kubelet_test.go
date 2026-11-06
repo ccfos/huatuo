@@ -596,7 +596,7 @@ func TestKubeletCertificateFallback(t *testing.T) {
 			if _, err := client.Pods(t.Context()); err != nil {
 				t.Error(err)
 			}
-			config, err := client.Configuration(t.Context())
+			config, err := client.MustConfiguration(t.Context())
 			if err != nil || config.CgroupDriver != "systemd" || config.ContainerRuntimeEndpoint != "unix:///run/containerd/custom.sock" {
 				t.Errorf("configz=%+v err=%v", config, err)
 			}
@@ -618,7 +618,7 @@ func TestKubeletConnectionCancellation(t *testing.T) {
 	if client.client != nil || client.podURL != "" {
 		t.Error("failed initialization published a connection")
 	}
-	if _, err := client.Configuration(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := client.MustConfiguration(ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("config cancellation=%v", err)
 	}
 }

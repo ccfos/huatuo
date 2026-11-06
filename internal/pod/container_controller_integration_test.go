@@ -18,7 +18,9 @@ package pod
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net"
 	"net/http"
@@ -282,14 +284,15 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 	id := strings.Repeat("b", 64)
 	runtimeRoot := t.TempDir()
 	guestFile(t, runtimeRoot, filepath.Join("io.containerd.runtime.v2.task", "k8s.io", id, "init.pid"), strconv.Itoa(os.Getpid()))
-	configuration := filepath.Join(t.TempDir(), "kubelet.json")
-	if err := os.WriteFile(configuration, []byte(`{"cgroupDriver":"cgroupfs"}`), 0o600); err != nil {
-		t.Error(err)
-		return
-	}
 	list := runningPodListForTest(id)
 	list.Items[0].Status.Phase = corev1.PodRunning
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/configz" {
+			if err := json.NewEncoder(w).Encode(map[string]any{"kubeletconfig": map[string]string{"cgroupDriver": "cgroupfs"}}); err != nil {
+				t.Error(err)
+			}
+			return
+		}
 		if err := json.NewEncoder(w).Encode(list); err != nil {
 			t.Error(err)
 		}
@@ -305,17 +308,30 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 		t.Error(err)
 		return
 	}
+	certificate := server.TLS.Certificates[0]
+	key, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	certPath := filepath.Join(t.TempDir(), "client.pem")
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]})
+	certPEM = append(certPEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})...)
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Error(err)
+		return
+	}
 	previousView, previousLoader := containerView, cgroupSubSysLoader
 	previousIDs := cgroupCssID2SubSysNameMap
 	previousRoot, previousClient := containerdStateDir, containerdClient
-	previousFiles, previousDriver := kubeletDefaultConfigPath, kubeletPodCgroupDriver
+	previousDriver := kubeletPodCgroupDriver
 	previousEndpoint, previousAPIVersion := kubeletRuntimeEndpoint, dockerAPIVersion
 	t.Cleanup(func() {
 		ReleaseManager()
 		containerView, cgroupSubSysLoader = previousView, previousLoader
 		cgroupCssID2SubSysNameMap = previousIDs
 		containerdStateDir, containerdClient = previousRoot, previousClient
-		kubeletDefaultConfigPath, kubeletPodCgroupDriver = previousFiles, previousDriver
+		kubeletPodCgroupDriver = previousDriver
 		kubeletRuntimeEndpoint, dockerAPIVersion = previousEndpoint, previousAPIVersion
 	})
 	containerView = newContainerStore()
@@ -323,14 +339,13 @@ func TestContainerManagerWithoutCSS(t *testing.T) {
 	response := runningRuntimeResponse(`{"runtimeType":"io.containerd.runc.v2"}`)
 	response.Status.Id = id
 	containerdClient = &pidRuntimeService{response: response}
-	kubeletDefaultConfigPath = []string{configuration}
 	cgroupCssID2SubSysNameMap = map[int]string{}
 	attempted := make(chan struct{}, 1)
 	cgroupSubSysLoader = func() error {
 		attempted <- struct{}{}
 		return errors.New("test kernel has no CSS probe support")
 	}
-	if err := InitManager(&ManagerCtx{PodReadOnlyPort: uint32(portNumber)}); err != nil {
+	if err := InitManager(&ManagerCtx{PodAuthorizedPort: uint32(portNumber), PodClientCertPath: certPath}); err != nil {
 		t.Error(err)
 		return
 	}
