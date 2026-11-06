@@ -130,6 +130,7 @@ func TestFormatterCancellationDoesNotCreateFile(t *testing.T) {
 		output.FormatJSON,
 		output.FormatSpeedscope,
 		output.FormatChromeTrace,
+		output.FormatDump,
 	} {
 		t.Run(string(format), func(t *testing.T) {
 			for _, operation := range []string{"add", "complete"} {
@@ -156,6 +157,44 @@ func TestFormatterCancellationDoesNotCreateFile(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestFormatterDumpOutputCopiesFramesAndPreservesSignedWeights(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "profile.txt")
+	formatter := createFormatter(t, output.FormatDump, destination)
+	window := sampleWindow(3, "root", "first")
+	if err := formatter.Add(t.Context(), window); err != nil {
+		t.Fatal(err)
+	}
+	window.Aggregated.Frames[1].Name = "changed"
+	window.Aggregated.Samples[0].Value = -2
+	if err := formatter.Add(t.Context(), window); err != nil {
+		t.Fatal(err)
+	}
+	if err := formatter.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	const want = "Sample 1 [value=3]\n    root\n    first\n\n" +
+		"Sample 2 [value=-2]\n    root\n    changed\n\n"
+	if got := string(readDestination(t, destination)); got != want {
+		t.Fatalf("dump output = %q, want %q", got, want)
+	}
+}
+
+func TestFormatterDumpOutputKeepsMultilineFramesOnOneLine(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "profile.txt")
+	formatter := createFormatter(t, output.FormatDump, destination)
+	if err := formatter.Add(t.Context(), sampleWindow(1, "root", "leaf\nSample 2 [value=999]")); err != nil {
+		t.Fatal(err)
+	}
+	if err := formatter.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	const want = "Sample 1 [value=1]\n    root\n    \"leaf\\nSample 2 [value=999]\"\n\n"
+	if got := string(readDestination(t, destination)); got != want {
+		t.Fatalf("dump output = %q, want %q", got, want)
 	}
 }
 

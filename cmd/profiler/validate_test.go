@@ -422,10 +422,36 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "remote-store"} {
-		require.NoError(t, validateOutputFormat(format))
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "speedscope", "chrometrace", "dump", "remote-store"} {
+		require.NoError(t, validateOutputFormat(format, profiling.TypeCPU))
 	}
-	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
+	require.NoError(t, validateOutputFormat("chrometrace", profiling.TypeCPU))
+	require.EqualError(
+		t,
+		validateOutputFormat("chrometrace", profiling.TypeMemory),
+		"--output-format=chrometrace needs a time-based profile and is not supported by --type=memory",
+	)
+	require.NoError(t, validateOutputFormat("speedscope", profiling.TypeMemory))
+	require.EqualError(t, validateOutputFormat("pprof", profiling.TypeCPU), `unsupported output format "pprof"`)
+}
+
+func TestValidateCommonOptionsOutputFormat(t *testing.T) {
+	pid := strconv.Itoa(os.Getpid())
+	outputPath := filepath.Join(t.TempDir(), "profile.out")
+
+	// Only CPU and memory reach the validator; chrometrace is limited to the
+	// time-based one.
+	ctx := newValidationCLIContext(t, "--pid", pid, "--type", "cpu",
+		"--output-path", outputPath, "--output-format", "chrometrace")
+	require.NoError(t, validateCommonOptions(ctx))
+
+	ctx = newValidationCLIContext(t, "--pid", pid, "--type", "memory",
+		"--output-path", outputPath, "--output-format", "chrometrace")
+	require.EqualError(
+		t,
+		validateCommonOptions(ctx),
+		"--output-format=chrometrace needs a time-based profile and is not supported by --type=memory",
+	)
 }
 
 func TestValidateNumericOptions(t *testing.T) {
@@ -786,6 +812,7 @@ func TestCLIOutputOptions(t *testing.T) {
 		{name: "stdout alias", args: []string{"--output-format", "collapsed", "--output-path", "-"}},
 		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
 		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile.json"}},
+		{name: "dump", args: []string{"--output-format", "dump", "--output-path", "profile.txt"}},
 		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
 		{name: "removed storage flag", args: []string{"--output-storage", "/run/toolstream.sock"}, wantError: "flag provided but not defined"},
 	} {
