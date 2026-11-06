@@ -127,6 +127,7 @@ func (c *workloadManager) run(ctx context.Context) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	delay := time.Second
+	eventAttempts := 0
 	due := time.Now()
 	initialized := c.initialize == nil
 	for {
@@ -134,6 +135,10 @@ func (c *workloadManager) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-c.wake:
+			// A successful source query can still precede its lifecycle update.
+			// Include unknown cgroups without retrying unrelated events forever.
+			eventAttempts = 3
+			delay = time.Second
 			// Leave the timer unchanged on duplicate hints; bursts must not
 			// postpone synchronization forever.
 			if time.Until(due) > workloadRefreshDelay {
@@ -186,7 +191,10 @@ func (c *workloadManager) run(ctx context.Context) {
 			// Kernel hints can precede source state or be lost entirely.
 			// Keep reconciling membership after readiness retries are exhausted.
 			next := c.resyncInterval
-			if retry {
+			if eventAttempts > 0 {
+				eventAttempts--
+			}
+			if retry || eventAttempts > 0 {
 				next = min(delay, c.resyncInterval)
 				delay = min(2*delay, c.resyncInterval)
 			} else {

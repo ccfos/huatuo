@@ -131,6 +131,82 @@ func TestWorkloadManagerSerialRefresh(t *testing.T) {
 	}
 }
 
+// TestWorkloadManagerEventSettling 验证来源状态晚于内核事件时，成功但尚未更新的
+// 查询仍会有限重试；覆盖已知和未知创建、删除及始终不属于来源的事件，重试后恢复周期同步。
+func TestWorkloadManagerEventSettling(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		hint    string
+		removed bool
+		before  bool
+		after   bool
+	}{
+		{name: "known creation", hint: "checkout-api", after: true},
+		{name: "unknown creation", after: true},
+		{name: "known removal", hint: "checkout-api", removed: true, before: true},
+		{name: "unrelated cgroup"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newContainerStore()
+			entered := make(chan int, 8)
+			calls := 0
+			source := &sourceFixture{kind: TypeContainer, discover: func(ctx context.Context) (Discovery, error) {
+				calls++
+				present := test.before
+				// The initial query and the first two event queries see stale status.
+				if calls >= 4 {
+					present = test.after
+				}
+				discovery := Discovery{Pods: make(map[string]*Pod), Complete: true}
+				if present {
+					discovery.Pods["checkout-api"] = containerPodForTest("checkout-api")
+				}
+				select {
+				case entered <- calls:
+				case <-ctx.Done():
+				}
+				return discovery, nil
+			}}
+			manager := sourceManagerForTest(t, store, source)
+			manager.resyncInterval = time.Hour
+			manager.start()
+			t.Cleanup(func() { manager.cancel(); <-manager.done })
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Error("initial discovery did not start")
+				return
+			}
+			manager.request(test.hint, test.removed)
+			deadline := time.After(10 * time.Second)
+			for attempt := range 3 {
+				expected := attempt + 2
+				select {
+				case got := <-entered:
+					if got != expected {
+						t.Errorf("discovery call=%d, want %d", got, expected)
+					}
+				case <-deadline:
+					t.Error("successful stale discovery did not receive two follow-up queries")
+					return
+				}
+			}
+			select {
+			case got := <-entered:
+				t.Errorf("event retries exceeded the bound: call=%d", got)
+			case <-time.After(4500 * time.Millisecond):
+			}
+			store.mu.RLock()
+			present := store.records["checkout-api"] != nil
+			err := store.err
+			store.mu.RUnlock()
+			if present != test.after || err != nil {
+				t.Errorf("settled discovery: present=%t, want %t, err=%v", present, test.after, err)
+			}
+		})
+	}
+}
+
 // TestWorkloadManagerDiscoveryDeadline 验证超时后返回的完整空列表不能清空缓存，
 // 下一轮成功后恢复同步；每轮均从公共调度获得独立的截止时间。
 func TestWorkloadManagerDiscoveryDeadline(t *testing.T) {
