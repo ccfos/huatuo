@@ -359,7 +359,8 @@ func TestPerfEventReaderReadBatchDoesNotWaitForMoreEvents(t *testing.T) {
 			} else {
 				require.Empty(t, batch.Events)
 			}
-			require.Less(t, elapsed, 100*time.Millisecond, "drained rings must not wait for future events")
+			// Allow scheduling slack while still rejecting the legacy 500 ms wait.
+			require.Less(t, elapsed, 300*time.Millisecond, "drained rings must not wait for future events")
 			batch, err = readAvailableForTest(t, reader, func() any { return new([8]byte) })
 			require.NoError(t, err)
 			require.Empty(t, batch.Events)

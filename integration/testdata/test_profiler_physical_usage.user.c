@@ -20,7 +20,8 @@
 #include <unistd.h>
 
 #define KEEP_FRAME __attribute__((noinline, noclone))
-#define PAGES_PER_ITERATION 64
+/* Keep alloc/free bursts active across repeated native A/B ring swaps. */
+#define PAGES_PER_ITERATION 512
 #define ITERATIONS 300
 #define ITERATION_DELAY_US 10000
 
