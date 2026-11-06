@@ -158,6 +158,8 @@ CPU 文件指标不要求代表 PID、网络或 CSS。v1 分别使用已绑定�
 
 `memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 依赖滴滴定制内核的 `memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time` 接口。
 
+对应沙箱指标使用 `memory_others_workload_` 前缀和固定 workload 标签，从已绑定的 memory/unified 目录读取相同文件，不要求 CPU、PID 或 CSS。缺失或无法解析的可选文件只跳过对应指标。启动检查支持 legacy memory 根目录和 unified 根目录；当前沙箱发现来源仍未开放。
+
 主线及常见发行版内核缺少这些接口时不会输出对应指标，无需额外加载模块。标准内核上的容器直接回收次数可使用 `memory_reclaim_container_directstall` 观测。
 
 ### 内存事件计数

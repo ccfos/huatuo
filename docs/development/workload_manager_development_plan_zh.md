@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–06 已完成；步骤 07 进行中（memory_events 已完成，memory_vmstat 和 memory_others 待完成）。CubeSandbox 发现来源及生产采集配置尚未开放。
+当前进度：步骤 00–06 已完成；步骤 07 进行中（memory_events、memory_others 已完成，memory_vmstat 待过滤兼容策略确认）。CubeSandbox 发现来源及生产采集配置尚未开放。
 
 ## 开发与提交原则
 
@@ -811,3 +811,12 @@ CPU 使用率保留原差值、配额/cpuset 容量和回退在线核数规则�
 新增 memory-only Source/Manager 文件集成 fixture，覆盖 v1 分挂载及子树、v2、容器和两类沙箱、包含/排除规则、错误文件、文件与目录消失。metrics race 测试与集成测试通过。旧、新事件循环 benchmark 三次中位数为 20374 → 21443 ns/op、6664 → 6680 B/op、47 → 46 allocs/op；增加目录存在性检查，未增加来源查询。提交前执行构建和 `make check`。
 
 步骤 07 尚未完成：memory_others 待迁移，memory_vmstat 的旧 IncludedOnContainer/ExcludedOnContainer 是否复用于沙箱已向用户确认，答复前不修改该筛选语义。BPF 内存采集器仍在步骤 08 逐项迁移。
+
+
+### 步骤 07b：可选内存扩展文件使用公共绑定
+
+`memory_others` 复用公共内存对象筛选，按已绑定的 memory/unified 目录读取三个定制内核扩展文件。保持原指标名、原值和可选文件缺失/解析失败时只跳过该指标的行为；沙箱经 Pod 指标边界输出 `workload_` 身份。不把缺失内存路径解释为宿主机路径。启动能力检查同时识别 legacy memory 根目录和 unified 根目录，未提供扩展接口的内核仍禁用该采集器。
+
+metrics race、v1/v2 memory-only 文件集成和 unified 根目录能力检查通过。集成 fixture 在 legacy/unified 宿主机根目录写入哨兵值，确保资源消失不会误读宿主机数据。旧、新扩展采集循环 benchmark 三次中位数为 49617 → 45400 ns/op、约 13289 → 12585 B/op、62 → 55 allocs/op。构建、全量单测及提交前 `make check` 纳入本步检查。
+
+步骤 07 仍缺 memory_vmstat；其 IncludedOnContainer/ExcludedOnContainer 对沙箱的作用范围待用户确认，当前不改动该配置语义。

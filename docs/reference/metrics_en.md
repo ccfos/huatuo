@@ -163,6 +163,8 @@ Memory reclaim and compaction can block tasks. These metrics record host cumulat
 
 `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` depend on DiDi custom-kernel interfaces `memory.directstall_stat`, `memory.asynreclaim_stat`, and `memory.local_direct_reclaim_time`.
 
+Sandbox equivalents use the `memory_others_workload_` prefix and fixed workload labels, reading the same files from bound memory/unified directories without CPU, PID or CSS requirements. Missing or malformed optional files skip only that metric. Startup probes support legacy memory and unified roots. Sandbox discovery remains unavailable in configuration.
+
 Mainline and common distribution kernels without these interfaces do not emit the metrics; no additional module is needed. Use `memory_reclaim_container_directstall` for container direct-reclaim counts on standard kernels.
 
 ### Memory Event Counts

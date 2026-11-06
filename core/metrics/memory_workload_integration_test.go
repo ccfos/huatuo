@@ -63,6 +63,14 @@ func startMemoryMetricFixture(t testing.TB, kind string, legacy bool) string {
 	}
 	writeCPUFixture(t, filepath.Join(directory, "memory.events"), "low 3\nhigh 5\noom 4\n")
 	writeCPUFixture(t, filepath.Join(mount, "memory.events"), "low 999\noom 999\n")
+	// Poison both legacy and unified host roots to catch accidental empty-path reads.
+	for _, hostRoot := range []string{root, filepath.Join(root, "memory")} {
+		writeCPUFixture(t, filepath.Join(hostRoot, "memory.events"), "low 999\noom 999\n")
+		writeCPUFixture(t, filepath.Join(hostRoot, "memory.local_direct_reclaim_time"), "999")
+	}
+	previousRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = previousRoot })
 	previousBPFDir := bpf.DefaultObjDir
 	bpf.DefaultObjDir = t.TempDir()
 	t.Cleanup(func() { bpf.DefaultObjDir = previousBPFDir })
@@ -172,6 +180,82 @@ func BenchmarkMemoryEventsCollection(b *testing.B) {
 		data, err := collector.Update()
 		if err != nil || len(data) != 3 {
 			b.Fatalf("events=%d err=%v", len(data), err)
+		}
+	}
+}
+
+// TestMemoryExtensionsWorkload 验证可选扩展通过公共 memory/unified 目录采集，
+// 保持字段值和容器命名；缺少、损坏单个文件仅跳过该指标，目录消失不读取宿主机。
+func TestMemoryExtensionsWorkload(t *testing.T) {
+	for _, test := range []struct {
+		name, kind string
+		legacy     bool
+	}{
+		{"container", pod.TypeContainer, true},
+		{"cube v1", pod.TypeCubeSandbox, true},
+		{"cube v2", pod.TypeCubeSandbox, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := startMemoryMetricFixture(t, test.kind, test.legacy)
+			writeCPUFixture(t, filepath.Join(directory, "memory.directstall_stat"), "directstall_time 12\n")
+			writeCPUFixture(t, filepath.Join(directory, "memory.asynreclaim_stat"), "asyncreclaim_time 23\n")
+			writeCPUFixture(t, filepath.Join(directory, "memory.local_direct_reclaim_time"), "34")
+			collector := &memOthersCollector{}
+			data, err := collector.Update()
+			prefix := "workload_"
+			if test.kind == pod.TypeContainer {
+				prefix = "container_"
+			}
+			values := map[string]float64{}
+			for _, item := range data {
+				values[item.Name()] = item.Value
+			}
+			if err != nil || len(data) != 3 || values[prefix+"directstall_time"] != 12 || values[prefix+"asyncreclaim_time"] != 23 || values[prefix+"local_direct_reclaim_time"] != 34 {
+				t.Errorf("extension values=%v err=%v", values, err)
+			}
+			if err := os.Remove(filepath.Join(directory, "memory.directstall_stat")); err != nil {
+				t.Error(err)
+				return
+			}
+			writeCPUFixture(t, filepath.Join(directory, "memory.asynreclaim_stat"), "asyncreclaim_time invalid\n")
+			data, err = collector.Update()
+			if err != nil || len(data) != 1 || data[0].Name() != prefix+"local_direct_reclaim_time" {
+				t.Errorf("unavailable extension blocked healthy data: %v %v", data, err)
+			}
+			if err := os.RemoveAll(directory); err != nil {
+				t.Error(err)
+				return
+			}
+			data, err = collector.Update()
+			if err != nil || len(data) != 0 {
+				t.Errorf("missing binding read host extensions: %d %v", len(data), err)
+			}
+		})
+	}
+}
+
+func BenchmarkMemoryExtensionsCollection(b *testing.B) {
+	directory := startMemoryMetricFixture(b, pod.TypeContainer, true)
+	writeCPUFixture(b, filepath.Join(directory, "memory.directstall_stat"), "directstall_time 12\n")
+	writeCPUFixture(b, filepath.Join(directory, "memory.asynreclaim_stat"), "asyncreclaim_time 23\n")
+	writeCPUFixture(b, filepath.Join(directory, "memory.local_direct_reclaim_time"), "34")
+	root := b.TempDir()
+	alias := filepath.Join(root, "memory", memoryMetricMembership)
+	if err := os.MkdirAll(filepath.Dir(alias), 0o700); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.Symlink(directory, alias); err != nil {
+		b.Fatal(err)
+	}
+	previous := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	b.Cleanup(func() { paths.RootfsDefaultPath = previous })
+	collector := &memOthersCollector{}
+	b.ReportAllocs()
+	for b.Loop() {
+		data, err := collector.Update()
+		if err != nil || len(data) != 3 {
+			b.Fatalf("extensions=%d err=%v", len(data), err)
 		}
 	}
 }

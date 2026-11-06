@@ -175,3 +175,18 @@ func TestMemoryWorkloadSelection(t *testing.T) {
 		})
 	}
 }
+
+// TestMemcgInterfacesUnifiedRoot 验证 unified 根目录提供扩展文件时启用采集器，
+// 而未提供这些可选接口的内核仍保持不支持状态。
+func TestMemcgInterfacesUnifiedRoot(t *testing.T) {
+	setCgroupRootfs(t)
+	file := filepath.Join(paths.RootfsDefaultPath, "memory.local_direct_reclaim_time")
+	if err := os.WriteFile(file, []byte("0"), 0o600); err != nil {
+		t.Error(err)
+		return
+	}
+	attr, err := newMemOthersCollector()
+	if err != nil || attr == nil {
+		t.Errorf("unified extension was not detected: %v", err)
+	}
+}
