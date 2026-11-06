@@ -8,7 +8,9 @@ date: 2026-11-05
 
 # Pod 多来源重构开发计划
 
-本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。本文只规划开发顺序，不表示任何步骤已经实现或通过验证。
+本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
+
+当前进度：步骤 00–04 已完成；下一步为 05（显式来源配置和统一禁用开关）。CubeSandbox 发现与采集尚未开放。
 
 ## 开发与提交原则
 
@@ -719,3 +721,29 @@ GuestScan（三次、32 进程合成 /proc 树）中位数为 1630145 ns/op、�
 `logs/step04m-*` 记录 pod/container/autotracing、两个启动命令的 race 测试，HTTP/HTTPS 来源启动、无 CSS 启动、整轮取消、Guest 内核生命周期集成测试及完整构建、提交前 `make check`。构造函数测试覆盖无后台副作用、缺失配置、禁用配置和原有证书要求。
 
 步骤 04 仍剩 Container 来源子包迁移及其 legacy 查询依赖整理；来源构造函数暂位于根包。三处先前未提交的 CSS 修改未纳入本提交，后续拆分会涉及相同代码，需确认其提交归属后继续迁移。
+
+### 步骤 04n：完成 Container 来源子包及查询边界迁移
+
+此前三处未提交 CSS 修改已按用户要求废弃，本地及隔离测试副本恢复到已提交版本，未将旧补丁作为提交保留。本次实现来源拆分所需的公共资源查询边界。
+
+Container 发现、kubelet 配置与元数据解析、Docker/containerd 初始化及 PID 查询、Kubernetes/Kata cgroup 定位均归入 `internal/pod/container/`。`container.NewSource` 直接返回公共 Source；启动方注入 Manager。根包不再导入来源子包，没有通过注册器、回调桥或第二套缓存规避循环依赖。公共枚举及序列化、Guest 本地扫描、资源绑定与 Store 保留在根包。
+
+旧独立 profiler 的本地路径/CSS 查询随容器运行时逻辑迁入来源子包，继续支持未启动 Manager 时的本地 PID 文件回退。内存快照的引用校验在来源子包核对 runtime PID，再调用根包 `ValidateContainerResources` 校验已发布代次、进程和目录；Guest 仍只核对本地状态，不查询 Host runtime。根包 `CgroupCSSByPath` 根据控制器路径和目录 inode 查询 CSS，不从目录名推断容器 ID；来源负责把容器 ID 转成位置。删除被替代的按容器 ID 查 CSS 及旧目录选择辅助函数。对外 CLI 参数、容器 JSON、指标及 Kata 代表选择规则未改。
+
+相应测试随解析代码迁移，缓存、订阅、资源就绪和 Guest 校验测试留在根包；通过真实公共启动接口验证 HTTP/HTTPS 发现、runtime 退出先于 kubelet 删除、取消及引用校验。新增公共 CSS 测试使用数字目录 `8`，验证无需容器 ID 即可查询 CPU/memory 地址，以及冷缓存和缓存命中行为。
+
+`172.16.135.140` 的 `logs/step04n-*` 记录 pod/container/autotracing、独立 profiler 和两个启动命令的 race 测试，HTTP/HTTPS、CRI、cgroup/进程/Guest 集成测试，真实 cgroup v1/BPF CSS 查询及完整构建、提交前 `make check`。真实 Kata VM 用例仍要求显式提供运行中容器 ID，本次未获得该场景输入，不将其计为真实 VM 验收。未修改指标循环和 BPF 事件处理热路径。
+
+`172.16.134.96`（Linux 5.10、cgroup v2）的 `step04n-root-v2.log` 和 `step04n-container-v2.log` 记录数字目录 CSS、公共绑定、Guest 生命周期及 Host HTTP/HTTPS/runtime 引用测试通过。独立 CSS 用例初始化 BPF 后执行了真实 CPU/memory 查询；Host 启动 fixture 未初始化完整 daemon 的 BPF 环境，同时验证了 CSS 不可用时仍可发现和绑定文件资源。仅使用独立测试 cgroup、进程和协议 fixture，未修改现有沙箱。
+
+至此步骤 04 的 Host/Guest Source 接入、公共调度、来源子包依赖方向和启动方注入完成。后续步骤 05–22 仍需依次实现，不能据此启用 CubeSandbox 或宣称沙箱采集已完成。
+
+### 2026-11-06：同步最新主线
+
+开发分支的 55 个提交已 rebase 到 `upstream/main` 的 `9ff27c3c`，包含此前缺少的 114 个主线提交。原分支保留为 `backup/kata-before-rebase-20261106-workload`，没有推送远端。
+
+冲突处理保留主线的零 CSS 地址过滤、cgroup v1 按请求控制器选择路径及对应边界测试，并与 Kata 代表选择、来源子包迁移组合。主线新增内存指标使用公共 `DiscoveryInitialized` 查询首次完整发现状态；完整空集也算已初始化，临时刷新错误不重置该状态，Manager 停止后返回未初始化。保留主线 cilium/ebpf v0.21.0 和 socket v0.5.1，仅由依赖整理清除旧版本的无用校验记录。
+
+Linux 隔离验证目录为 `/data1/huatuo-workload-20261105/rebase-20261106`。完整构建、全量 `make unit`、pod/container/metrics/events/autotracing/Guest 传输与网络命名空间相关 race 测试、HTTP/HTTPS/CRI/Host/Guest 集成及真实 cgroup v1 CPU/memory CSS 查询通过，`make check` 通过。首次冷缓存 lint 超过主线配置的 5 分钟上限；缓存预热后按原配置重跑通过，未放宽或关闭检查。
+
+步骤 05 尚未开始。后续资源采集迁移应包含此次主线新增的 reclaim/compaction、hungtask 归属与 CPU 自动采集变化；真实 Kata/CubeSandbox 场景验收仍按原计划执行。

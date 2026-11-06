@@ -119,10 +119,7 @@ func TestParseContainerQos(t *testing.T) {
 	pod := &corev1.Pod{}
 	pod.Status.QOSClass = corev1.PodQOSBestEffort
 
-	got, err := parseContainerQos(ContainerTypeUnknown, pod)
-	if err != nil {
-		t.Fatalf("parseContainerQos() error = %v", err)
-	}
+	got := ParseContainerQos(string(pod.Status.QOSClass))
 	if got != containerQosBestEffort {
 		t.Errorf("parseContainerQos() = %v, want %v", got, containerQosBestEffort)
 	}
@@ -166,7 +163,7 @@ func TestWorkloadCompatibilityPaths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			raw := &Pod{
 				ID: "checkout", Type: TypeContainer, Cgroups: test.paths, Process: &HostProcess{PID: 42},
-				Container: &ContainerInfo{Type: ContainerTypeNormal}, Labels: map[string]any{labelHostNamespace: "default"},
+				Container: &ContainerInfo{Type: ContainerTypeNormal}, Labels: map[string]any{LabelHostNamespace: "default"},
 			}
 			bound := raw.copyMetadata()
 			bound.Network = &HostNetwork{PID: 43, NamespaceInum: 8500, NamespaceCookie: 8600, IPAddress: "172.16.0.2"}
@@ -189,10 +186,10 @@ func TestWorkloadCompatibilityMetadata(t *testing.T) {
 		info   *ContainerInfo
 		labels map[string]any
 	}{
-		{name: "missing container metadata", labels: map[string]any{labelHostNamespace: "default"}},
+		{name: "missing container metadata", labels: map[string]any{LabelHostNamespace: "default"}},
 		{name: "missing namespace label", info: &ContainerInfo{Type: ContainerTypeNormal}},
-		{name: "missing Kata sandbox identity", info: &ContainerInfo{Type: ContainerTypeNormal, RuntimeType: "io.containerd.kata-qemu.v2"}, labels: map[string]any{labelHostNamespace: "default"}},
-		{name: "wrong namespace type", info: &ContainerInfo{Type: ContainerTypeNormal}, labels: map[string]any{labelHostNamespace: 42}},
+		{name: "missing Kata sandbox identity", info: &ContainerInfo{Type: ContainerTypeNormal, RuntimeType: "io.containerd.kata-qemu.v2"}, labels: map[string]any{LabelHostNamespace: "default"}},
+		{name: "wrong namespace type", info: &ContainerInfo{Type: ContainerTypeNormal}, labels: map[string]any{LabelHostNamespace: 42}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			raw := &Pod{ID: "checkout", Type: TypeContainer, Cgroups: CgroupBinding{Unified: "/checkout"}, Container: test.info, Labels: test.labels}
@@ -210,7 +207,7 @@ func TestWorkloadKataCompatibilityCSS(t *testing.T) {
 		ID: "checkout", Type: TypeContainer,
 		Cgroups:   CgroupBinding{Unified: "/checkout", CSS: map[string]uint64{"cpu": 8500, "memory": 8600}},
 		Container: &ContainerInfo{Type: ContainerTypeNormal, RuntimeType: "io.containerd.kata-qemu.v2", SandboxID: "checkout-vm"},
-		Labels:    map[string]any{labelHostNamespace: "default"},
+		Labels:    map[string]any{LabelHostNamespace: "default"},
 	}
 	legacy := containerFromWorkload(workload, workload)
 	if legacy == nil || len(legacy.CgroupCss) != 1 || legacy.CgroupCss["cpu"] != 8500 {
@@ -228,7 +225,7 @@ func TestWorkloadCompatibilityLegacyPath(t *testing.T) {
 			ID: "checkout", Type: TypeContainer,
 			Cgroups:   CgroupBinding{Controllers: map[string]string{"cpu": membership, "memory": "/actual-memory"}},
 			Container: &ContainerInfo{Type: ContainerTypeNormal, CgroupPath: "/kubepods/checkout"},
-			Labels:    map[string]any{labelHostNamespace: "default"},
+			Labels:    map[string]any{LabelHostNamespace: "default"},
 		}
 		legacy := containerFromWorkload(raw, raw)
 		if legacy == nil || legacy.CgroupPath != "/kubepods/checkout" || legacy.MemoryCgroupPath() != "/kubepods/checkout" {

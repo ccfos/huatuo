@@ -12,47 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pod
+package container
 
 import (
 	"context"
 	"errors"
 	"fmt"
 
+	podmodel "github.com/ccfos/huatuo/internal/pod"
+
 	"github.com/ccfos/huatuo/internal/cgroups"
-	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
 	"github.com/ccfos/huatuo/internal/procfs"
 
 	corev1 "k8s.io/api/core/v1"
 )
 
-// containerSource temporarily shares the legacy runtime settings in this package.
 // It owns no cache or scheduler; the Manager commits each complete discovery.
 type containerSource struct {
 	dockerVersion string
-	client        *containerdiscovery.Kubelet
+	client        *Kubelet
 	ready         bool
 	fetch         func(context.Context) (corev1.PodList, error)
-	resolve       func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*Pod, error)
+	resolve       func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*podmodel.Pod, error)
 }
 
-type ContainerSourceOptions struct {
+type Options struct {
 	PodReadOnlyPort   uint32
 	PodAuthorizedPort uint32
 	PodClientCertPath string
 	DockerAPIVersion  string
 }
 
-// NewContainerSource prepares discovery without I/O or starting a Manager.
+// NewSource prepares discovery without I/O or starting a Manager.
 // Zero kubelet ports retain the existing disabled discovery configuration.
-func NewContainerSource(config *ContainerSourceOptions) (Source, error) {
+func NewSource(config *Options) (podmodel.Source, error) {
 	if config == nil {
 		return nil, errors.New("container discovery configuration is required")
 	}
 	if config.PodReadOnlyPort == 0 && config.PodAuthorizedPort == 0 {
 		return nil, nil
 	}
-	client, err := containerdiscovery.NewKubelet(containerdiscovery.KubeletOptions{
+	client, err := NewKubelet(KubeletOptions{
 		ReadOnlyPort: config.PodReadOnlyPort, AuthorizedPort: config.PodAuthorizedPort,
 		ClientCertPath: config.PodClientCertPath,
 	})
@@ -65,32 +65,32 @@ func NewContainerSource(config *ContainerSourceOptions) (Source, error) {
 	}, nil
 }
 
-func (*containerSource) Type() string { return TypeContainer }
+func (*containerSource) Type() string { return podmodel.TypeContainer }
 
-func (s *containerSource) Discover(ctx context.Context) (Discovery, error) {
+func (s *containerSource) Discover(ctx context.Context) (podmodel.Discovery, error) {
 	if err := ctx.Err(); err != nil {
-		return Discovery{}, err
+		return podmodel.Discovery{}, err
 	}
 	if s.client != nil && !s.ready {
 		if err := s.client.Initialize(ctx); err != nil {
-			return Discovery{}, err
+			return podmodel.Discovery{}, err
 		}
 		if err := kubeletConfigCacheMustUpdate(ctx, s.client); err != nil {
-			return Discovery{}, err
+			return podmodel.Discovery{}, err
 		}
 		dockerAPIVersion = s.dockerVersion
 		s.ready = true
 	}
 	list, err := s.fetch(ctx)
 	if err != nil {
-		return Discovery{}, err
+		return podmodel.Discovery{}, err
 	}
-	discovery := Discovery{Pods: make(map[string]*Pod), Complete: true}
+	discovery := podmodel.Discovery{Pods: make(map[string]*podmodel.Pod), Complete: true}
 	var resultErr error
 	for i := range list.Items {
 		p := &list.Items[i]
 		// Completed init and ephemeral debug containers are outside the view.
-		// Restartable init sidecars are included before the Pod is Running.
+		// Restartable init sidecars are included before the podmodel.Pod is Running.
 		for _, group := range []struct {
 			specs    []corev1.Container
 			statuses []corev1.ContainerStatus
@@ -101,7 +101,7 @@ func (s *containerSource) Discover(ctx context.Context) (Discovery, error) {
 		} {
 			for j := range group.statuses {
 				if err := ctx.Err(); err != nil {
-					return Discovery{}, err
+					return podmodel.Discovery{}, err
 				}
 				status := &group.statuses[j]
 				if status.State.Running == nil {
@@ -144,25 +144,37 @@ func (s *containerSource) Discover(ctx context.Context) (Discovery, error) {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return Discovery{}, err
+		return podmodel.Discovery{}, err
 	}
 	return discovery, resultErr
 }
 
-func resolveContainerPod(ctx context.Context, id string, spec *corev1.Container, status *corev1.ContainerStatus, p *corev1.Pod) (*Pod, error) {
+func resolveContainerPod(ctx context.Context, id string, spec *corev1.Container, status *corev1.ContainerStatus, p *corev1.Pod) (*podmodel.Pod, error) {
 	container, err := kubeletContainer(ctx, id, spec, status, p)
 	if err != nil {
 		return nil, err
 	}
-	workload := podFromContainer(container)
+	workload := &podmodel.Pod{
+		ID: container.ID, Type: podmodel.TypeContainer, Name: container.Name,
+		StartedAt: container.StartedAt, Labels: container.Labels,
+		Process: &podmodel.HostProcess{PID: container.InitPid},
+		Container: &podmodel.ContainerInfo{
+			Hostname: container.Hostname, Type: container.Type, Qos: container.Qos,
+			RuntimeType: container.RuntimeType, SandboxID: container.SandboxID,
+		},
+	}
 	workload.Container.CgroupPath = container.CgroupPath
-	workload.Cgroups = CgroupBinding{}
-	workload.Network = &HostNetwork{IPAddress: container.IPAddress}
+	workload.Cgroups = podmodel.CgroupBinding{}
+	workload.Network = &podmodel.HostNetwork{IPAddress: container.IPAddress}
 	if container.HostKataSandboxID() == "" {
 		workload.Network.PID = container.InitPid
 	}
 	// Preserve the existing check that PID and cgroup reads describe one process.
-	before, err := processStartTime(container.InitPid, procfs.DefaultPath())
+	process, err := procfs.NewProc(container.InitPid)
+	if err != nil {
+		return workload, err
+	}
+	before, err := process.Stat()
 	if err != nil {
 		return workload, err
 	}
@@ -170,9 +182,13 @@ func resolveContainerPod(ctx context.Context, id string, spec *corev1.Container,
 	if err != nil {
 		return workload, err
 	}
-	if err := validateProcess(container.InitPid, before, procfs.DefaultPath()); err != nil {
+	after, err := process.Stat()
+	if err != nil {
 		return nil, err
 	}
-	workload.Cgroups = CgroupBinding{Unified: paths.Unified, Controllers: paths.Controllers}
+	if before.Starttime != after.Starttime {
+		return nil, fmt.Errorf("container %q process changed during discovery", id)
+	}
+	workload.Cgroups = podmodel.CgroupBinding{Unified: paths.Unified, Controllers: paths.Controllers}
 	return workload, nil
 }

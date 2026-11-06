@@ -20,11 +20,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/ccfos/huatuo/internal/cgroups"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -200,4 +203,58 @@ func cString(value []byte) string {
 		return string(value[:index])
 	}
 	return string(value)
+}
+
+// Numeric names exercise the common resource query without any container ID.
+func TestCgroupCSSByPathIntegration(t *testing.T) {
+	previous := bpf.DefaultObjDir
+	bpf.DefaultObjDir = integrationTestEnv(t, "HUATUO_BPF_OBJECT_DIR")
+	t.Cleanup(func() { bpf.DefaultObjDir = previous; cgroupCssMetaDataMap.Clear() })
+	if err := bpf.Init(nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(bpf.Shutdown)
+	membership := fmt.Sprintf("/huatuo-resource-%d/8", time.Now().UnixNano())
+	roots := []string{cgroups.RootFsFilePath("cpu"), cgroups.RootFsFilePath("memory")}
+	if cgroups.CgroupMode() == cgroups.Unified {
+		roots = []string{cgroups.RootfsDefaultPath()}
+	}
+	for _, root := range roots {
+		directory := filepath.Join(root, membership)
+		parent := filepath.Dir(directory)
+		if err := os.Mkdir(parent, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Remove(parent); err != nil {
+				t.Error(err)
+			}
+		})
+		if cgroups.CgroupMode() == cgroups.Unified {
+			if err := os.WriteFile(filepath.Join(parent, "cgroup.subtree_control"), []byte("+cpu +memory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Remove(directory); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	for _, controller := range []string{"cpu", "memory"} {
+		t.Run(controller, func(t *testing.T) {
+			cgroupCssMetaDataMap.Clear()
+			address, err := CgroupCSSByPath(controller, membership)
+			if err != nil || address == 0 {
+				t.Errorf("cold %s CSS=%#x err=%v", controller, address, err)
+			}
+			cached, err := CgroupCSSByPath(controller, membership)
+			if err != nil || cached != address {
+				t.Errorf("cached %s CSS=%#x err=%v", controller, cached, err)
+			}
+		})
+	}
 }

@@ -17,12 +17,19 @@ package container
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/ccfos/huatuo/internal/cgroups"
+	podmodel "github.com/ccfos/huatuo/internal/pod"
 
 	dockertypes "github.com/docker/docker/api/types"
 	dockerclient "github.com/docker/docker/client"
@@ -180,4 +187,218 @@ func resolveContainerID(parentDir, containerID string) (string, error) {
 		return "", fmt.Errorf("container not found under %q", parentDir)
 	}
 	return match, nil
+}
+
+// containerProvider identifies the container runtime in use on the node.
+type containerProvider string
+
+const (
+	containerProviderNoop       containerProvider = ""
+	containerProviderDocker     containerProvider = "docker"
+	containerProviderContainerd containerProvider = "containerd"
+)
+
+var (
+	initMu                sync.Mutex
+	currContainerProvider containerProvider
+
+	dockerRootDir      string
+	containerdStateDir string
+	containerdClient   criapi.RuntimeService
+	dockerAPIVersion   string
+)
+
+// containerProviderFrom parses the runtime prefix from a container ID (e.g. "docker", "containerd").
+func containerProviderFrom(s string) (containerProvider, error) {
+	p := containerProvider(s)
+	switch p {
+	case containerProviderDocker, containerProviderContainerd:
+		return p, nil
+	default:
+		return containerProviderNoop, fmt.Errorf("invalid container provider: %s", s)
+	}
+}
+
+// initContainerProviderEnv initializes the runtime environment on first call.
+// On failure the provider remains unset so a subsequent call with a valid prefix can succeed.
+// After successful init, mismatched prefixes are rejected to tolerate stale PodStatus entries.
+func initContainerProviderEnv(ctx context.Context, provider containerProvider, apiVersion string) error {
+	initMu.Lock()
+	defer initMu.Unlock()
+
+	if currContainerProvider != containerProviderNoop {
+		if provider == currContainerProvider {
+			return nil
+		}
+		return fmt.Errorf("container provider mismatch: initialized as %q, rejecting stale %q prefix", currContainerProvider, provider)
+	}
+
+	switch provider {
+	case containerProviderDocker:
+		return initDockerProviderEnv(ctx, apiVersion)
+	case containerProviderContainerd:
+		return initContainerdProviderEnv(ctx)
+	default:
+		return fmt.Errorf("invalid container provider: %q", provider)
+	}
+}
+
+func initDockerProviderEnv(ctx context.Context, apiVersion string) error {
+	root, err := DockerRoot(ctx, apiVersion)
+	if err != nil {
+		return err
+	}
+	dockerRootDir = root
+	currContainerProvider = containerProviderDocker
+	return nil
+}
+
+func initContainerdProviderEnv(ctx context.Context) error {
+	client, state, err := ConnectContainerd(ctx, kubeletRuntimeEndpoint)
+	if err != nil {
+		return err
+	}
+	containerdClient, containerdStateDir = client, state
+	currContainerProvider = containerProviderContainerd
+	return nil
+}
+
+func readContainerdRuntimeInfo(ctx context.Context, containerID string) (*RuntimeInfo, error) {
+	initMu.Lock()
+	client := containerdClient
+	initMu.Unlock()
+	return ReadContainerdRuntimeInfo(ctx, client, containerID)
+}
+
+// populateContainerRuntime selects the runtime before reading any PID file or
+// deriving cgroup paths. The caller publishes the container only on success.
+func populateContainerRuntime(ctx context.Context, container *podmodel.Container, pod *corev1.Pod) error {
+	provider, _, _ := containerRuntimeState()
+	if provider == containerProviderContainerd {
+		info, err := readContainerdRuntimeInfo(ctx, container.ID)
+		if err != nil {
+			return err
+		}
+		container.RuntimeType = info.RuntimeType
+		if podmodel.IsKataRuntime(info.RuntimeType) {
+			return populateKataContainer(container, info)
+		}
+	}
+
+	initPID, err := containerInitPid(container.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get InitPid: %w", err)
+	}
+	container.InitPid = initPID
+	container.CgroupPath, err = containerCgroupSuffix(container.ID, pod)
+	if err != nil {
+		return fmt.Errorf("failed to get cgroup path: %w", err)
+	}
+	return nil
+}
+
+const (
+	defaultDockerRootDir      = "/var/lib/docker"
+	defaultContainerdStateDir = "/run/containerd"
+)
+
+func containerInitPid(containerID string) (int, error) {
+	provider, dockerRoot, containerdState := containerRuntimeState()
+	switch provider {
+	case containerProviderDocker:
+		return ReadDockerPID(dockerRoot, containerID)
+	case containerProviderContainerd:
+		return ReadContainerdPID(containerdState, containerID)
+	default:
+		return -1, fmt.Errorf("container provider not initialized")
+	}
+}
+
+func containerInitPIDByID(containerID string) (int, error) {
+	if err := podmodel.ValidateContainerID(containerID); err != nil {
+		return -1, err
+	}
+
+	if container, _ := podmodel.ContainerByID(containerID); container != nil && container.HostKataSandboxID() != "" {
+		info, err := readContainerdRuntimeInfo(context.Background(), containerID)
+		if err != nil {
+			return -1, err
+		}
+		if info.RuntimeType != container.RuntimeType || info.SandboxID != container.SandboxID || info.PID <= 0 {
+			return -1, fmt.Errorf("container %q Kata runtime binding changed", containerID)
+		}
+		return info.PID, nil
+	}
+	provider, dockerRoot, containerdState := containerRuntimeState()
+	switch provider {
+	case containerProviderDocker:
+		return ReadDockerPID(dockerRoot, containerID)
+	case containerProviderContainerd:
+		return ReadContainerdPID(containerdState, containerID)
+	}
+
+	dockerPID, dockerErr := ReadDockerPID(defaultDockerRootDir, containerID)
+	if dockerErr == nil {
+		return dockerPID, nil
+	}
+	containerdPID, containerdErr := ReadContainerdPID(defaultContainerdStateDir, containerID)
+	if containerdErr == nil {
+		return containerdPID, nil
+	}
+
+	return -1, fmt.Errorf(
+		"resolve container %q init PID from local runtime state: %w",
+		containerID,
+		errors.Join(dockerErr, containerdErr),
+	)
+}
+
+func containerRuntimeState() (containerProvider, string, string) {
+	initMu.Lock()
+	defer initMu.Unlock()
+	return currContainerProvider, dockerRootDir, containerdStateDir
+}
+
+// CSSBySubsys preserves local profiling without starting workload discovery.
+func CSSBySubsys(containerID, subsystem string) (uint64, error) {
+	if containerID == "" {
+		return 0, nil
+	}
+	paths, err := containerCgroupPathsByID(containerID)
+	if err != nil {
+		return 0, err
+	}
+	membership, err := cgroupMembershipForSubsystem(paths, cgroups.CgroupMode(), subsystem)
+	if err != nil {
+		return 0, fmt.Errorf("resolve container %q CSS membership: %w", containerID, err)
+	}
+	return podmodel.CgroupCSSByPath(subsystem, membership)
+}
+
+// ValidateContainerRef combines the runtime identity with common kernel checks.
+func ValidateContainerRef(ref podmodel.ContainerRef) error {
+	current, err := podmodel.ContainerRefByID(ref.Key.ID)
+	if err != nil {
+		return err
+	}
+	if current != ref {
+		return fmt.Errorf("container %q instance is no longer current", ref.Key.ID)
+	}
+	workload, err := podmodel.PodByID(ref.Key.ID)
+	if err != nil {
+		return err
+	}
+	if workload == nil {
+		return fmt.Errorf("container %q is no longer present", ref.Key.ID)
+	}
+	if workload.Container == nil || !workload.Container.Guest {
+		pid, err := containerInitPIDByID(ref.Key.ID)
+		if err != nil {
+			return err
+		}
+		if pid != ref.InitPID {
+			return fmt.Errorf("container %q init pid changed", ref.Key.ID)
+		}
+	}
+	return podmodel.ValidateContainerResources(ref)
 }

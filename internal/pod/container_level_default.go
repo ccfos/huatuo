@@ -55,10 +55,6 @@ var containerQosByString = map[string]ContainerQos{
 	string(corev1.PodQOSBestEffort): containerQosBestEffort,
 }
 
-func parseContainerQos(_ ContainerType, pod *corev1.Pod) (ContainerQos, error) {
-	return containerQosByString[string(pod.Status.QOSClass)], nil
-}
-
 func (p ContainerQos) String() string {
 	if p < containerQosUnknown || p >= containerQosMax {
 		return containerQosStrings[containerQosUnknown]
@@ -87,3 +83,6 @@ func (p *ContainerQos) UnmarshalJSON(data []byte) error {
 func (p ContainerQos) Int() int {
 	return int(p)
 }
+
+// ParseContainerQos accepts the existing JSON and Kubernetes class names.
+func ParseContainerQos(value string) ContainerQos { return containerQosByString[value] }

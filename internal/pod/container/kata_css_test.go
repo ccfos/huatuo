@@ -14,14 +14,15 @@
 
 //go:build linux
 
-package pod
+package container
 
 import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"testing"
+
+	podmodel "github.com/ccfos/huatuo/internal/pod"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -52,21 +53,8 @@ func TestPopulateKataContainerWithoutCPUCSS(t *testing.T) {
 	writeKataProcCgroup(t, root, pid, cgroupPath, mode)
 	writeKataCPUFiles(t, cgroupPath, mode)
 
-	// Remove any stale metadata for this temporary cgroup so the CSS lookup is
-	// guaranteed to miss.
-	var stat syscall.Stat_t
-	if err := syscall.Stat(filepath.Join(kataCPURoot(mode), cgroupPath), &stat); err != nil {
-		t.Fatal(err)
-	}
-	cgroupCssMetaDataMap.Range(func(key, value any) bool {
-		if metadata, ok := value.(*containerCssMetaData); ok && metadata.Inode == stat.Ino {
-			cgroupCssMetaDataMap.Delete(key)
-		}
-		return true
-	})
-
-	container := &Container{ID: "sandbox-container", RuntimeType: "io.containerd.kata.v2"}
-	info := &containerdRuntimeInfo{PID: pid, SandboxID: "vm"}
+	container := &podmodel.Container{ID: "sandbox-container", RuntimeType: "io.containerd.kata.v2"}
+	info := &RuntimeInfo{PID: pid, SandboxID: "vm"}
 	if err := populateKataContainer(container, info); err != nil {
 		t.Fatalf("populateKataContainer() error = %v", err)
 	}

@@ -20,34 +20,6 @@ import (
 	"testing"
 )
 
-func BenchmarkContainerSourceRefresh(b *testing.B) {
-	initMu.Lock()
-	previous := currContainerProvider
-	currContainerProvider = containerProviderContainerd
-	initMu.Unlock()
-	b.Cleanup(func() { initMu.Lock(); currContainerProvider = previous; initMu.Unlock() })
-	for _, size := range []int{1, 1024} {
-		b.Run(fmt.Sprint(size), func(b *testing.B) {
-			ids := make([]string, size)
-			for i := range ids {
-				ids[i] = fmt.Sprintf("%064x", i)
-			}
-			list := runningPodListForTest(ids...)
-			store := newTestContainerStore()
-			source := containerSourceForTest(list.Items)
-			manager := sourceManagerForTest(b, store, source)
-			b.ReportAllocs()
-			for b.Loop() {
-				snapshot, err, _ := manager.discover(b.Context(), nil, false)
-				if err != nil {
-					b.Fatal(err)
-				}
-				store.commit(snapshot, nil)
-			}
-		})
-	}
-}
-
 // BenchmarkSourceDiscovery measures the public discovery boundary and Store
 // commit for metadata-only workloads, without hiding binding allocations.
 func BenchmarkSourceDiscovery(b *testing.B) {

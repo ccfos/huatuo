@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package pod
+package container
 
 import (
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,31 +75,5 @@ func TestGuestAgentIdentity(t *testing.T) {
 				t.Errorf("Guest identity=%t, want %t", got, test.want)
 			}
 		})
-	}
-}
-
-func TestKataRepresentativePrefersBusinessOverGuestAgent(t *testing.T) {
-	agent := &Container{
-		ID:          "agent-first",
-		Type:        ContainerTypeSidecar,
-		RuntimeType: "io.containerd.kata-qemu.v2",
-		SandboxID:   "orders-vm",
-		SyncedAt:    time.Unix(1, 0),
-		CgroupCss:   map[string]uint64{"cpu": 10},
-	}
-	business := *agent
-	business.ID = "checkout"
-	business.Type = ContainerTypeNormal
-	business.SyncedAt = time.Unix(2, 0)
-	members := map[string]*Container{agent.ID: agent, business.ID: &business}
-	for range 100 {
-		if got := BuildCssContainers(members, "cpu")[10]; got != &business {
-			t.Errorf("representative=%v, want checkout", got)
-			break
-		}
-		if got := BuildCssContainersID(members, "cpu")[10]; got != business.ID {
-			t.Errorf("representative ID=%q, want checkout", got)
-			break
-		}
 	}
 }

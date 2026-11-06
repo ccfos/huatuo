@@ -65,7 +65,7 @@ func (c *Container) LifeResources(key string) any {
 
 // LabelHostNamespace returns namespace label
 func (c *Container) LabelHostNamespace() string {
-	return c.Labels[labelHostNamespace].(string)
+	return c.Labels[LabelHostNamespace].(string)
 }
 
 func (c *Container) InitPidOrInitnsPid() int {
@@ -117,7 +117,7 @@ func ValidateContainerID(id string) error {
 }
 
 // ContainerByID returns cached metadata without runtime I/O. Fresh instance
-// checks use ContainerRefByID and ValidateContainerRef.
+// checks combine ContainerRefByID with source and kernel validation.
 func ContainerByID(id string) (*Container, error) {
 	containerView.mu.RLock()
 	defer containerView.mu.RUnlock()

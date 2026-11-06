@@ -300,7 +300,7 @@ func (m *workloadManager) bindDiscovery(ctx context.Context, kind string, discov
 			if workload.Process != nil {
 				record.startTime = workload.Process.startTime
 			}
-			isHostKata := workload.Container != nil && isKataRuntime(workload.Container.RuntimeType)
+			isHostKata := workload.Container != nil && IsKataRuntime(workload.Container.RuntimeType)
 			if membership, ok := workload.Cgroups.Path("memory"); ok && !isHostKata {
 				record.ref.MemoryCgroupPath = membership
 				if directory, err := workload.Cgroups.Directory("memory"); err == nil {

@@ -313,7 +313,7 @@ func TestPodPublicationPreservesContainerContract(t *testing.T) {
 	source.Name, source.Hostname = "checkout", "huatuo-dev"
 	source.CgroupPath, source.memoryCgroupPath = "/cpu/checkout", &memory
 	source.CgroupCss = map[string]uint64{"cpu": 7100}
-	source.Labels = map[string]any{labelHostNamespace: "checkout-services"}
+	source.Labels = map[string]any{LabelHostNamespace: "checkout-services"}
 	source.SyncedAt = time.Unix(100, 0)
 	source.NetNamespaceInum, source.NetNamespaceCookie = 5100, 6100
 	source.IPAddress = "172.16.0.2"
@@ -340,10 +340,10 @@ func TestPodPublicationPreservesContainerContract(t *testing.T) {
 	if !view.container.SyncedAt.Equal(source.SyncedAt) || !view.pod.SyncedAt.After(source.SyncedAt) {
 		t.Errorf("sync timestamps: legacy=%s, pod=%s", view.container.SyncedAt, view.pod.SyncedAt)
 	}
-	source.Labels[labelHostNamespace] = "changed-at-source"
+	source.Labels[LabelHostNamespace] = "changed-at-source"
 	source.CgroupCss["cpu"] = 7200
 	memory = "/memory/changed-at-source"
-	if view.pod.Labels[labelHostNamespace] != "checkout-services" || view.pod.Cgroups.CSS["cpu"] != 7100 ||
+	if view.pod.Labels[LabelHostNamespace] != "checkout-services" || view.pod.Cgroups.CSS["cpu"] != 7100 ||
 		view.container.MemoryCgroupPath() != "/memory/checkout" {
 		t.Error("source metadata mutated a published view")
 	}
@@ -992,7 +992,7 @@ func TestSourceContainerProjection(t *testing.T) {
 	previous.pod.lifeResources["baseline"] = uint64(6400)
 	source := &sourceFixture{kind: TypeContainer, discover: func(context.Context) (Discovery, error) {
 		return Discovery{Pods: map[string]*Pod{previous.container.ID: {
-			ID: previous.container.ID, Type: TypeContainer, Name: "checkout-api", Labels: map[string]any{labelHostNamespace: "default"},
+			ID: previous.container.ID, Type: TypeContainer, Name: "checkout-api", Labels: map[string]any{LabelHostNamespace: "default"},
 			Container: &ContainerInfo{Hostname: "checkout-pod", Type: ContainerTypeNormal, Qos: ContainerQosLevelMin},
 			Cgroups:   CgroupBinding{Controllers: map[string]string{"cpu": "/unavailable-checkout", "memory": "/unavailable-checkout"}},
 			Process:   &HostProcess{PID: 1073741824}, Network: &HostNetwork{IPAddress: "172.16.0.2"},

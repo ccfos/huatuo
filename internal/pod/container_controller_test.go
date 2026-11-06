@@ -19,35 +19,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	corev1 "k8s.io/api/core/v1"
-
-	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
 )
-
-func useContainerdForTest(t *testing.T) {
-	t.Helper()
-	initMu.Lock()
-	previous := currContainerProvider
-	currContainerProvider = containerProviderContainerd
-	initMu.Unlock()
-	t.Cleanup(func() { initMu.Lock(); currContainerProvider = previous; initMu.Unlock() })
-}
-
-func runningPodListForTest(ids ...string) corev1.PodList {
-	p := corev1.Pod{}
-	for _, id := range ids {
-		p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: id})
-		p.Status.ContainerStatuses = append(p.Status.ContainerStatuses, corev1.ContainerStatus{
-			Name: id, ContainerID: "containerd://" + id,
-			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
-		})
-	}
-	return corev1.PodList{Items: []corev1.Pod{p}}
-}
 
 func waitContainerViewForTest(t *testing.T, sub *ContainerSubscription, count int) {
 	t.Helper()
@@ -76,16 +50,7 @@ func containerPodForTest(id string) *Pod {
 		ID: id, Type: TypeContainer, Name: id,
 		Cgroups:   CgroupBinding{Unified: "/" + id},
 		Container: &ContainerInfo{Type: ContainerTypeNormal},
-		Labels:    map[string]any{labelHostNamespace: "default"},
-	}
-}
-
-func containerSourceForTest(items []corev1.Pod) *containerSource {
-	return &containerSource{
-		fetch: func(context.Context) (corev1.PodList, error) { return corev1.PodList{Items: items}, nil },
-		resolve: func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*Pod, error) {
-			return containerPodForTest(id), nil
-		},
+		Labels:    map[string]any{LabelHostNamespace: "default"},
 	}
 }
 
@@ -96,196 +61,6 @@ func sourceManagerForTest(t testing.TB, store *containerStore, source Source) *w
 		t.Fatal(err)
 	}
 	return manager
-}
-
-func TestContainerSourceScope(t *testing.T) {
-	useContainerdForTest(t)
-	first, waiting, sidecar, initID := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
-	list := runningPodListForTest(first, waiting)
-	list.Items[0].Status.ContainerStatuses[1].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}
-	always := corev1.ContainerRestartPolicyAlways
-	list.Items[0].Spec.InitContainers = []corev1.Container{{Name: sidecar, RestartPolicy: &always}, {Name: initID}}
-	list.Items[0].Status.InitContainerStatuses = runningPodListForTest(sidecar, initID).Items[0].Status.ContainerStatuses
-	list.Items[0].Status.EphemeralContainerStatuses = runningPodListForTest(strings.Repeat("e", 64)).Items[0].Status.ContainerStatuses
-	source := containerSourceForTest(list.Items)
-	counts := make(map[string]int)
-	source.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*Pod, error) {
-		counts[id]++
-		return containerPodForTest(id), nil
-	}
-	for range 2 {
-		discovery, err := source.Discover(t.Context())
-		if err != nil || !discovery.Complete || len(discovery.Pods) != 2 || discovery.Pods[first] == nil || discovery.Pods[sidecar] == nil {
-			t.Errorf("running scope=%+v, err=%v", discovery, err)
-		}
-	}
-	if counts[first] != 2 || counts[sidecar] != 2 {
-		t.Errorf("source did not refresh every member: %v", counts)
-	}
-}
-
-// Confirmed membership deletion must proceed even when another member fails.
-func TestContainerSourceMetadataRecovery(t *testing.T) {
-	useContainerdForTest(t)
-	for _, kata := range []bool{false, true} {
-		t.Run(fmt.Sprintf("kata=%t", kata), func(t *testing.T) {
-			id, removed := strings.Repeat("a", 64), strings.Repeat("b", 64)
-			source := containerSourceForTest(runningPodListForTest(id, removed).Items)
-			failed := false
-			calls := 0
-			source.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*Pod, error) {
-				calls++
-				if failed {
-					return nil, errors.New("runtime temporarily unavailable")
-				}
-				p := containerPodForTest(id)
-				if kata {
-					p.Container.RuntimeType, p.Container.SandboxID = "io.containerd.kata-qemu.v2", "checkout-vm"
-				}
-				return p, nil
-			}
-			store := newTestContainerStore()
-			manager := sourceManagerForTest(t, store, source)
-			snapshot, err, _ := manager.discover(t.Context(), nil, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			store.commit(snapshot, nil)
-			previous := store.records[id]
-			previous.pod.lifeResources["baseline"] = 6400
-			failed = true
-			source.fetch = func(context.Context) (corev1.PodList, error) { return runningPodListForTest(id), nil }
-			for range 5 {
-				snapshot, err, retry := manager.discover(t.Context(), nil, false)
-				member, exists := snapshot.records[id]
-				if err == nil || !retry || !snapshot.isComplete || !exists || member != nil {
-					t.Errorf("failed member: complete=%t retry=%t exists=%t member=%+v err=%v", snapshot.isComplete, retry, exists, member, err)
-				}
-				store.commit(snapshot, err)
-				if store.records[id] != previous || store.records[removed] != nil {
-					t.Error("metadata failure advanced sync time or blocked confirmed deletion")
-				}
-			}
-			failed = false
-			snapshot, err, _ = manager.discover(t.Context(), nil, false)
-			store.commit(snapshot, err)
-			current := store.records[id]
-			if err != nil || store.err != nil || calls != 8 || current.ref.Key != previous.ref.Key || current.pod.LifeResources("baseline") != 6400 {
-				t.Errorf("recovery lost the instance or stopped retrying: calls=%d err=%v", calls, err)
-			}
-			if kata && !current.container.SyncedAt.Equal(previous.container.SyncedAt) {
-				t.Error("Kata refresh changed representative priority")
-			}
-		})
-	}
-}
-
-func TestContainerSourceIncompleteList(t *testing.T) {
-	useContainerdForTest(t)
-	id, retained, fresh := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
-	for _, reason := range []string{"duplicate", "cross pod duplicate", "missing spec", "invalid ID", "query failure"} {
-		t.Run(reason, func(t *testing.T) {
-			store := newTestContainerStore()
-			source := containerSourceForTest(runningPodListForTest(id, retained).Items)
-			manager := sourceManagerForTest(t, store, source)
-			snapshot, err, _ := manager.discover(t.Context(), nil, true)
-			if err != nil {
-				t.Fatal(err)
-			}
-			store.commit(snapshot, nil)
-			previous := store.records[id]
-			list := runningPodListForTest(id, fresh)
-			switch reason {
-			case "duplicate":
-				list = runningPodListForTest(id, id, fresh)
-			case "cross pod duplicate":
-				list.Items = append(list.Items, runningPodListForTest(id).Items...)
-			case "missing spec":
-				list.Items[0].Spec.Containers = list.Items[0].Spec.Containers[1:]
-			case "invalid ID":
-				list.Items[0].Status.ContainerStatuses[0].ContainerID = "containerd://invalid"
-			}
-			source.fetch = func(context.Context) (corev1.PodList, error) {
-				if reason == "query failure" {
-					return corev1.PodList{}, errors.New("kubelet unavailable")
-				}
-				return list, nil
-			}
-			snapshot, err, retry := manager.discover(t.Context(), nil, false)
-			if err == nil || !retry || snapshot.isComplete {
-				t.Errorf("incomplete list: complete=%t retry=%t err=%v", snapshot.isComplete, retry, err)
-			}
-			store.commit(snapshot, err)
-			if store.records[id] != previous || store.records[retained] == nil {
-				t.Error("incomplete list replaced conflicting metadata or deleted absent members")
-			}
-			if reason != "query failure" && store.records[fresh] == nil {
-				t.Error("incomplete list discarded a valid member")
-			}
-		})
-	}
-}
-
-func TestContainerSourceCancellation(t *testing.T) {
-	useContainerdForTest(t)
-	for _, phase := range []string{"fetch", "resolve"} {
-		t.Run(phase, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			list := runningPodListForTest(strings.Repeat("a", 64))
-			source := containerSourceForTest(list.Items)
-			if phase == "fetch" {
-				source.fetch = func(context.Context) (corev1.PodList, error) { cancel(); return corev1.PodList{}, nil }
-			} else {
-				source.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*Pod, error) {
-					cancel()
-					return nil, nil
-				}
-			}
-			discovery, err := source.Discover(ctx)
-			if !errors.Is(err, context.Canceled) || discovery.Complete || len(discovery.Pods) != 0 {
-				t.Errorf("canceled discovery=%+v err=%v", discovery, err)
-			}
-		})
-	}
-}
-
-// Periodic refresh also handles runtime teardown before kubelet removes a row.
-func TestContainerSourceReconcilesWithoutGetters(t *testing.T) {
-	useContainerdForTest(t)
-	id := strings.Repeat("a", 64)
-	var mu sync.Mutex
-	list := runningPodListForTest(id)
-	source := containerSourceForTest(list.Items)
-	source.fetch = func(context.Context) (corev1.PodList, error) { mu.Lock(); defer mu.Unlock(); return list, nil }
-	store := newContainerStore()
-	manager := sourceManagerForTest(t, store, source)
-	manager.resyncInterval = 25 * time.Millisecond
-	manager.start()
-	t.Cleanup(func() { manager.cancel(); <-manager.done })
-	subscriber := subscribeForTest(t, store)
-	waitContainerViewForTest(t, subscriber, 1)
-	mu.Lock()
-	list = corev1.PodList{}
-	mu.Unlock()
-	timeout := time.After(2 * time.Second)
-	for {
-		select {
-		case <-subscriber.Notify():
-		case <-timeout:
-			t.Error("periodic deletion required a getter or CSS hint")
-			return
-		}
-		update, err := subscriber.DrainEvents()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, event := range update.Events {
-			if event.Kind == ContainerDeleted && event.Container.Key.ID == id {
-				return
-			}
-		}
-	}
 }
 
 // TestWorkloadManagerSerialRefresh 验证发现阻塞期间的提示合并到下一轮，
@@ -576,41 +351,62 @@ func TestSourceManagerCancellation(t *testing.T) {
 	}
 }
 
-// TestKubeletInitializationCancellation 验证 configz 请求继承取消信号，
-// 取消后不尝试本地配置兜底，不会将正常停止误判为配置缺失并 panic。
-func TestKubeletInitializationCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if err := kubeletConfigCacheMustUpdate(ctx, &containerdiscovery.Kubelet{}); !errors.Is(err, context.Canceled) {
-		t.Errorf("config initialization cancellation=%v", err)
-	}
-}
-
-func TestNewContainerSource(t *testing.T) {
-	for _, test := range []struct {
-		name              string
-		config            *ContainerSourceOptions
-		wantErr, disabled bool
-	}{
-		{name: "missing config", wantErr: true},
-		{name: "disabled", config: &ContainerSourceOptions{}, disabled: true},
-		{name: "authorized without certificate", config: &ContainerSourceOptions{PodAuthorizedPort: 10250}, wantErr: true},
-		{name: "readonly", config: &ContainerSourceOptions{PodReadOnlyPort: 10255, DockerAPIVersion: "1.43"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			previousManager, previousVersion := activeManager, dockerAPIVersion
-			source, err := NewContainerSource(test.config)
-			if (err != nil) != test.wantErr {
-				t.Errorf("constructor error=%v, want error=%t", err, test.wantErr)
+// Confirmed membership deletion must proceed even when another member fails.
+func TestContainerSourceMetadataRecovery(t *testing.T) {
+	for _, kata := range []bool{false, true} {
+		t.Run(fmt.Sprintf("kata=%t", kata), func(t *testing.T) {
+			id, removed := strings.Repeat("a", 64), strings.Repeat("b", 64)
+			ids := []string{id, removed}
+			failed, calls := false, 0
+			source := &sourceFixture{kind: TypeContainer, discover: func(context.Context) (Discovery, error) {
+				result := Discovery{Pods: make(map[string]*Pod), Complete: true}
+				var err error
+				for _, id := range ids {
+					calls++
+					if failed {
+						result.Pods[id] = nil
+						err = errors.New("runtime unavailable")
+						continue
+					}
+					p := containerPodForTest(id)
+					if kata {
+						p.Container.RuntimeType, p.Container.SandboxID = "io.containerd.kata-qemu.v2", "checkout-vm"
+					}
+					result.Pods[id] = p
+				}
+				return result, err
+			}}
+			store := newTestContainerStore()
+			manager := sourceManagerForTest(t, store, source)
+			snapshot, err, _ := manager.discover(t.Context(), nil, true)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if test.disabled && source != nil {
-				t.Error("zero kubelet ports created an enabled source")
+			store.commit(snapshot, nil)
+			previous := store.records[id]
+			previous.pod.lifeResources["baseline"] = 6400
+			failed = true
+			ids = []string{id}
+			for range 5 {
+				snapshot, err, retry := manager.discover(t.Context(), nil, false)
+				member, exists := snapshot.records[id]
+				if err == nil || !retry || !snapshot.isComplete || !exists || member != nil {
+					t.Errorf("failed member: complete=%t retry=%t exists=%t member=%+v err=%v", snapshot.isComplete, retry, exists, member, err)
+				}
+				store.commit(snapshot, err)
+				if store.records[id] != previous || store.records[removed] != nil {
+					t.Error("metadata failure advanced sync time or blocked confirmed deletion")
+				}
 			}
-			if !test.wantErr && !test.disabled && (source == nil || source.Type() != TypeContainer) {
-				t.Error("configured container source was not created")
+			failed = false
+			snapshot, err, _ = manager.discover(t.Context(), nil, false)
+			store.commit(snapshot, err)
+			current := store.records[id]
+			if err != nil || store.err != nil || calls != 8 || current.ref.Key != previous.ref.Key || current.pod.LifeResources("baseline") != 6400 {
+				t.Errorf("recovery lost the instance or stopped retrying: calls=%d err=%v", calls, err)
 			}
-			if activeManager != previousManager || dockerAPIVersion != previousVersion {
-				t.Error("constructing a source started discovery or changed runtime settings")
+			if kata && !current.container.SyncedAt.Equal(previous.container.SyncedAt) {
+				t.Error("Kata refresh changed representative priority")
 			}
 		})
 	}

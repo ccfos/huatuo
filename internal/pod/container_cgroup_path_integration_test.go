@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -29,29 +28,14 @@ import (
 	promprocfs "github.com/prometheus/procfs"
 )
 
-func TestValidateContainerRefKernelAndRuntimeBindings(t *testing.T) {
-	useContainerdForTest(t)
-	root := t.TempDir()
-	initMu.Lock()
-	previousRoot := containerdStateDir
-	containerdStateDir = root
-	initMu.Unlock()
-	t.Cleanup(func() { initMu.Lock(); containerdStateDir = previousRoot; initMu.Unlock() })
+func TestValidateContainerResourcesKernelAndRuntimeBindings(t *testing.T) {
 	previousView := containerView
 	containerView = newTestContainerStore()
 	t.Cleanup(func() { containerView = previousView })
 
 	id := strings.Repeat("a", 64)
-	directory := filepath.Join(root, "io.containerd.runtime.v2.task", "k8s.io", id)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	pidFile := filepath.Join(directory, "init.pid")
-	for _, change := range []string{"unchanged", "runtime pid", "start time", "directory", "generation", "deleted", "unavailable"} {
+	for _, change := range []string{"unchanged", "start time", "directory", "generation", "deleted", "unavailable"} {
 		t.Run(change, func(t *testing.T) {
-			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-				t.Fatal(err)
-			}
 			record, err := containerMemoryBinding(&Container{ID: id, InitPid: os.Getpid()})
 			if err != nil {
 				t.Fatal(err)
@@ -64,10 +48,6 @@ func TestValidateContainerRefKernelAndRuntimeBindings(t *testing.T) {
 				t.Fatalf("published directory lookup: %v", err)
 			}
 			switch change {
-			case "runtime pid":
-				if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid()+1)), 0o600); err != nil {
-					t.Fatal(err)
-				}
 			case "start time", "directory", "generation":
 				updated := *record
 				if change == "directory" {
@@ -88,7 +68,7 @@ func TestValidateContainerRefKernelAndRuntimeBindings(t *testing.T) {
 			case "unavailable":
 				containerView.commit(containerSnapshot{records: records}, ErrContainersUnavailable)
 			}
-			err = ValidateContainerRef(ref)
+			err = ValidateContainerResources(ref)
 			if (err == nil) != (change == "unchanged") {
 				t.Fatalf("validate %s binding: %v", change, err)
 			}

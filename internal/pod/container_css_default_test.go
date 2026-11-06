@@ -23,12 +23,15 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/procfs"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/cgroups"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -141,94 +144,6 @@ func TestExtractContainerID(t *testing.T) {
 		if actual != tc.expected {
 			t.Errorf("parseContainerID input %s want %s  actual %s", tc.input, tc.expected, actual)
 		}
-	}
-}
-
-func TestCgroupMembershipForSubsystem(t *testing.T) {
-	paths := &cgroups.ProcessPaths{
-		Controllers: map[string]string{"cpu": "/cpu/container", "memory": "/memory/container"},
-		Unified:     "/unified/container",
-	}
-	tests := []struct {
-		name          string
-		paths         *cgroups.ProcessPaths
-		mode          cgroups.Mode
-		subsystem     string
-		expectedPath  string
-		expectedError string
-	}{
-		{name: "v1 memory uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "memory", expectedPath: "/memory/container"},
-		{name: "v1 CPU uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "cpu", expectedPath: "/cpu/container"},
-		{name: "hybrid memory ignores unified membership", paths: paths, mode: cgroups.Hybrid, subsystem: "memory", expectedPath: "/memory/container"},
-		{name: "v2 uses unified membership", paths: paths, mode: cgroups.Unified, subsystem: "memory", expectedPath: "/unified/container"},
-		{
-			name:  "missing v1 memory does not fall back to CPU or v2",
-			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"cpu": "/cpu/container"}, Unified: "/unified/container"},
-			mode:  cgroups.Legacy, subsystem: "memory", expectedError: "no memory cgroup v1 membership",
-		},
-		{
-			name:  "missing v2 membership does not fall back to v1",
-			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"memory": "/memory/container"}},
-			mode:  cgroups.Unified, subsystem: "memory", expectedError: "no cgroup v2 membership",
-		},
-		{name: "missing paths", mode: cgroups.Legacy, subsystem: "memory", expectedError: "missing process cgroup membership"},
-		{name: "unsupported mode", paths: paths, mode: cgroups.Mode(255), subsystem: "memory", expectedError: "unsupported cgroup mode"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			actualPath, actualErr := cgroupMembershipForSubsystem(test.paths, test.mode, test.subsystem)
-			if test.expectedError != "" {
-				if actualErr == nil || !strings.Contains(actualErr.Error(), test.expectedError) {
-					t.Fatalf("expected error %q, got path %q and error %v", test.expectedError, actualPath, actualErr)
-				}
-				return
-			}
-			if actualErr != nil || actualPath != test.expectedPath {
-				t.Fatalf("expected path %q, got %q and error %v", test.expectedPath, actualPath, actualErr)
-			}
-		})
-	}
-}
-
-func TestResolveCgroupFilesystemPath(t *testing.T) {
-	realRoot := t.TempDir()
-	symlinkParent := t.TempDir()
-	symlinkRoot := filepath.Join(symlinkParent, "cpu")
-	if err := os.Symlink(realRoot, symlinkRoot); err != nil {
-		t.Fatalf("Symlink() error = %v", err)
-	}
-
-	membershipPath := "/kubepods/container"
-	cgroupPath := filepath.Join(realRoot, "kubepods", "container")
-	if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cgroupPath, cgroupv1NotifyFile), nil, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	got, err := resolveCgroupFilesystemPath(symlinkRoot, membershipPath, cgroupv1NotifyFile)
-	if err != nil {
-		t.Fatalf("resolveCgroupFilesystemPath() error = %v", err)
-	}
-	if got != cgroupPath {
-		t.Fatalf("resolveCgroupFilesystemPath() = %q, want %q", got, cgroupPath)
-	}
-}
-
-func TestResolveCgroupFilesystemPathRejectsMissingNotificationFile(t *testing.T) {
-	root := t.TempDir()
-	cgroupPath := filepath.Join(root, "kubepods", "container")
-	if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-
-	_, err := resolveCgroupFilesystemPath(root, "/kubepods/container", cgroupv2NotifyFile)
-	if err == nil {
-		t.Fatal("resolveCgroupFilesystemPath() error = nil, want non-nil")
-	}
-	if !strings.Contains(err.Error(), filepath.Join(cgroupPath, cgroupv2NotifyFile)) {
-		t.Fatalf("resolveCgroupFilesystemPath() error = %q, want notification path", err)
 	}
 }
 
@@ -413,5 +328,47 @@ func TestUnknownCgroupEventRequestsFullRefresh(t *testing.T) {
 				t.Error("unknown event created a targeted hint or changed membership")
 			}
 		})
+	}
+}
+
+func TestCgroupCSSByPathUsesDirectoryIdentity(t *testing.T) {
+	previousRoot := filepath.Dir(procfs.DefaultPath())
+	previousIDs := cgroupCssID2SubSysNameMap
+	root := t.TempDir()
+	procfs.RootPrefix(root)
+	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu", 1: "memory"}
+	t.Cleanup(func() {
+		procfs.RootPrefix(previousRoot)
+		cgroupCssID2SubSysNameMap = previousIDs
+		cgroupCssMetaDataMap.Delete(uint64(8500))
+		cgroupCssMetaDataMap.Delete(uint64(8600))
+	})
+	cgroupRoot := filepath.Join(root, "groups")
+	guestFile(t, filepath.Join(root, "proc"), "self/mountinfo", fmt.Sprintf("40 1 0:40 / %s rw - cgroup2 none rw\n41 1 0:41 / %s/cpu rw - cgroup none rw,cpu,cpuacct\n42 1 0:42 / %s/memory rw - cgroup none rw,memory\n", cgroupRoot, cgroupRoot, cgroupRoot))
+	for index, controller := range []string{"cpu", "memory"} {
+		directory := filepath.Join(cgroupRoot, "workloads/8")
+		if cgroups.CgroupMode() != cgroups.Unified {
+			directory = filepath.Join(cgroupRoot, controller, "workloads/8")
+		}
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		var stat syscall.Stat_t
+		if err := syscall.Stat(directory, &stat); err != nil {
+			t.Fatal(err)
+		}
+		address := uint64(8500 + index*100)
+		cgroupCssMetaDataMap.Store(address, &containerCssMetaData{CSS: address, Inode: stat.Ino, SubSys: controller})
+	}
+	for index, controller := range []string{"cpu", "memory"} {
+		address, err := CgroupCSSByPath(controller, "/workloads/8")
+		if err != nil || address != uint64(8500+index*100) {
+			t.Errorf("%s CSS=%#x err=%v", controller, address, err)
+		}
+	}
+	for _, path := range []string{"", "/", "relative", "/workloads/../8", "/missing"} {
+		if _, err := CgroupCSSByPath("memory", path); err == nil {
+			t.Errorf("unsafe or missing path %q accepted", path)
+		}
 	}
 }

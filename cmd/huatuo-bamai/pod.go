@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"time"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
@@ -44,7 +46,7 @@ func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 			log.Infof("kubelet pod sync disabled by --disable-kubelet")
 			return nil, nil
 		}
-		source, err = pod.NewContainerSource(&pod.ContainerSourceOptions{
+		source, err = containerdiscovery.NewSource(&containerdiscovery.Options{
 			PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
 			PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
 			PodClientCertPath: config.Get().Pod.KubeletClientCertPath,

@@ -33,6 +33,9 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
+
+	podmodel "github.com/ccfos/huatuo/internal/pod"
 
 	"github.com/ccfos/huatuo/internal/log"
 
@@ -620,5 +623,241 @@ func TestKubeletConnectionCancellation(t *testing.T) {
 	}
 	if _, err := client.MustConfiguration(ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("config cancellation=%v", err)
+	}
+}
+
+func useContainerdForTest(t *testing.T) {
+	t.Helper()
+	initMu.Lock()
+	previous := currContainerProvider
+	currContainerProvider = containerProviderContainerd
+	initMu.Unlock()
+	t.Cleanup(func() { initMu.Lock(); currContainerProvider = previous; initMu.Unlock() })
+}
+
+func runningPodListForTest(ids ...string) corev1.PodList {
+	p := corev1.Pod{}
+	for _, id := range ids {
+		p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: id})
+		p.Status.ContainerStatuses = append(p.Status.ContainerStatuses, corev1.ContainerStatus{
+			Name: id, ContainerID: "containerd://" + id,
+			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		})
+	}
+	return corev1.PodList{Items: []corev1.Pod{p}}
+}
+
+func containerSourceForTest(items []corev1.Pod) *containerSource {
+	return &containerSource{
+		fetch: func(context.Context) (corev1.PodList, error) { return corev1.PodList{Items: items}, nil },
+		resolve: func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*podmodel.Pod, error) {
+			return containerPodForTest(id), nil
+		},
+	}
+}
+
+func TestContainerSourceScope(t *testing.T) {
+	useContainerdForTest(t)
+	first, waiting, sidecar, initID := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	list := runningPodListForTest(first, waiting)
+	list.Items[0].Status.ContainerStatuses[1].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}
+	always := corev1.ContainerRestartPolicyAlways
+	list.Items[0].Spec.InitContainers = []corev1.Container{{Name: sidecar, RestartPolicy: &always}, {Name: initID}}
+	list.Items[0].Status.InitContainerStatuses = runningPodListForTest(sidecar, initID).Items[0].Status.ContainerStatuses
+	list.Items[0].Status.EphemeralContainerStatuses = runningPodListForTest(strings.Repeat("e", 64)).Items[0].Status.ContainerStatuses
+	source := containerSourceForTest(list.Items)
+	counts := make(map[string]int)
+	source.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*podmodel.Pod, error) {
+		counts[id]++
+		return containerPodForTest(id), nil
+	}
+	for range 2 {
+		discovery, err := source.Discover(t.Context())
+		if err != nil || !discovery.Complete || len(discovery.Pods) != 2 || discovery.Pods[first] == nil || discovery.Pods[sidecar] == nil {
+			t.Errorf("running scope=%+v, err=%v", discovery, err)
+		}
+	}
+	if counts[first] != 2 || counts[sidecar] != 2 {
+		t.Errorf("source did not refresh every member: %v", counts)
+	}
+}
+
+func TestContainerSourceCancellation(t *testing.T) {
+	useContainerdForTest(t)
+	for _, phase := range []string{"fetch", "resolve"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			list := runningPodListForTest(strings.Repeat("a", 64))
+			source := containerSourceForTest(list.Items)
+			if phase == "fetch" {
+				source.fetch = func(context.Context) (corev1.PodList, error) { cancel(); return corev1.PodList{}, nil }
+			} else {
+				source.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*podmodel.Pod, error) {
+					cancel()
+					return nil, nil
+				}
+			}
+			discovery, err := source.Discover(ctx)
+			if !errors.Is(err, context.Canceled) || discovery.Complete || len(discovery.Pods) != 0 {
+				t.Errorf("canceled discovery=%+v err=%v", discovery, err)
+			}
+		})
+	}
+}
+
+// TestKubeletInitializationCancellation 验证 configz 请求继承取消信号，
+// 取消后不尝试本地配置兜底，不会将正常停止误判为配置缺失并 panic。
+func TestKubeletInitializationCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := kubeletConfigCacheMustUpdate(ctx, &Kubelet{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("config initialization cancellation=%v", err)
+	}
+}
+
+func TestNewSource(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		config            *Options
+		wantErr, disabled bool
+	}{
+		{name: "missing config", wantErr: true},
+		{name: "disabled", config: &Options{}, disabled: true},
+		{name: "authorized without certificate", config: &Options{PodAuthorizedPort: 10250}, wantErr: true},
+		{name: "readonly", config: &Options{PodReadOnlyPort: 10255, DockerAPIVersion: "1.43"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previousVersion := dockerAPIVersion
+			source, err := NewSource(test.config)
+			if (err != nil) != test.wantErr {
+				t.Errorf("constructor error=%v, want error=%t", err, test.wantErr)
+			}
+			if test.disabled && source != nil {
+				t.Error("zero kubelet ports created an enabled source")
+			}
+			if !test.wantErr && !test.disabled && (source == nil || source.Type() != podmodel.TypeContainer) {
+				t.Error("configured container source was not created")
+			}
+			if dockerAPIVersion != previousVersion {
+				t.Error("constructing a source started discovery or changed runtime settings")
+			}
+		})
+	}
+}
+
+func containerPodForTest(id string) *podmodel.Pod {
+	return &podmodel.Pod{
+		ID: id, Type: podmodel.TypeContainer, Name: id,
+		Cgroups:   podmodel.CgroupBinding{Unified: "/" + id},
+		Container: &podmodel.ContainerInfo{Type: podmodel.ContainerTypeNormal},
+		Labels:    map[string]any{podmodel.LabelHostNamespace: "default"},
+	}
+}
+
+type sourceFixture struct {
+	discover func(context.Context) (podmodel.Discovery, error)
+}
+
+func (*sourceFixture) Type() string { return podmodel.TypeContainer }
+func (s *sourceFixture) Discover(ctx context.Context) (podmodel.Discovery, error) {
+	return s.discover(ctx)
+}
+
+func startSourceForTest(t testing.TB, source podmodel.Source) {
+	t.Helper()
+	if err := podmodel.StartManager(source, podmodel.ManagerOptions{SyncInterval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(podmodel.ReleaseManager)
+}
+
+func waitContainerForTest(t testing.TB, id string) *podmodel.Container {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		container, err := podmodel.ContainerByID(id)
+		if err == nil && container != nil {
+			return container
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("container %q was not published", id)
+	return nil
+}
+
+func TestContainerSourceMetadataRecovery(t *testing.T) {
+	useContainerdForTest(t)
+	id := strings.Repeat("a", 64)
+	source := containerSourceForTest(runningPodListForTest(id).Items)
+	resolve := source.resolve
+	source.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*podmodel.Pod, error) {
+		return nil, errors.New("runtime unavailable")
+	}
+	for range 5 {
+		result, err := source.Discover(t.Context())
+		member, exists := result.Pods[id]
+		if err == nil || !result.Complete || !exists || member != nil {
+			t.Errorf("pending member=%+v error=%v", result, err)
+		}
+	}
+	source.resolve = resolve
+	result, err := source.Discover(t.Context())
+	if err != nil || result.Pods[id] == nil {
+		t.Errorf("source did not recover: %+v, %v", result, err)
+	}
+}
+
+func TestContainerSourceIncompleteList(t *testing.T) {
+	useContainerdForTest(t)
+	id, fresh := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	for _, reason := range []string{"duplicate", "cross pod duplicate", "missing spec", "invalid ID", "query failure"} {
+		t.Run(reason, func(t *testing.T) {
+			list := runningPodListForTest(id, fresh)
+			switch reason {
+			case "duplicate":
+				list = runningPodListForTest(id, id, fresh)
+			case "cross pod duplicate":
+				list.Items = append(list.Items, runningPodListForTest(id).Items...)
+			case "missing spec":
+				list.Items[0].Spec.Containers = list.Items[0].Spec.Containers[1:]
+			case "invalid ID":
+				list.Items[0].Status.ContainerStatuses[0].ContainerID = "containerd://invalid"
+			}
+			source := containerSourceForTest(list.Items)
+			if reason == "query failure" {
+				source.fetch = func(context.Context) (corev1.PodList, error) {
+					return corev1.PodList{}, errors.New("kubelet unavailable")
+				}
+			}
+			result, err := source.Discover(t.Context())
+			if err == nil || result.Complete || result.Pods[id] != nil {
+				t.Errorf("incomplete result=%+v err=%v", result, err)
+			}
+			if reason != "query failure" && result.Pods[fresh] == nil {
+				t.Error("valid member was lost")
+			}
+		})
+	}
+}
+
+func BenchmarkContainerSourceDiscovery(b *testing.B) {
+	previous := currContainerProvider
+	currContainerProvider = containerProviderContainerd
+	b.Cleanup(func() { currContainerProvider = previous })
+	for _, size := range []int{1, 1024} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			ids := make([]string, size)
+			for i := range ids {
+				ids[i] = fmt.Sprintf("%064x", i)
+			}
+			source := containerSourceForTest(runningPodListForTest(ids...).Items)
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := source.Discover(b.Context()); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

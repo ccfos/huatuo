@@ -438,11 +438,11 @@ func TestGuestContainerReference(t *testing.T) {
 			t.Cleanup(func() { containerView = previous })
 			containerView.commit(snap, nil)
 			ref := containerView.records[guestCheckoutID].ref
-			if err := ValidateContainerRef(ref); err != nil {
+			if err := ValidateContainerResources(ref); err != nil {
 				t.Errorf("Guest validation contacted host runtime or lost binding: %v", err)
 			}
 			guestProc(t, s, 150, 1, 101, membership)
-			if err := ValidateContainerRef(ref); err == nil {
+			if err := ValidateContainerResources(ref); err == nil {
 				t.Error("reused process accepted")
 			}
 		})
@@ -636,7 +636,7 @@ func TestGuestReferenceMembershipAndDirectory(t *testing.T) {
 			t.Cleanup(func() { containerView = previous })
 			containerView.commit(snapshot, nil)
 			ref := containerView.records[guestCheckoutID].ref
-			if err := ValidateContainerRef(ref); err != nil {
+			if err := ValidateContainerResources(ref); err != nil {
 				t.Fatal(err)
 			}
 			switch change {
@@ -655,7 +655,7 @@ func TestGuestReferenceMembershipAndDirectory(t *testing.T) {
 				guestDirectory(t, scanner.options.CgroupRoot, "memory/other/"+guestCheckoutID)
 				guestProc(t, scanner, 150, 1, 100, strings.ReplaceAll(membership, memory, "/../"+guestCheckoutID))
 			}
-			if err := ValidateContainerRef(ref); err == nil {
+			if err := ValidateContainerResources(ref); err == nil {
 				t.Error("changed Guest binding was accepted")
 			}
 		})

@@ -326,11 +326,11 @@ func (p *Pod) copyMetadata() *Pod {
 // containerFromWorkload builds the existing external shape from common metadata.
 // Binding readiness controls CSS; missing process/netns targets stay unavailable.
 func containerFromWorkload(discovered, bound *Pod) *Container {
-	if bound.Container == nil || (isKataRuntime(bound.Container.RuntimeType) && bound.Container.SandboxID == "") {
+	if bound.Container == nil || (IsKataRuntime(bound.Container.RuntimeType) && bound.Container.SandboxID == "") {
 		return nil
 	}
 	// Legacy document and metric builders require a string namespace label.
-	if _, ok := bound.Labels[labelHostNamespace].(string); !ok {
+	if _, ok := bound.Labels[LabelHostNamespace].(string); !ok {
 		return nil
 	}
 	container := &Container{

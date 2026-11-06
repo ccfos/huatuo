@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/core/autotracing"
@@ -160,7 +162,7 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		return fmt.Errorf("initialize BPF: %w", err)
 	}
 	defer bpf.Shutdown()
-	source, err := pod.NewContainerSource(&pod.ContainerSourceOptions{
+	source, err := containerdiscovery.NewSource(&containerdiscovery.Options{
 		PodReadOnlyPort:   config.Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort: config.Pod.KubeletAuthorizedPort,
 		PodClientCertPath: config.Pod.KubeletClientCertPath,

@@ -136,7 +136,7 @@ func TestGuestSourceKernelLifecycle(t *testing.T) {
 			t.Errorf("%s path=%q available=%t, want %q", controller, got, available, membership)
 		}
 	}
-	if err := ValidateContainerRef(record.ref); err != nil {
+	if err := ValidateContainerResources(record.ref); err != nil {
 		t.Errorf("validate Guest kernel binding: %v", err)
 	}
 	record.pod.lifeResources["baseline"] = uint64(6400)
@@ -151,7 +151,7 @@ func TestGuestSourceKernelLifecycle(t *testing.T) {
 	if len(store.records) != 0 {
 		t.Error("complete discovery retained the exited Guest process")
 	}
-	if err := ValidateContainerRef(record.ref); err == nil {
+	if err := ValidateContainerResources(record.ref); err == nil {
 		t.Error("deleted Guest reference remains valid")
 	}
 }

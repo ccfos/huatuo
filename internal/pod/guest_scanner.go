@@ -330,7 +330,7 @@ func (s *guestScanner) resolve(ctx context.Context, process *guestProcess) (*Pod
 	case strings.Contains(cpu, "kubepods"):
 		qos = corev1.PodQOSGuaranteed
 	}
-	level, _ := parseContainerQos(ContainerTypeNormal, &corev1.Pod{Status: corev1.PodStatus{QOSClass: qos}})
+	level := ParseContainerQos(string(qos))
 	locations := *process.cgroups
 	locations.Controllers = maps.Clone(locations.Controllers)
 	if legacy {
@@ -368,7 +368,7 @@ func (s *guestScanner) resolve(ctx context.Context, process *guestProcess) (*Pod
 	return &Pod{
 		ID: process.containerID, Type: TypeContainer, Name: process.containerID[:12],
 		Cgroups: locations, Process: &HostProcess{PID: process.pid}, StartedAt: time.Now(),
-		Labels: map[string]any{labelHostNamespace: s.options.PodNamespace},
+		Labels: map[string]any{LabelHostNamespace: s.options.PodNamespace},
 		Container: &ContainerInfo{
 			Hostname: s.options.PodName, Type: ContainerTypeNormal, Qos: level,
 			Guest: true, CgroupPath: cpu, MemoryCgroupPath: memory,
