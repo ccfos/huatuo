@@ -202,6 +202,11 @@ sudo _output/bin/profiler \
 
 C、C++ 和 Go 均使用原生 eBPF 采集器，命令只需替换 `--language`。on-CPU 模式按采样频率将样本折算为 CPU 时间，同时包含可解析的用户态栈和内核态栈。
 
+Go CPU 采样支持内部及外部链接的普通和 PIE 二进制。使用 `-ldflags="-s -w"` 去除 ELF 符号后，
+仍可利用保留的 Go 元数据解析函数名。无法可靠确定函数地址范围时保留未解析地址，不猜测函数名。
+用户态调用链依赖帧指针；内联或无栈帧的函数可能不会完整出现在结果中。
+`--thread-group` 包含同一进程的操作系统线程，不提供 goroutine ID 归因。
+
 ```bash
 sudo _output/bin/profiler \
   --type cpu \

@@ -16,23 +16,20 @@ package memsnapshot
 
 import (
 	"debug/elf"
-	"errors"
-	"os"
+	"fmt"
+
+	"github.com/ccfos/huatuo/internal/elfmapping"
 )
 
-// FindELFLoadBias tries load segments in ELF order because the first segment
-// may not have a matching process mapping.
+// FindELFLoadBias uses the selected device/inode-verified mapping so separate
+// loads of the same file cannot borrow each other's relocation.
 func FindELFLoadBias(file *elf.File, mappings []ProcMap, target *ProcMap) (uint64, error) {
-	pageSize := uint64(os.Getpagesize())
-	for _, program := range file.Progs {
-		if program.Type != elf.PT_LOAD {
-			continue
-		}
-		loadOffset := program.Off &^ (pageSize - 1)
-		loadAddress := program.Vaddr &^ (pageSize - 1)
-		if bias, err := FindLoadBias(mappings, target, loadOffset, loadAddress); err == nil {
-			return bias, nil
+	for index := range mappings {
+		mapping := &mappings[index]
+		if mapping.Start == target.Start && mapping.Offset == target.Offset && mapping.Inode == target.Inode &&
+			mapping.DevMajor == target.DevMajor && mapping.DevMinor == target.DevMinor {
+			return elfmapping.LoadBias(elfmapping.LoadSegments(file), target.Start, target.Offset, elfmapping.MappingFlags(target.Perms))
 		}
 	}
-	return 0, errors.New("ELF load bias not found")
+	return 0, fmt.Errorf("ELF mapping %#x at offset %#x has no matching device/inode identity", target.Start, target.Offset)
 }
