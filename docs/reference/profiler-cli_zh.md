@@ -37,6 +37,9 @@ weight: 6
 
 ## 采集参数
 
+原生 on-CPU 和内存采集要求内核支持 `MEMBARRIER_CMD_GLOBAL`（启用 `CONFIG_MEMBARRIER` 且未启用 full dynticks（`NO_HZ_FULL`）模式）。ring 切换依赖该命令在 Linux 4.18 中提供 sched-RCU grace period、在 Linux 5.0 及之后提供统一 RCU grace period；不能替换为 expedited membarrier 命令。RCU stall 可能延迟切换和采集结束。
+
+
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
