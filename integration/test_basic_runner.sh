@@ -947,7 +947,12 @@ EOF
 	namespace=$(< "${RUNNER_FIXTURE}/timeout-namespace")
 	namespace=${namespace#*[}
 	namespace=${namespace%]}
-	! lsns -t pid -n -o NS | awk -v ns="$namespace" '$1 == ns {found=1} END {exit !found}' \
+	# Older unshare exits before the kernel finishes tearing down the child namespace.
+	# Keep a bounded check so a live descendant still fails the regression.
+	pid_namespace_exited() {
+		! lsns -t pid -n -o NS | awk -v ns="$namespace" '$1 == ns {found=1} END {exit !found}'
+	}
+	wait_until 5 0.05 pid_namespace_exited \
 		|| fatal "timed-out fixture left processes in PID namespace ${namespace}"
 )
 
