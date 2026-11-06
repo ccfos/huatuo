@@ -47,6 +47,7 @@ declare -A runner_test_groups=(
 	["integration/test_metrics_exclude_filter.sh"]=independent
 	["integration/test_metrics_include_filter.sh"]=independent
 	["integration/test_metrics_memory_host.sh"]=independent
+	["integration/test_metrics_netdev_qdisc.sh"]=independent
 	["integration/test_node_cloud_events_api.sh"]=independent
 	["integration/test_node_config_api.sh"]=independent
 	["integration/test_profiler_config.sh"]=independent
@@ -73,6 +74,7 @@ declare -A runner_test_groups=(
 
 # Execution isolation is independent of scheduling/resource exclusion.
 declare -A runner_test_namespaces=(
+	["integration/test_metrics_netdev_qdisc.sh"]="mount net"
 	["integration/test_events_netdev_events.sh"]="mount net"
 	["integration/test_events_netdev_bonding_lacp.sh"]="mount net"
 	["integration/test_events_net_rx_latency.sh"]="mount net"
