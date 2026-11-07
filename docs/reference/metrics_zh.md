@@ -143,6 +143,10 @@ CPU 文件指标不要求代表 PID、网络或 CSS。v1 分别使用已绑定�
 | `loadavg_load15` | 系统过去 15 分钟的平均负载 | 任务数 | 宿主机 | — | — |
 | `loadavg_container_nr_running` | 当前可运行任务数（含正在运行和等待 CPU 的任务） | 计数 | 容器 | — | 只支持 cgroup v1 |
 | `loadavg_container_nr_uninterruptible` | 容器中不可中断任务的数量 | 计数 | 容器 | — | 只支持 cgroup v1 |
+| `loadavg_workload_nr_running` | 沙箱当前可运行任务数 | 计数 | 沙箱 Host | workload 公共标签 | 仅 legacy v1 与 TASKSTATS 可用时 |
+| `loadavg_workload_nr_uninterruptible` | 沙箱当前不可中断任务数 | 计数 | 沙箱 Host | workload 公共标签 | 同上 |
+
+负载采集使用已绑定的 v1 CPU 目录，不要求代表 PID、netns 或 CSS；目录缺失或内核查询失败时只跳过该对象，宿主机平均负载仍继续输出。保持原先仅在 legacy cgroup 模式启用对象负载的限制，v2/hybrid 不新增支持。容器标签和 normal/sidecar 选择保持不变。沙箱条目描述公共采集能力，生产 CubeSandbox 来源仍待后续接入。
 
 ## 内存
 

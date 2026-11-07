@@ -16,7 +16,6 @@ package collector
 
 import (
 	"github.com/ccfos/huatuo/internal/cgroups"
-	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -60,29 +59,40 @@ func nodeLoadAvg() ([]*metric.Data, error) {
 	}, nil
 }
 
-func containerLoadavg() ([]*metric.Data, error) {
+func workloadLoadavg() ([]*metric.Data, error) {
 	n, err := netlink.New()
 	if err != nil {
 		return nil, err
 	}
 	defer n.Stop()
 
-	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
+	workloads, err := pod.Pods()
 	if err != nil {
 		return nil, err
 	}
 
 	loadavgs := []*metric.Data{}
-	for _, container := range containers {
-		stats, err := n.GetCpuLoad(container.Hostname, paths.Path(subsystem.SubsystemCPU, container.CgroupPath))
+	for _, workload := range workloads {
+		if !isCPUWorkload(workload) {
+			continue
+		}
+		// TASKSTATS cgroup load requires a v1 CPU hierarchy.
+		if _, legacy := workload.Cgroups.Controllers[subsystem.SubsystemCPU]; !legacy {
+			continue
+		}
+		directory, err := workload.Cgroups.Directory(subsystem.SubsystemCPU)
+		if err != nil {
+			continue
+		}
+		stats, err := n.GetCpuLoad(workload.Name, directory)
 		if err != nil {
 			continue
 		}
 
 		loadavgs = append(loadavgs,
-			metric.NewContainerGaugeData(container,
+			metric.NewPodGaugeData(workload,
 				"nr_running", float64(stats.NrRunning), "nr_running of container", nil),
-			metric.NewContainerGaugeData(container,
+			metric.NewPodGaugeData(workload,
 				"nr_uninterruptible", float64(stats.NrUninterruptible), "nr_uninterruptible of container", nil))
 	}
 
@@ -94,8 +104,8 @@ func (c *loadavgCollector) Update() ([]*metric.Data, error) {
 
 	if cgroups.CgroupMode() == cgroups.Legacy {
 		// continue for node loadavg if err
-		if containersLoads, err := containerLoadavg(); err == nil {
-			loadavgs = append(loadavgs, containersLoads...)
+		if workloadLoads, err := workloadLoadavg(); err == nil {
+			loadavgs = append(loadavgs, workloadLoads...)
 		}
 	}
 

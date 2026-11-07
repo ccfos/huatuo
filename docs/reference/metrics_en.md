@@ -148,6 +148,10 @@ Hosts report 1-, 5-, and 15-minute load averages. Containers report current runn
 | `loadavg_load15` | System load average over the past 15 minutes | Tasks | Host | — | — |
 | `loadavg_container_nr_running` | Current runnable tasks, including running tasks and tasks waiting for CPU | Count | Container | — | cgroup v1 only |
 | `loadavg_container_nr_uninterruptible` | Uninterruptible tasks in the container | Count | Container | — | cgroup v1 only |
+| `loadavg_workload_nr_running` | Current runnable tasks in the sandbox | Count | Sandbox Host | Common workload labels | Requires legacy v1 and TASKSTATS |
+| `loadavg_workload_nr_uninterruptible` | Current uninterruptible tasks in the sandbox | Count | Sandbox Host | Common workload labels | Same requirement |
+
+Workload load uses the bound v1 CPU directory without a representative PID, netns or CSS. Missing directories or failed kernel queries skip only that workload; host load averages remain available. The existing legacy-only mode restriction is retained, with no new v2/hybrid support. Container labels and normal/sidecar selection remain unchanged. Sandbox entries describe the common collector capability; the production CubeSandbox source is still pending.
 
 ## Memory
 

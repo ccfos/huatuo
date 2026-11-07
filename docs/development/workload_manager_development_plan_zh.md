@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–07 已完成；下一步为 08（其余资源采集器逐项迁移）。CubeSandbox 发现来源及生产采集配置尚未开放。
+当前进度：步骤 00–07 已完成；步骤 08 进行中，已迁移 loadavg，其余 BPF、IO、网络采集器继续逐项处理。CubeSandbox 发现来源及生产采集配置尚未开放。
 
 ## 开发与提交原则
 
@@ -839,6 +839,16 @@ metrics race、v1/v2 memory-only 文件集成和 unified 根目录能力检查�
 测试改为打开原目录并通过 `/proc/<测试进程>/fd/<目录句柄>` 保持未替换文件可读，不再增加可被发现的 cgroup 挂载。v1 保留控制器根目录，v2 保留目标 cgroup 目录；退出时关闭句柄。生产资源解析与指标逻辑不变。
 
 从原 shell 用例抽取挂载步骤，用真实 Source/Manager 读取 memory.stat 的独立复现，在 172.16.135.140 的 v1 环境先得到 `pgfault=0`（期望 31），修改后得到 31；172.16.134.96 的真实 v2 环境同样得到 31。操作位于私有 mount namespace，只创建并清理空测试 cgroup，不迁移已有进程。shell 语法及提交前 `make check` 通过。两台开发机无本用例所需的 Kubernetes 环境，完整 Pod 集成回归以推送后的 QEMU CI 为准；Rocky8 runner 问题仍单独跟踪。
+
+### 步骤 08a：loadavg 按 CPU 绑定采集
+
+`system_loadavg.go` 使用公共 Pod 查询、已有 CPU 对象筛选和已验证的 v1 CPU 目录调用 TASKSTATS，输出 workload 指标。保持容器 normal/sidecar、QoS 与 Kata 身份要求，原指标名、标签与值不变；沙箱不依赖 ContainerInfo、代表 PID、netns 或 CSS。保留原 legacy cgroup 模式限制，不新增 v2/hybrid 对象负载能力。目录缺失或内核调用不支持时跳过对象，宿主机 `/proc/loadavg` 继续采集；不新增接口、后台任务或实例状态。
+
+`loadavg_workload_integration_test.go` 经真实 Source/Manager、v1 cgroup 及 TASKSTATS 验证：仅将测试自身的忙循环进程放入空 CPU cgroup，读取非零可运行任务数，退出后归零，删除后不再输出对象指标；同时覆盖普通容器、sidecar、Kata 元数据、两类 cgroup-only 沙箱、DaemonSet 排除、完整标签兼容，以及 unified/缺失 CPU/普通文件目录不可采集。测试自动终止进程并删除 cgroup，未操作已有业务进程；这不是实际 Kata/CubeSandbox VM 验收。
+
+172.16.135.140 上 metrics race 与上述真实 v1 集成通过；172.16.134.96 上验证 v2 仅输出宿主机负载。旧、新容器采集循环各三次 benchmark 中位数为 50979 → 53068 ns/op（约 +4.1%）、6824 → 6920 B/op、71 → 69 allocs/op，增加目录存在性检查，不访问发现来源。完整构建、全量单测及提交前 `make check` 纳入本次检查；日志位于 `rebase-20261106/logs/step08-loadavg-*`。
+
+步骤 08 尚未完成：runqlat、memory_reclaim、IO 和网络仍按清单逐项迁移。CubeSandbox 生产来源尚未开放。
 
 ## 后续统一事项
 
