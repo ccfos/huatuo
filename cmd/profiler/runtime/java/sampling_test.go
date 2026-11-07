@@ -126,7 +126,7 @@ func TestStopWithOutputArgsBuildsCollapsedOutputCommand(t *testing.T) {
 	)
 	want := []string{
 		"stop",
-		"--libpath", "/tmp/libasyncProfiler.so",
+		"--libpath", "/tmp/libasyncProfiler-session123.so",
 		"-o", "collapsed,dot",
 		"-f", "/tmp/huatuo-asprof-session123-mem-1234-4.collapsed",
 		"--total",
@@ -142,7 +142,7 @@ func TestStopJavaProfilerCleansDeployment(t *testing.T) {
 	toolPath := t.TempDir()
 	writeAgentSource(t, toolPath, []byte("agent"), 0o600)
 	directory := t.TempDir()
-	installed, err := installJavaAgents(toolPath, []string{directory})
+	installed, err := installJavaAgents(toolPath, []string{directory}, "test-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,14 +152,14 @@ func TestStopJavaProfilerCleansDeployment(t *testing.T) {
 		}
 	})
 	// Startup failure and normal shutdown share this cleanup without active PIDs.
-	opt := &AsprofSamplingOption{agentDirectories: installed}
+	opt := &AsprofSamplingOption{agentDirectories: installed, SessionID: "test-session"}
 	if err := StopJavaProfiler(opt); err != nil {
 		t.Fatal(err)
 	}
 	if opt.agentDirectories != nil {
 		t.Fatal("stopped session retains deployment handles")
 	}
-	if _, err := os.Stat(filepath.Join(directory, "libasyncProfiler.so")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(directory, "libasyncProfiler-test-session.so")); !os.IsNotExist(err) {
 		t.Fatalf("agent remains after stop: %v", err)
 	}
 	if _, err := installed[0].Stat(); err == nil {
