@@ -113,7 +113,10 @@ func setupLogging(opts loggingOptions) (io.Closer, error) {
 		return nil, fmt.Errorf("close log file %q after validation: %w", opts.file, err)
 	}
 
-	rotator := filerotate.NewFileRotator(opts.file, 1, opts.size)
+	rotator, err := filerotate.NewFileRotator(opts.file, 1, opts.size)
+	if err != nil {
+		return nil, fmt.Errorf("create log rotator %q: %w", opts.file, err)
+	}
 	log.SetOutput(rotator)
 	return rotator, nil
 }
