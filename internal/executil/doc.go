@@ -72,8 +72,9 @@
 // Memfd limits bound reads, not file growth. Borrowed writers and ExtraFiles
 // remain caller-owned.
 //
-// The leader's exit ends the command lifetime. Remaining group members are
-// killed before reaping the leader to prevent signaling a reused PID. Descendants
-// that leave the group are outside this boundary. Inherited output pipes have a
-// one-second drain timeout, with the standard os/exec ErrWaitDelay semantics.
+// On natural leader exit, remaining group members are killed before reaping
+// the leader to prevent signaling a reused PID. An active Stop gives group
+// members its remaining grace period first. Descendants that leave the group
+// are outside this boundary. Inherited output pipes have a one-second drain
+// timeout, with the standard os/exec ErrWaitDelay semantics.
 package executil
