@@ -832,6 +832,14 @@ metrics race、v1/v2 memory-only 文件集成和 unified 根目录能力检查�
 
 步骤 07 的三个文件采集器已分别完成迁移。下一步 08 按采集器迁移剩余 BPF、IO、网络等资源访问；实际 CubeSandbox 来源和生产开关仍待后续步骤，未增加沙箱 Guest 指标。
 
+### 步骤 07 后续：修正内存集成测试挂载夹具
+
+2026-11-07 检查 `2542a2c1` 的 CI：构建、lint 通过，四个 QEMU 发行版在 `test_metrics_memory_container.sh` 的确定性文件阶段失败；Rocky8 更早在既有 runner 超时清理用例失败。内存用例额外挂载 `original-memory` 保存原文件，公共 Manager 合法地从该 cgroup 别名绑定资源，绕过了另一挂载点上的测试数据。实际采集得到原始 memory.stat，而非预设值。
+
+测试改为打开原目录并通过 `/proc/<测试进程>/fd/<目录句柄>` 保持未替换文件可读，不再增加可被发现的 cgroup 挂载。v1 保留控制器根目录，v2 保留目标 cgroup 目录；退出时关闭句柄。生产资源解析与指标逻辑不变。
+
+从原 shell 用例抽取挂载步骤，用真实 Source/Manager 读取 memory.stat 的独立复现，在 172.16.135.140 的 v1 环境先得到 `pgfault=0`（期望 31），修改后得到 31；172.16.134.96 的真实 v2 环境同样得到 31。操作位于私有 mount namespace，只创建并清理空测试 cgroup，不迁移已有进程。shell 语法及提交前 `make check` 通过。两台开发机无本用例所需的 Kubernetes 环境，完整 Pod 集成回归以推送后的 QEMU CI 为准；Rocky8 runner 问题仍单独跟踪。
+
 ## 后续统一事项
 
 - [ ] **统一 workload 过滤配置命名与语义**：当前 vmstat 暂时复用 `IncludedOnContainer` / `ExcludedOnContainer`，这项兼容处理不等于统一工作已完成。后续另行确定统一名称、作用范围、新旧字段并存规则、旧配置迁移和弃用安排，并补齐兼容测试；完成前保留旧字段行为。该事项不阻塞本版资源采集迁移，详见方案中的“过滤配置的兼容与后续统一”。
