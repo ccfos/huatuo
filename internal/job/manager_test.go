@@ -34,9 +34,10 @@ import (
 type memoryStore struct {
 	mu sync.Mutex
 
-	jobs     map[string]*Job
-	saves    []*Job
-	saveHook func(*Job, int64) error
+	jobs       map[string]*Job
+	saves      []*Job
+	saveHook   func(*Job, int64) error
+	deleteHook func(time.Time, int) (int64, error)
 }
 
 func newMemoryStore(jobs ...*Job) *memoryStore {
@@ -121,7 +122,13 @@ func (s *memoryStore) List(_ context.Context, query *Query) ([]*Job, error) {
 	return jobs[start:end], nil
 }
 
-func (s *memoryStore) DeleteTerminalBefore(context.Context, time.Time, int) (int64, error) {
+func (s *memoryStore) DeleteTerminalBefore(_ context.Context, endedBefore time.Time, limit int) (int64, error) {
+	s.mu.Lock()
+	hook := s.deleteHook
+	s.mu.Unlock()
+	if hook != nil {
+		return hook(endedBefore, limit)
+	}
 	return 0, nil
 }
 
@@ -474,5 +481,146 @@ func TestManagerListPageZeroDoesNotReadProbe(t *testing.T) {
 	page, err := manager.ListPage(t.Context(), &Query{Limit: 0})
 	if !errors.Is(err, ErrInvalidQuery) || page != nil || store.pages != 0 {
 		t.Fatalf("page=%+v error=%v reads=%d", page, err, store.pages)
+	}
+}
+
+func TestManagerDrainTerminalBeforeEmptiesBacklog(t *testing.T) {
+	store := newMemoryStore()
+	const backlog = jobBatchSize*2 + 250
+	remaining := backlog
+
+	var calls int
+	var gotEnds []time.Time
+	var gotLimits []int
+
+	endedBefore := time.Now()
+	store.deleteHook = func(end time.Time, limit int) (int64, error) {
+		calls++
+		gotEnds = append(gotEnds, end)
+		gotLimits = append(gotLimits, limit)
+
+		deleted := min(remaining, jobBatchSize)
+		remaining -= deleted
+
+		return int64(deleted), nil
+	}
+
+	manager := testManager(store, &stubNodeClient{})
+	if err := manager.drainTerminalBefore(t.Context(), endedBefore); err != nil {
+		t.Fatalf("drainTerminalBefore() error = %v", err)
+	}
+
+	if remaining != 0 {
+		t.Fatalf("remaining backlog = %d, want 0", remaining)
+	}
+
+	if calls != 3 {
+		t.Fatalf("delete calls = %d, want 3", calls)
+	}
+
+	for i := range gotLimits {
+		if gotLimits[i] != jobBatchSize {
+			t.Fatalf("batch %d limit = %d, want %d", i, gotLimits[i], jobBatchSize)
+		}
+
+		if !gotEnds[i].Equal(endedBefore) {
+			t.Fatalf("batch %d endedBefore = %v, want %v", i, gotEnds[i], endedBefore)
+		}
+	}
+}
+
+func TestManagerDrainTerminalBeforeStopsOnEmptyPage(t *testing.T) {
+	store := newMemoryStore()
+
+	var calls int
+	var gotLimit int
+	endedBefore := time.Now()
+
+	store.deleteHook = func(end time.Time, limit int) (int64, error) {
+		calls++
+		gotLimit = limit
+
+		if !end.Equal(endedBefore) {
+			t.Fatalf("endedBefore = %v, want %v", end, endedBefore)
+		}
+
+		return 0, nil
+	}
+
+	manager := testManager(store, &stubNodeClient{})
+	if err := manager.drainTerminalBefore(t.Context(), endedBefore); err != nil {
+		t.Fatalf("drainTerminalBefore() error = %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("delete calls = %d, want 1 for an already empty backlog", calls)
+	}
+
+	if gotLimit != jobBatchSize {
+		t.Fatalf("limit = %d, want %d", gotLimit, jobBatchSize)
+	}
+}
+
+func TestManagerDrainTerminalBeforeStopsOnError(t *testing.T) {
+	store := newMemoryStore()
+	boom := errors.New("storage unavailable")
+
+	var calls int
+	endedBefore := time.Now()
+
+	store.deleteHook = func(end time.Time, limit int) (int64, error) {
+		calls++
+
+		if limit != jobBatchSize {
+			t.Fatalf("limit = %d, want %d", limit, jobBatchSize)
+		}
+
+		if !end.Equal(endedBefore) {
+			t.Fatalf("endedBefore = %v, want %v", end, endedBefore)
+		}
+
+		return 0, boom
+	}
+
+	manager := testManager(store, &stubNodeClient{})
+	if err := manager.drainTerminalBefore(t.Context(), endedBefore); !errors.Is(err, boom) {
+		t.Fatalf("drainTerminalBefore() error = %v, want %v", err, boom)
+	}
+
+	if calls != 1 {
+		t.Fatalf("delete calls = %d, want 1", calls)
+	}
+}
+
+func TestManagerDrainTerminalBeforeHonorsCancellation(t *testing.T) {
+	store := newMemoryStore()
+	ctx, cancel := context.WithCancel(t.Context())
+
+	var calls int
+	endedBefore := time.Now()
+
+	store.deleteHook = func(end time.Time, limit int) (int64, error) {
+		calls++
+
+		if limit != jobBatchSize {
+			t.Fatalf("limit = %d, want %d", limit, jobBatchSize)
+		}
+
+		if !end.Equal(endedBefore) {
+			t.Fatalf("endedBefore = %v, want %v", end, endedBefore)
+		}
+
+		cancel()
+
+		return jobBatchSize, nil
+	}
+
+	manager := testManager(store, &stubNodeClient{})
+	if err := manager.drainTerminalBefore(ctx, endedBefore); !errors.Is(err, context.Canceled) {
+		t.Fatalf("drainTerminalBefore() error = %v, want context.Canceled", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("delete calls = %d, want 1", calls)
 	}
 }
