@@ -196,7 +196,8 @@ func resolveIOCostKallsyms(
 	throttle := ranges[ioCostThrottleCaller]
 	if throttle.End == 0 {
 		return nil, fmt.Errorf(
-			"required kernel text range %s is unavailable", ioCostThrottleCaller)
+			"required kernel text range %s is unavailable", ioCostThrottleCaller,
+		)
 	}
 	overBudget := ranges[ioCostOverBudgetCaller]
 	if overBudget.Start != 0 && overBudget.End == 0 {

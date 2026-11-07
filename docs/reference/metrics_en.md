@@ -27,6 +27,34 @@ huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg"
 
 This example shows host and container scheduling-latency bucket counts. The `zone` ranges are listed below.
 
+## Build Information
+
+`huatuo_bamai_build_info` and `huatuo_apiserver_build_info` are Gauges with a
+constant value of `1`, describing the running bamai and apiserver builds
+respectively. Each is exposed by its application’s `/metrics` endpoint and
+uses the same build information as that application’s `/version` endpoint.
+They carry the existing `host` and `region` labels (empty for apiserver) and
+these build labels:
+
+| Label | Meaning |
+| --- | --- |
+| `name` | Application name, matching `name` in `/version` |
+| `version` | Application release version, matching `version` in `/version` |
+| `git_commit` | Build Git identifier, matching `git_commit` in `/version`; not necessarily a full SHA |
+| `git_tree_state` | Build working-tree state: `clean`, `dirty`, or `unknown` |
+| `build_time` | Timestamp from `/version`: injected build time, falling back to VCS commit time or `(devel)` |
+| `go_version` | Go toolchain version used to build the application |
+| `compiler` | Go compiler, such as `gc` |
+| `platform` | Operating system and architecture, such as `linux/amd64` |
+
+When no release version is supplied, `version` uses `(devel)`. `git_commit`
+uses the injected identifier first, then the VCS revision from Go build information,
+and falls back to `(devel)` when neither is available.
+Build labels apply only to this metric; business metric labels remain unchanged.
+After scraping, join build information with business metrics using the same
+`job` and `instance`. Cross-cluster queries must also include the labels that
+distinguish targets between clusters.
+
 ## CPU
 
 ### Scheduling Latency
@@ -242,6 +270,27 @@ Shows free block counts by NUMA node, memory zone, and order. `order=n` means ea
 | --- | --- | --- | --- | --- | --- |
 | `memory_buddyinfo_blocks` | Free blocks for the specified NUMA node, zone, and order | Blocks | Host | procfs | node, order, zone |
 
+<a id="add-container-reclaim-and-compaction-stall-times"></a>
+
+### Container reclaim and compaction stall times
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|Container task time in direct compaction| milliseconds|Container| eBPF | same container labels|
+
+These cumulative Gauge values measure task time in global direct reclaim and compaction. Host totals include container work. Missing or ambiguous container records are omitted; container collection failures preserve host output. Loading requires the container probes; a load or attachment failure disables this collector. Container recreation starts a new container total without resetting the host total. BPF reload resets both.
+
+<a id="add-a-host-wide-memcg-reclaim-count"></a>
+
+### Host-wide memcg reclaim count
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|memory_reclaim_directstall|Cumulative host-wide memcg limit reclaim events| count| Host| eBPF | host, region|
+
+This Gauge counts host-wide memcg reclaim events, excluding kswapd; it is not a global reclaim count or duration. Host totals include container activity and must not be added to container counts. BPF reload resets the total.
+
 ## Network
 
 ### TCP Memory
@@ -295,6 +344,12 @@ Counts receive-side hardware drops for supported NIC drivers. It prefers `rx_mis
 | Metric | Description | Unit | Scope | Source | Additional Labels |
 | --- | --- | --- | --- | --- | --- |
 | `netdev_hw_rx_dropped_total` | Cumulative receive-side hardware drops | Count | Host | sysfs, eBPF | device, driver |
+
+### RDMA Port Statistics
+
+`netdev_rdma_link_<counter>` exposes per-port kernel counters; available names depend on the driver. Additional labels are `device`, `nodeguid`, `index`, `num_ports`, and `port`.
+
+The new `port` label creates new time series, including on single-port devices. Keep it for port-level queries. For a selected counter, use `sum by (region, host, device) (<metric>)` for device totals, or `sum by (region, host, device) (rate(<metric>[5m]))` for device rates; replace `<metric>` with the full metric name. Grouping only by `device` mixes identically named devices across hosts.
 
 ### NIC Statistics
 
@@ -571,7 +626,7 @@ seconds of waiting, between successful collections. For example, 10,240 waits
 for one series, each lasting 270 seconds and settled on that CPU in the same
 interval, exceed the wait-time capacity.
 
-IOCOST requires a non-PREEMPT_RT Linux x86_64 kernel with IOCOST functions,
+IOCOST requires a non-PREEMPT_RT Linux kernel with IOCOST functions,
 BPF/BTF, and kprobes.
 
 ### Device health
@@ -694,6 +749,14 @@ Records hung-task events detected by the kernel.
 | Metric | Description | Unit | Scope | Source | Additional Labels |
 | --- | --- | --- | --- | --- | --- |
 | `hungtask_total` | System hung-task event count | Count | Host | eBPF | — |
+
+### attribute hungtask events and counts to containers
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|hungtask_container_total|Events attributed to blocked container tasks|count|Container|BPF + CSS cache|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+Container counts are included in the host Counter and are independent of trace backoff. Events with unresolved container attribution still contribute to the host count. Container exit removes its count; agent restart resets counts. Repeated reports of the same blocked task count as separate events.
 
 ## GPU
 

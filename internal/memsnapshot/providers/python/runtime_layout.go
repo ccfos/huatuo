@@ -34,18 +34,19 @@ const (
 )
 
 type runtimeLayout struct {
-	interpreterMode     interpreterLayout
-	runtimeHeadOffset   uint64
-	interpreterGCOffset uint64
-	debugInterpreterGC  uint64
-	debugObjectType     uint64
-	debugTypeName       uint64
-	debugTypeFlags      uint64
-	objectTypeOffset    uint64
-	objectSizeOffset    uint64
-	typeNameOffset      uint64
-	typeFlagsOffset     uint64
-	unicodeDataOffset   uint64
+	interpreterMode          interpreterLayout
+	runtimeHeadOffset        uint64
+	interpreterGCOffset      uint64
+	interpreterRuntimeOffset uint64
+	debugInterpreterGC       uint64
+	debugObjectType          uint64
+	debugTypeName            uint64
+	debugTypeFlags           uint64
+	objectTypeOffset         uint64
+	objectSizeOffset         uint64
+	typeNameOffset           uint64
+	typeFlagsOffset          uint64
+	unicodeDataOffset        uint64
 }
 
 var runtimeLayouts = map[int]runtimeLayout{
@@ -53,13 +54,19 @@ var runtimeLayouts = map[int]runtimeLayout{
 		interpreterMode: layoutRuntimeGC, unicodeDataOffset: 48,
 	},
 	9: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
+		interpreterMode:          layoutProbedList,
+		interpreterRuntimeOffset: 16,
+		unicodeDataOffset:        48,
 	},
 	10: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
+		interpreterMode:          layoutProbedList,
+		interpreterRuntimeOffset: 16,
+		unicodeDataOffset:        48,
 	},
 	11: {
-		interpreterMode: layoutProbedList, unicodeDataOffset: 48,
+		interpreterMode:          layoutProbedList,
+		interpreterRuntimeOffset: 40,
+		unicodeDataOffset:        48,
 	},
 	12: {
 		interpreterMode: layoutFixed, runtimeHeadOffset: 40,

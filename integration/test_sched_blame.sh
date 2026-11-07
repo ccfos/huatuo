@@ -205,7 +205,7 @@ replacement_container_id=${workload_container_id}
 	|| fatal "recreated pod retained the old container ID"
 capture_phase replacement "${replacement_container_id}"
 
-stop_gracefully_by_pid "${tracer_pid}" 15 || fatal "sched-blame did not shut down cleanly"
+assert_process_shutdown_by_pid "${tracer_pid}" 15 || fatal "sched-blame did not shut down cleanly"
 tracer_pid=""
 assert_log_has_no_failure "${TRACER_LOG}" sched-blame
 [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/events.txt ]] || fatal "command did not create its output file"

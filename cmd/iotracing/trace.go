@@ -50,10 +50,16 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 	}
 	defer b.Close()
 
-	timeCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.durationSecond)*time.Second)
+	captureCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	signalCtx, signalCancel := signal.NotifyContext(timeCtx, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
+	signalCtx, signalCancel := signal.NotifyContext(
+		captureCtx,
+		syscall.SIGHUP,
+		syscall.SIGQUIT,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
 	defer signalCancel()
 
 	// Earlier hooks can account IO while the remaining hooks are attaching.
@@ -63,6 +69,10 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 		return nil, err
 	}
 	defer reader.Close()
+
+	// Probe setup must not consume the requested capture window.
+	timer := time.AfterFunc(time.Duration(cfg.durationSecond)*time.Second, cancel)
+	defer timer.Stop()
 
 	// Loading can outlast a short workload; signal only after the reader and probes are ready.
 	fmt.Fprintln(os.Stderr, "iotracing: capture ready")

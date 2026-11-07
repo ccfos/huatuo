@@ -89,7 +89,7 @@ assert_removed_profile_route_is_not_registered() {
 		|| fatal "GET /v1/profiles did not return route_not_found"
 }
 
-integration_huatuo_apiserver_start write_apiserver_without_profile_storage_config \
+integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_profile_routes_require_authentication
 assert_profile_api_without_storage \
@@ -112,7 +112,6 @@ assert_profile_api_without_storage \
 			supported_scopes:["container"], supports_binary_match:false}
 	] | sort_by(.type, .language))' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-capabilities.json"
-ready_status=$(curl -sS "${CURL_TIMEOUT[@]}" -o /dev/null -w '%{http_code}' "${APISERVER_ADDR}/readyz")
-[[ ${ready_status} == 204 ]] || fatal "GET /readyz: status ${ready_status}, want 204"
+assert_readiness_endpoint
 assert_removed_profile_route_is_not_registered
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver

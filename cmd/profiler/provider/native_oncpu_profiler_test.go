@@ -65,7 +65,7 @@ func TestNativeOnCPUAttachOptions(t *testing.T) {
 func TestAttachNativeOnCPU(t *testing.T) {
 	t.Parallel()
 
-	hardwareErr := errors.New("hardware unavailable")
+	hardwareErr := bpf.ErrHardwarePMUUnavailable
 	softwareErr := errors.New("software unavailable")
 	tests := []struct {
 		name               string

@@ -396,7 +396,8 @@ func deltaIOControlWaitCounters(
 	if previous != nil && len(previous) != len(current) {
 		return ioControlWaitCounters{}, fmt.Errorf(
 			"per-CPU counter count changed from %d to %d",
-			len(previous), len(current))
+			len(previous), len(current),
+		)
 	}
 
 	var total ioControlWaitCounters
@@ -410,7 +411,8 @@ func deltaIOControlWaitCounters(
 		// must not hide a lane with wait time but no completed IO.
 		if delta.IOCount == 0 && delta.Wait10US != 0 {
 			return ioControlWaitCounters{}, fmt.Errorf(
-				"CPU %d delta: wait_10us is %d with no delayed IO", cpu, delta.Wait10US)
+				"CPU %d delta: wait_10us is %d with no delayed IO", cpu, delta.Wait10US,
+			)
 		}
 		total = addIOControlWaitCounters(total, delta)
 	}
@@ -774,7 +776,8 @@ func (definition ioControlWaitMetrics) append(
 			labels := map[string]string{
 				"disk": key.device, "operation": key.operation, "scope": scope.name,
 			}
-			metrics = append(metrics,
+			metrics = append(
+				metrics,
 				metric.NewGaugeData(
 					definition.countName, float64(counters.IOCount), definition.countHelp, labels,
 				),
@@ -786,7 +789,8 @@ func (definition ioControlWaitMetrics) append(
 	}
 	for key, interval := range intervals.containers {
 		labels := map[string]string{"disk": key.device, "operation": key.operation}
-		metrics = append(metrics,
+		metrics = append(
+			metrics,
 			metric.NewContainerGaugeData(
 				interval.container, definition.countName, float64(interval.counters.IOCount),
 				definition.countHelp, labels,
@@ -849,10 +853,6 @@ func ioControlPublicContainerLabels(
 		container.Qos.String(),
 		hostNamespace,
 	}, nil
-}
-
-func ioControlDeviceName(major, minor uint32) string {
-	return fmt.Sprintf("%d:%d", major, minor)
 }
 
 // Resolve public disk labels once per collection, not in the BPF IO paths.

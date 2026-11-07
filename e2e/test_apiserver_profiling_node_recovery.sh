@@ -17,7 +17,7 @@ create 60
 wait_job "$JOB_ID" running
 pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
 mapfile -t ORPHAN_PIDS < <(ps -eo pid=,ppid=,pgid= | awk -v parent="$pid" '$2 == parent && $1 == $3 {print $1}')
-huatuo_bamai_stop_with_signal KILL
+assert_huatuo_bamai_shutdown_with_signal KILL
 wait_job "$JOB_ID" failed
 assert_reason "$JOB_ID" node_unavailable
 stop_orphans

@@ -927,15 +927,20 @@ func TestSchedBlameHighlightContainerMatches(t *testing.T) {
 	const hostname = "workload-a"
 
 	assert.True(t, schedBlameHighlightContainerMatches(
-		containerID, containerID, hostname))
+		containerID, containerID, hostname,
+	))
 	assert.True(t, schedBlameHighlightContainerMatches(
-		"0123456789ab", containerID, hostname))
+		"0123456789ab", containerID, hostname,
+	))
 	assert.True(t, schedBlameHighlightContainerMatches(
-		hostname, containerID, hostname))
+		hostname, containerID, hostname,
+	))
 	assert.False(t, schedBlameHighlightContainerMatches(
-		"", containerID, hostname))
+		"", containerID, hostname,
+	))
 	assert.False(t, schedBlameHighlightContainerMatches(
-		"other", containerID, hostname))
+		"other", containerID, hostname,
+	))
 }
 
 func TestSchedBlameShortIDMatchesCrictl(t *testing.T) {

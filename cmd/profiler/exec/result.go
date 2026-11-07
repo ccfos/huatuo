@@ -73,6 +73,7 @@ func outputForError(output []byte) string {
 	for end > 0 && !utf8.RuneStart(trimmed[end]) {
 		end--
 	}
+
 	return trimmed[:end] + "... (truncated)"
 }
 

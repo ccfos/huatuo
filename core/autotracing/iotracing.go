@@ -649,7 +649,8 @@ func (c *ioTracing) Update() ([]*metric.Data, error) {
 			continue
 		}
 		labels := map[string]string{"disk": device}
-		metrics = append(metrics,
+		metrics = append(
+			metrics,
 			metric.NewGaugeData(
 				"read_bps",
 				round2(status.ReadBPS),

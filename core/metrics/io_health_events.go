@@ -328,9 +328,12 @@ func ioHealthBlockErrorLayout(spec *btf.Spec) (stride, count uint32, err error) 
 	// BLK_STS_* are macros, not a stable ABI. Some kernels omit BTF VARs
 	// but retain blk_errors' anonymous array type. Match its complete shape;
 	// BPF also validates the table prefix before reading an error entry.
-	types := spec.Iterate()
-	for types.Next() {
-		array, ok := types.Type.(*btf.Array)
+	for typ, err := range spec.All() {
+		if err != nil {
+			return 0, 0, fmt.Errorf("iterate kernel BTF for blk_errors layout: %w", err)
+		}
+
+		array, ok := typ.(*btf.Array)
 		if !ok || array.Nelems < 4 || array.Nelems > 256 {
 			continue
 		}
@@ -403,7 +406,8 @@ func ioHealthNVMeStates(spec *btf.Spec) map[uint32]string {
 	for _, value := range state.Values {
 		if strings.HasPrefix(value.Name, "NVME_CTRL_") {
 			names[uint32(value.Value)] = strings.ToLower(
-				strings.TrimPrefix(value.Name, "NVME_CTRL_"))
+				strings.TrimPrefix(value.Name, "NVME_CTRL_"),
+			)
 		}
 	}
 	return names

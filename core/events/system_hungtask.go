@@ -21,12 +21,15 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
@@ -48,7 +51,8 @@ type HungTaskTracerData struct {
 }
 
 type hungTaskTracing struct {
-	data            []*metric.Data
+	mu              sync.Mutex
+	containerCounts map[string]uint64
 	backoff         *backoff.Backoff
 	nextAllowedTime time.Time
 }
@@ -68,9 +72,6 @@ func newHungTask() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &hungTaskTracing{
-			data: []*metric.Data{
-				metric.NewCounterData("total", 0, "hungtask counter", nil),
-			},
 			backoff: bo,
 		},
 		Interval: 10,
@@ -81,20 +82,37 @@ func newHungTask() (*tracing.EventTracingAttr, error) {
 var hungtaskCounter int64
 
 func (c *hungTaskTracing) Update() ([]*metric.Data, error) {
-	c.data[0].Value = float64(atomic.LoadInt64(&hungtaskCounter))
-	return c.data, nil
+	// Keep discovery, pruning and the count snapshot ordered with event updates.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data := []*metric.Data{metric.NewCounterData("total", float64(atomic.LoadInt64(&hungtaskCounter)), "hungtask counter", nil)}
+	if len(c.containerCounts) == 0 {
+		return data, nil
+	}
+	containers, err := pod.NormalContainers()
+	if err != nil {
+		return data, fmt.Errorf("discover hungtask containers: %w", err)
+	}
+	for id, count := range c.containerCounts {
+		container := containers[id]
+		if container == nil {
+			delete(c.containerCounts, id)
+			continue
+		}
+		data = append(data, metric.NewContainerCounterData(container, "total", float64(count), "hungtask events attributed to container tasks", nil))
+	}
+	return data, nil
 }
 
 func (c *hungTaskTracing) Start(ctx context.Context) error {
+	childCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
 	defer b.Close()
-
-	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	reader, err := b.AttachAndEventPipe(childCtx, "hungtask_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		return err
@@ -117,7 +135,22 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("hungtask ReadFromPerfEvent: %w", err)
 			}
 
+			// Count every report before attribution and trace backoff.
 			atomic.AddInt64(&hungtaskCounter, 1)
+			container, err := pod.ContainerByCSS(data.CPUCSSAddr, subsystem.SubsystemCPU)
+			if err != nil {
+				log.WithError(err).Debug("resolve hung task container")
+			}
+			containerID := ""
+			if container != nil {
+				containerID = container.ID
+				c.mu.Lock()
+				if c.containerCounts == nil {
+					c.containerCounts = make(map[string]uint64)
+				}
+				c.containerCounts[containerID]++
+				c.mu.Unlock()
+			}
 
 			now := time.Now()
 			if now.Before(c.nextAllowedTime) {
@@ -139,6 +172,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "hungtask",
 				ObservedTimestamp: timeutil.Now(),
+				ContainerID:       containerID,
 				TracerData: &HungTaskTracerData{
 					TID:                   data.TID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),

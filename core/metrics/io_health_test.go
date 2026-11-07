@@ -311,7 +311,7 @@ func TestIOHealthKernelABIAndLabels(t *testing.T) {
 
 func ioHealthBTFSpec(t *testing.T, types ...btf.Type) *btf.Spec {
 	t.Helper()
-	builder, err := btf.NewBuilder(types)
+	builder, err := btf.NewBuilder(types, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1637,7 +1637,8 @@ func TestIOHealthBPFSessionAttachFailure(t *testing.T) {
 					return types.ErrExitByCancelCtx
 				},
 			}
-			attached, retryable, err := collector.runBPFSession(ctx,
+			attached, retryable, err := collector.runBPFSession(
+				ctx,
 				&recordingEvidenceSubmitter{},
 				func(string, map[string]any) (bpf.BPF, []bpf.AttachOption, error) {
 					return object, ioHealthTestHookOptions(t), nil

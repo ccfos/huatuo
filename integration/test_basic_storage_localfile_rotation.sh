@@ -32,12 +32,8 @@ readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 require_commands jq ss curl stat
 require_readable /sys/kernel/btf/vmlinux
 tracepoint_available skb kfree_skb || skip "skb/kfree_skb tracepoint is unavailable"
-integration_isolate_run_directory "$@"
 
-storage_http_port=$(allocate_available_port) || fatal "failed to allocate bamai HTTP port"
 storage_target_port=$(allocate_available_port udp) || fatal "failed to allocate UDP target port"
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${storage_http_port}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 
 # Keep this LocalFile-only case independent of inherited backend credentials.
 STORAGE_ADDR=""
@@ -79,7 +75,14 @@ assert_storage_rotation_file() {
 		|| fatal "persisted events: ${file}: expected nonempty dropwatch/event records for 127.0.0.99:${storage_target_port}, actual=${actual}"
 }
 
-integration_huatuo_bamai_start write_storage_events_config \
+assert_storage_rotation_log() {
+	local log_file="${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	[[ -r "${log_file}" ]] || fatal "huatuo-bamai log is not readable: ${log_file}"
+	# XID timestamps can contain "fatal" inside successful debug records.
+	assert_huatuo_bamai_log_clean || fatal "huatuo-bamai logged an error during local storage rotation"
+}
+
+integration_huatuo_bamai_start write_config_bamai_storage_events \
 	--region integration --disable-kubelet --log-debug
 wait_until 120 0.1 storage_rotation_check_or_send \
 	|| fatal "rotation did not evict first backup: first=${storage_rotation_first_backup:-none}, backups=${#storage_rotation_backups[@]}, expected=${STORAGE_MAX_ROTATED_FILES}"
@@ -92,6 +95,6 @@ assert_eq "${#storage_rotation_files[@]}" "$((STORAGE_MAX_ROTATED_FILES + 1))" "
 for storage_rotation_file in "${storage_rotation_files[@]}"; do
 	assert_storage_rotation_file "${storage_rotation_file}"
 done
-assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" huatuo-bamai
+assert_storage_rotation_log
 jq -s -c '.[-1] | {tracer_name, tracer_type, layers: .tracer_data.layers}' "${STORAGE_ROTATION_EVENT}"
 log_info "local storage evicted its first backup and retained ${STORAGE_MAX_ROTATED_FILES} backups"

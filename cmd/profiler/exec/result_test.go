@@ -94,6 +94,7 @@ func TestOutputForErrorPreservesUTF8AtLimit(t *testing.T) {
 	if !utf8.ValidString(got) {
 		t.Fatalf("outputForError() contains invalid UTF-8 at truncation boundary")
 	}
+
 	want := strings.Repeat("x", maxOutputInError-1) + "... (truncated)"
 	if got != want {
 		t.Fatalf("outputForError() = %q, want %q", got, want)

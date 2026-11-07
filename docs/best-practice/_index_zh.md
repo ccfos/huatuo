@@ -19,3 +19,5 @@ weight: 7
 | 分析网络丢包 | [网络丢包](/docs/best-practice/dropwatch_zh.md) |
 | 分析 TCP 重传及关联丢包 | [重传追踪](/docs/best-practice/tcpshark_zh.md) |
 | 分析 softirq 来源与被抢占任务 | [IRQ 追踪](/docs/best-practice/irqtracing_zh.md) |
+| 独立运行 SchedBlame | [SchedBlame 独立运行（英文）](/docs/best-practice/sched-blame-standalone_en.md) |
+| 绘制和对比调度争用比例 | [SchedBlame 分析（英文）](/docs/best-practice/sched-blame-analysis_en.md) |

@@ -144,15 +144,15 @@ A successful response means the result is published. `items` may be empty, for e
 
 ### 5. View the Flame Graph
 
-This example profiles the local host. Open **Continuous Profiling (host)**; containers use a separate dashboard:
+This example profiles the local host. Open **Continuous Profiling**, shared by host and container scopes:
 
-- URL: [http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host). Replace `localhost:3000` for your environment.
+- URL: [http://localhost:3000/d/continuous-profiling](http://localhost:3000/d/continuous-profiling). Replace `localhost:3000` for your environment.
 - Username/password: `admin / admin`. Change the password when prompted on first login.
 
 Steps:
 
 1. Select a time range in the upper-right corner covering the collection period.
-2. Select the target `hostname`, enter this task's Task ID, and choose `process_cpu:cpu:nanoseconds:cpu:nanoseconds` as `type`.
+2. Select Region, the node `hostname`, scope `host`, and this Task ID, then choose `process_cpu:cpu:nanoseconds:cpu:nanoseconds` as `type`.
 3. Inspect aggregated stacks for the task and time range; use Focus block to focus on a frame.
 4. Choose Both to show the flame graph and function statistics together.
 
@@ -388,11 +388,13 @@ The remote type is `memory:physical_usage:bytes:space:bytes`. Each output period
 
 Local SVG and collapsed stacks show the final accumulated result; JSON retains signed deltas per period. Fully canceled samples still produce a valid empty result. If no samples were ever received, no local display file is created.
 
-Cross-period stack matching, detection of actual and partial physical-page frees, and collection of remaining data at normal shutdown still require validation and improvement. Current results must not be treated as exact physical residency. Memory usage for high-cardinality collection also grows with the number of distinct samples.
+Normal shutdown reads the remaining buffered data, but tail completeness in the real sampling path still requires validation. Cross-period stack matching and detection of actual and partial physical-page frees still require validation and improvement. Current results must not be treated as exact physical residency. Memory usage for high-cardinality collection also grows with the number of distinct samples.
 
 ### Task Completion
 
-The CLI finalizes normally after the collection duration or Ctrl+C (SIGINT). Other cancellation signals and collection or output errors prevent result submission. API stop requests abort tasks; see [Stop a Task](/docs/reference/profiling-api_en.md#stop-a-task) for result rules. Output is not transactional: windows or local data written before failure may remain.
+After the collection duration or SIGINT (Ctrl+C), the CLI stops collection, reads and delivers final samples, drains the queue, and submits the result. Final processing shares a 30-second budget. Exceeding it, receiving other cancellation signals, or encountering collection or output errors prevents result submission. Resource cleanup still runs; external tool cleanup has its own timeout.
+
+API stop requests abort tasks without publishing a result completion marker. See [Stop a Task](/docs/reference/profiling-api_en.md#stop-a-task) for result rules. Output is not transactional: windows or local data written before failure may remain.
 
 Remote results receive a completion marker only after `remote-store` commits them. Raw task-result queries depend on this marker. General flame graph queries do not guarantee exclusion of all incomplete windows, so chart data alone does not prove task success. Upgrade receivers before senders in the remote collection path. Unified windows use application protocol version 3; legacy versions 1/2 support only the older complete pprof payloads.
 

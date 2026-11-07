@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
@@ -82,21 +83,18 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
 	}
 
-	for _, label := range matchers {
-		if label.Name == "__profile_type__" {
-			if label.Type != labels.MatchEqual || label.Value != req.ProfileTypeID {
-				return nil, fmt.Errorf("%w: __profile_type__ must equal ProfileTypeID %q", ErrInvalidQuery, req.ProfileTypeID)
-			}
-			continue
-		}
-		// skip empty or "All"
-		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
-			continue
-		}
+	if err := resolveProfileMatchers(filter, matchers, req.ProfileTypeID); err != nil {
+		return nil, err
+	}
 
-		if err := applyProfileMatcher(filter, label); err != nil {
-			return nil, err
-		}
+	if filter.Scope == observation.ScopeUnknown {
+		return nil, fmt.Errorf("%w: scope must be host or container", ErrInvalidQuery)
+	}
+	if filter.Scope == observation.ScopeHost && (filter.ContainerID != "" || filter.ContainerHostname != "") {
+		return nil, fmt.Errorf("%w: host scope cannot include a container filter", ErrInvalidQuery)
+	}
+	if filter.Scope == observation.ScopeContainer && filter.ContainerID == "" && filter.ID == "" {
+		return nil, fmt.Errorf("%w: container scope requires a container id or task id", ErrInvalidQuery)
 	}
 
 	latestOnly := filter.ProfileType == profiling.ProfileTypePhysicalUsage
@@ -268,6 +266,15 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
 	}
 	switch matcher.Name {
+	case "scope":
+		scope, err := observation.ParseScope(matcher.Value)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidQuery, err)
+		}
+		if filter.Scope != observation.ScopeUnknown && filter.Scope != scope {
+			return fmt.Errorf("%w: conflicting scope matchers", ErrInvalidQuery)
+		}
+		filter.Scope = scope
 	case "id":
 		filter.ID = matcher.Value
 	case "region":
@@ -283,6 +290,82 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 	default:
 		return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
 	}
+	return nil
+}
+
+// resolveProfileMatchers validates the selector and resolves it into filter.
+//
+// Contradictory matchers must not reach the store, where only the last value of
+// a label would survive. Wildcard values only drop their own restriction, so
+// the operator has to be validated before that skip: {hostname!="*"} is still a
+// non-equality matcher the filter cannot express.
+func resolveProfileMatchers(filter *profilingstore.Filter, matchers []*labels.Matcher, profileTypeID string) error {
+	matcherSet := newProfileMatcherSet(filter)
+	for _, matcher := range matchers {
+		if matcher.Name == "__profile_type__" {
+			if matcher.Type != labels.MatchEqual || matcher.Value != profileTypeID {
+				return fmt.Errorf("%w: __profile_type__ must equal ProfileTypeID %q", ErrInvalidQuery, profileTypeID)
+			}
+			continue
+		}
+		if matcher.Type != labels.MatchEqual {
+			return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
+		}
+		// skip empty or "All"
+		if matcher.Value == "" || matcher.Value == "all" || matcher.Value == "All" || matcher.Value == "*" {
+			continue
+		}
+
+		if err := matcherSet.apply(matcher); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// profileMatcherSet resolves label matchers into one store filter.
+//
+// A store filter keeps a single value per label, so applying matchers one by one
+// makes the last value win: {hostname="host-a",hostname="host-b"} would silently
+// select host-b. Remembering the value each label was already resolved to turns
+// that contradiction into an explicit error instead of a query that matches
+// hosts the caller never asked for.
+type profileMatcherSet struct {
+	filter  *profilingstore.Filter
+	applied map[string]string
+}
+
+// newProfileMatcherSet returns an empty matcher set bound to filter.
+func newProfileMatcherSet(filter *profilingstore.Filter) *profileMatcherSet {
+	return &profileMatcherSet{
+		filter:  filter,
+		applied: make(map[string]string),
+	}
+}
+
+// apply resolves one matcher into the bound filter.
+//
+// Repeating a label with the same value is accepted because the resulting
+// filter is identical. Repeating a label with another value is rejected: the
+// filter cannot express the intersection of two equalities, and keeping either
+// one of them would change the query without telling the caller.
+func (s *profileMatcherSet) apply(matcher *labels.Matcher) error {
+	if matcher.Type != labels.MatchEqual {
+		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
+	}
+	previous, seen := s.applied[matcher.Name]
+	if seen && previous != matcher.Value {
+		return fmt.Errorf(
+			"%w: label %q is selected with conflicting values %q and %q",
+			ErrInvalidQuery, matcher.Name, previous, matcher.Value,
+		)
+	}
+
+	if err := applyProfileMatcher(s.filter, matcher); err != nil {
+		return err
+	}
+	s.applied[matcher.Name] = matcher.Value
 	return nil
 }
 
@@ -340,7 +423,7 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 //	response: typesv1.LabelNamesResponse
 func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"id", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: []string{"id", "scope", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
 	}
 	return response, nil
 }
@@ -366,9 +449,10 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 
 	// filter: ProfileType
 	profileTypePresent := false
+	matcherSet := newProfileMatcherSet(filter)
 	for _, ms := range matchers {
 		for _, m := range ms {
-			if err := applyProfileMatcher(filter, m); err != nil {
+			if err := matcherSet.apply(m); err != nil {
 				return nil, err
 			}
 			if m.Name == "__profile_type__" {
@@ -379,6 +463,10 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 
 	if !profileTypePresent {
 		return nil, fmt.Errorf("%w: no __profile_type__ matcher present", ErrInvalidQuery)
+	}
+
+	if req.Name == "scope" {
+		return &typesv1.LabelValuesResponse{Names: []string{string(observation.ScopeHost), string(observation.ScopeContainer)}}, nil
 	}
 
 	names, err := s.profileStorage.Values(ctx, filter, req.Name)

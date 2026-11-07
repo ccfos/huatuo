@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -119,16 +118,8 @@ func mainAction(c *cli.Context) (returnErr error) {
 	}
 
 	if client != nil {
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Context), 5*time.Second)
-			defer cancel()
-			if err := errors.Join(client.Send(ctx, nil, toolstream.SendOptions{End: true}), client.Close()); err != nil {
-				returnErr = errors.Join(
-					returnErr,
-					fmt.Errorf("close toolstream: %w", err),
-				)
-			}
-		}()
+		// Also cover setup failures before report finalization owns the connection.
+		defer client.Close()
 	}
 
 	if err := bpf.Init(&bpf.Option{
@@ -139,10 +130,34 @@ func mainAction(c *cli.Context) (returnErr error) {
 	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
-	return writeReport(newWriter(c.String(cliFlagOutput), client), result, err)
+	if client != nil {
+		return writeToolstreamReport(c.Context, client, result, err)
+	}
+
+	return writeReport(newWriter(c.Context, c.String(cliFlagOutput), nil), result, err)
 }
 
-// Publish captured observations before returning a collection failure.
+func writeToolstreamReport(
+	ctx context.Context,
+	client *toolstream.Client,
+	result *types.IOTracingSnapshot,
+	traceErr error,
+) error {
+	outputCtx := context.WithoutCancel(ctx)
+
+	writeErr := writeReport(newWriter(outputCtx, "", client), result, traceErr)
+	endErr := client.Send(outputCtx, nil, toolstream.SendOptions{End: true})
+	if endErr != nil && errors.Is(writeErr, endErr) {
+		endErr = nil
+	}
+	if endErr != nil {
+		endErr = fmt.Errorf("finish output: %w", endErr)
+	}
+
+	return errors.Join(writeErr, endErr, client.Close())
+}
+
+// Preserve a captured report alongside any independent collection failure.
 func writeReport(sink writer, result *types.IOTracingSnapshot, traceErr error) error {
 	if result == nil {
 		return traceErr
@@ -152,11 +167,12 @@ func writeReport(sink writer, result *types.IOTracingSnapshot, traceErr error) e
 	if writeErr != nil {
 		writeErr = fmt.Errorf("write output: %w", writeErr)
 	}
+
 	return errors.Join(traceErr, writeErr)
 }
 
-// openToolstream returns a connected toolstream client when
-// --output-storage is set, or nil otherwise. The caller owns End().
+// openToolstream returns a connected client when --output-storage is set.
+// The caller owns the connection and sends End during report finalization.
 func openToolstream(c *cli.Context) (*toolstream.Client, error) {
 	path := c.String(cliFlagOutputStorage)
 	if path == "" {

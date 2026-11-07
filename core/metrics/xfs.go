@@ -184,7 +184,7 @@ func getXFSStatsList() ([]*xfs.Stats, error) {
 		return nil, err
 	}
 
-	return fs.SysStats()
+	return fs.ReadDeviceStats()
 }
 
 // getXLogMaxBytes returns the maximum xlog size (in bytes) for each XFS device

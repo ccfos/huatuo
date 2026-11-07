@@ -15,10 +15,10 @@
 package collector
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -39,10 +39,6 @@ func newMemoryCgroupReclaim() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-type memoryBpfStruct struct {
-	DirectstallCount uint64
-}
-
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim.c -o $BPF_DIR/memory_reclaim.o
 
 type memoryCgroupReclaim struct {
@@ -56,55 +52,92 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 	}
 	defer lease.Release()
 
-	containers, err := pod.NormalContainers()
-	if err != nil {
-		return nil, err
-	}
-
-	containersCssMem := pod.BuildCssContainers(containers, subsystem.SubsystemMemory)
-
 	items, err := lease.DumpMapByName("memory_cgroup_allocpages_stall")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dump memcg reclaim count: %w", err)
 	}
-
-	var (
-		reclaimVal memoryBpfStruct
-		cssAddr    uint64
-		data       []*metric.Data
-	)
-	for _, v := range items {
-		keyBuf := bytes.NewReader(v.Key)
-		if err := binary.Read(keyBuf, binary.LittleEndian, &cssAddr); err != nil {
-			return nil, err
+	if !pod.KubeletPodListRunningEnabled() {
+		return memcgReclaimMetrics(items, nil)
+	}
+	// A nonzero host count without container rows may reflect lost metadata or
+	// failed map insertion. Only a pristine zero snapshot preserves zero-fill.
+	zeroSnapshot := false
+	var data []*metric.Data
+	var decodeErr error
+	if len(items) == 1 && len(items[0].Key) == 8 && binary.LittleEndian.Uint64(items[0].Key) == 0 {
+		data, decodeErr = memcgReclaimMetrics(items, nil)
+		if decodeErr != nil || len(data) != 1 || data[0].Value != 0 {
+			return data, decodeErr
 		}
-
-		valBuf := bytes.NewReader(v.Value)
-		if err := binary.Read(valBuf, binary.LittleEndian, &reclaimVal); err != nil {
-			return nil, err
+		zeroSnapshot = true
+	}
+	containers, err := pod.NormalContainers()
+	if err != nil {
+		containers = nil
+		err = fmt.Errorf("discover memcg reclaim containers: %w", err)
+	}
+	cssContainers := pod.BuildCssContainers(containers, subsystem.SubsystemMemory)
+	if zeroSnapshot {
+		for _, container := range cssContainers {
+			data = append(data, metric.NewContainerGaugeData(container, "directstall", 0,
+				"cumulative memcg reclaim events, excluding kswapd", nil))
 		}
+	} else {
+		data, decodeErr = memcgReclaimMetrics(items, cssContainers)
+	}
+	return data, errors.Join(decodeErr, err)
+}
 
-		if container, exist := containersCssMem[cssAddr]; exist {
-			data = append(data, metric.NewContainerGaugeData(container, "directstall",
-				float64(reclaimVal.DirectstallCount), "counter of cgroup reclaim when try_charge", nil))
+func memcgReclaimMetrics(items []bpf.MapItem, containers map[uint64]*pod.Container) ([]*metric.Data, error) {
+	data := make([]*metric.Data, 0, len(containers)+1)
+	var decodeErr error
+	hostFound := false
+	for _, item := range items {
+		if len(item.Key) != 8 || len(item.Value) == 0 || len(item.Value)%8 != 0 {
+			decodeErr = errors.Join(decodeErr, errors.New("memcg reclaim map: expected 8-byte CSS key and one uint64 per CPU"))
+			continue
+		}
+		css := binary.LittleEndian.Uint64(item.Key)
+		var container *pod.Container
+		if css != 0 {
+			container = containers[css]
+			if container == nil {
+				continue
+			}
+		}
+		var count uint64
+		for value := item.Value; len(value) > 0; value = value[8:] {
+			count += binary.LittleEndian.Uint64(value)
+		}
+		hostFound = hostFound || css == 0
+		if container == nil {
+			data = append(data, metric.NewGaugeData("directstall", float64(count),
+				"cumulative memcg reclaim events, excluding kswapd", nil))
+		} else {
+			data = append(data, metric.NewContainerGaugeData(container, "directstall", float64(count),
+				"cumulative memcg reclaim events, excluding kswapd", nil))
 		}
 	}
-
-	// if events haven't happened, upload zero for all containers.
-	if len(items) == 0 {
-		for _, container := range containersCssMem {
-			data = append(data, metric.NewContainerGaugeData(container, "directstall",
-				float64(0), "counter of cgroup reclaim when try_charge", nil))
-		}
+	if !hostFound {
+		decodeErr = errors.Join(decodeErr, errors.New("memcg reclaim map: reserved host entry missing or invalid"))
 	}
-
-	return data, nil
+	return data, decodeErr
 }
 
 func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {
 	obj, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
+	}
+
+	mapID := obj.MapIDByName("memory_cgroup_allocpages_stall")
+	if mapID == 0 {
+		return errors.Join(fmt.Errorf("required map %q missing", "memory_cgroup_allocpages_stall"), obj.Close())
+	}
+	// Reserve host totals before probes can fill the map; an empty per-CPU
+	// slice is zero-padded by the loader for every possible CPU.
+	if err := obj.WriteMapItems(mapID, []bpf.MapItem{{Key: make([]byte, 8), Value: []byte{}}}); err != nil {
+		return errors.Join(err, obj.Close())
 	}
 
 	if err := obj.Attach(); err != nil {

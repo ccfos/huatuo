@@ -27,6 +27,29 @@ huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg"
 
 此例分别展示宿主机和容器的调度延迟分桶计数，`zone` 的范围见下文。
 
+## 构建信息
+
+`huatuo_bamai_build_info` 和 `huatuo_apiserver_build_info` 是值恒为 `1` 的
+Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自程序的
+`/metrics` 暴露，构建信息与该程序的 `/version` 一致。它们包含既有公共标签
+`host`、`region`（apiserver 中为空），以及以下构建标签：
+
+| 标签 | 含义 |
+| --- | --- |
+| `name` | 程序名称，与 `/version` 中的 `name` 一致 |
+| `version` | 程序发布版本，与 `/version` 中的 `version` 一致 |
+| `git_commit` | 构建的 Git 标识，与 `/version` 中的 `git_commit` 一致；不保证是完整 SHA |
+| `git_tree_state` | 构建时的工作区状态：`clean`、`dirty` 或 `unknown` |
+| `build_time` | `/version` 中的时间戳：优先使用注入的构建时间，缺失时回退为 VCS 提交时间或 `(devel)` |
+| `go_version` | 构建程序所用的 Go 工具链版本 |
+| `compiler` | Go 编译器，例如 `gc` |
+| `platform` | 操作系统和架构，例如 `linux/amd64` |
+
+未提供发布版本时，`version` 使用 `(devel)`。`git_commit` 优先使用注入值，
+其次读取 Go 构建信息中的 VCS 提交标识，两者均不可用时使用 `(devel)`。构建标签只附加到该指标，
+业务指标的标签保持不变。Prometheus 抓取后，可通过相同的 `job`、`instance`
+将构建信息与业务指标关联；跨集群查询还需纳入实际用于区分目标的集群标签。
+
 ## CPU
 
 ### 调度延迟
@@ -242,6 +265,27 @@ huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg"
 | --- | --- | --- | --- | --- | --- |
 | `memory_buddyinfo_blocks` | 指定 NUMA 节点、内存区域和阶数的空闲块数 | 块 | 宿主机 | procfs | node, order, zone |
 
+<a id="add-container-reclaim-and-compaction-stall-times"></a>
+
+### 容器直接回收与内存规整累计耗时
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
+
+两项为累计耗时 Gauge，统计全局直接回收与规整中的任务耗时。主机总量包含容器工作；缺失或归属不明确的容器记录不输出。容器采集失败仍保留主机数据，加载依赖容器探针，加载或挂载失败时该采集器不可用。容器重建后对应容器累计值重新开始，主机累计值不受影响；BPF 重载后两者均归零。
+
+<a id="add-a-host-wide-memcg-reclaim-count"></a>
+
+### 主机 memcg 回收累计次数
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|memory_reclaim_directstall|整台主机 memcg 限额回收累计次数| 计数| 物理机| eBPF | host, region|
+
+该 Gauge 统计全机 memcg 回收次数，排除 kswapd，不是全局回收次数或耗时。主机总量包含容器活动，不能与容器计数相加；BPF 重载后归零。
+
 ## 网络
 
 ### TCP 内存
@@ -297,6 +341,12 @@ Qdisc 指标描述发送队列积压、发送量、丢包和重入队次数，�
 | 指标 | 说明 | 单位 | 范围 | 来源 | 附加标签 |
 | --- | --- | --- | --- | --- | --- |
 | `netdev_hw_rx_dropped_total` | 接收方向硬件丢包累计数 | 计数 | 宿主机 | sysfs、eBPF | device, driver |
+
+### RDMA 端口统计
+
+`netdev_rdma_link_<counter>` 输出内核的逐端口计数，具体名称取决于驱动。附加标签为 `device`、`nodeguid`、`index`、`num_ports` 和 `port`。
+
+新增 `port` 标签会产生新的时间序列，单端口设备也受影响。端口级查询保留该标签；对选定计数器，设备总量使用 `sum by (region, host, device) (<metric>)`，设备速率使用 `sum by (region, host, device) (rate(<metric>[5m]))`，将 `<metric>` 替换为完整指标名。只按 `device` 聚合会混合不同主机上的同名设备。
 
 ### 网卡统计
 
@@ -549,7 +599,7 @@ cgroup 实际释放后，尚未采集的尾部等待增量归入 Host 和 Other�
 等待约 274.9 万秒时，计数回绕可能导致少计。例如，同一统计项的 10,240 次等待
 各持续 270 秒、在同一区间由同一 CPU 结算，会超出等待时间容量。
 
-采集需要支持 IOCOST 的非 PREEMPT_RT Linux x86_64 内核，具备 BPF/BTF 和
+采集需要支持 IOCOST 的非 PREEMPT_RT Linux 内核，具备 BPF/BTF 和
 kprobe 能力。
 
 ### 设备健康
@@ -667,6 +717,16 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 | 指标 | 说明 | 单位 | 范围 | 来源 | 附加标签 |
 | --- | --- | --- | --- | --- | --- |
 | `hungtask_total` | 系统 hungtask 事件计数 | 计数 | 宿主机 | eBPF | — |
+
+<a id="attribute-hungtask-events-and-counts-to-containers"></a>
+
+### HungTask 容器归属与计数
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|hungtask_container_total|已归属容器的阻塞任务事件计数|计数|容器|BPF + CSS 缓存|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+容器计数包含在主机 Counter 中，不受追踪退避影响。容器归属无法解析的事件仍计入主机总量。容器退出后清理其计数，agent 重启后归零；同一阻塞任务重复上报按多次事件计数。
 
 ## GPU
 

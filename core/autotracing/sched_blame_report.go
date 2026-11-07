@@ -343,7 +343,8 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 			&superMonitorSample,
 		)
 		if debugWriter != nil {
-			debugSamples = append(debugSamples,
+			debugSamples = append(
+				debugSamples,
 				state.newExternalRatioDebugSample(
 					targetIndex,
 					runtime,

@@ -144,7 +144,8 @@ func attachIOLatencyHooks(object bpf.BPF) error {
 	if err != nil {
 		return err
 	}
-	options = append(options,
+	options = append(
+		options,
 		bpf.AttachOption{
 			ProgramName: "probe_queue_stats",
 			Symbol:      "queue_attr_show",
