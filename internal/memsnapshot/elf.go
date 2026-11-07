@@ -18,20 +18,36 @@ import (
 	"debug/elf"
 	"errors"
 	"os"
+	"strings"
 )
 
-// FindELFLoadBias tries load segments in ELF order because the first segment
-// may not have a matching process mapping.
+// FindELFLoadBias relates a file mapping to its load segment. A mapping may
+// begin inside the segment after its permissions have been split by mprotect.
 func FindELFLoadBias(file *elf.File, mappings []ProcMap, target *ProcMap) (uint64, error) {
 	pageSize := uint64(os.Getpagesize())
 	for _, program := range file.Progs {
-		if program.Type != elf.PT_LOAD {
+		if program.Type != elf.PT_LOAD || program.Filesz == 0 {
 			continue
 		}
 		loadOffset := program.Off &^ (pageSize - 1)
 		loadAddress := program.Vaddr &^ (pageSize - 1)
-		if bias, err := FindLoadBias(mappings, target, loadOffset, loadAddress); err == nil {
-			return bias, nil
+		for _, mapping := range mappings {
+			if mapping.Inode != target.Inode || mapping.DevMajor != target.DevMajor ||
+				mapping.DevMinor != target.DevMinor || mapping.Offset < loadOffset {
+				continue
+			}
+			if strings.Contains(mapping.Perms, "x") && program.Flags&elf.PF_X == 0 {
+				continue
+			}
+			offset := mapping.Offset - loadOffset
+			leading := program.Off - loadOffset
+			if offset >= leading && offset-leading >= program.Filesz {
+				continue
+			}
+			if offset > ^uint64(0)-loadAddress || mapping.Start < loadAddress+offset {
+				continue
+			}
+			return mapping.Start - loadAddress - offset, nil
 		}
 	}
 	return 0, errors.New("ELF load bias not found")
