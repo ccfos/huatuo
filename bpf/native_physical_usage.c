@@ -9,6 +9,17 @@ char __license[] SEC("license") = "GPL";
 DEFINE_PROFILER_PAGE_TRACKING_MAP();
 DEFINE_PROFILER_MAPS(struct profiler_event_base);
 
+struct page_remove_rmap_args {
+	u64 page_addr;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 1 << 16);
+	__type(key, u64);
+	__type(value, struct page_remove_rmap_args);
+} page_remove_rmap_args SEC(".maps");
+
 #define COMPAT_PG_HEAD_BIT 6
 
 struct folio___compat {
@@ -110,13 +121,10 @@ int BPF_KPROBE(trace_page_alloc, void *page_or_folio)
 }
 
 SEC("kprobe/page_remove_rmap")
-int BPF_KPROBE(trace_page_free, void *page_or_folio)
+int BPF_KPROBE(trace_page_free_entry, void *page_or_folio)
 {
 	u64 *transfer_count_ptr;
 	u64 *sample_count_ptrs[2];
-	void *select_profiler_stack_map __attribute__((unused));
-	void *select_profiler_output;
-	u64 *select_profiler_sample_count_ptr;
 
 	if (!profiler_init_state(&profiler_state_map, &transfer_count_ptr, sample_count_ptrs))
 		return 0;
@@ -128,7 +136,28 @@ int BPF_KPROBE(trace_page_free, void *page_or_folio)
 	if (!profiler_should_trace(pid_tgid, mem_css))
 		return 0;
 
-	u64 page_addr = (u64)page_or_folio;
+	if (profiler_folio_npages)
+		return 0;
+
+	struct page_remove_rmap_args args = {
+		.page_addr = (u64)page_or_folio,
+	};
+	bpf_map_update_elem(&page_remove_rmap_args, &pid_tgid, &args, COMPAT_BPF_ANY);
+	return 0;
+}
+
+static __always_inline int profiler_release_page(struct pt_regs *ctx, u64 page_addr,
+                                                 s64 nr_pages)
+{
+	u64 *transfer_count_ptr;
+	u64 *sample_count_ptrs[2];
+	void *select_profiler_stack_map __attribute__((unused));
+	void *select_profiler_output;
+	u64 *select_profiler_sample_count_ptr;
+
+	if (!profiler_init_state(&profiler_state_map, &transfer_count_ptr, sample_count_ptrs))
+		return 0;
+
 	struct profiler_event_base *stack_info =
 		bpf_map_lookup_elem(&page_to_stackid, &page_addr);
 	if (!stack_info)
@@ -144,7 +173,6 @@ int BPF_KPROBE(trace_page_free, void *page_or_folio)
 	profiler_copy_event_base(event, stack_info);
 	if (profiler_folio_npages) {
 		s64 remaining_pages = stack_info->value;
-		s64 nr_pages = (s32)PT_REGS_PARM3(ctx);
 
 		remaining_pages -= nr_pages;
 		/*
@@ -170,4 +198,34 @@ int BPF_KPROBE(trace_page_free, void *page_or_folio)
 	                    select_profiler_sample_count_ptr, event, sizeof(*event));
 
 	return 0;
+}
+
+SEC("kretprobe/page_remove_rmap")
+int BPF_KRETPROBE(trace_page_free)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	struct page_remove_rmap_args *args =
+		bpf_map_lookup_elem(&page_remove_rmap_args, &pid_tgid);
+	if (!args)
+		return 0;
+
+	u64 page_addr = args->page_addr;
+	bpf_map_delete_elem(&page_remove_rmap_args, &pid_tgid);
+	if (BPF_CORE_READ((struct page *)page_addr, _mapcount.counter) >= 0)
+		return 0;
+
+	return profiler_release_page(ctx, page_addr, 1);
+}
+
+SEC("kprobe/folio_remove_rmap_ptes")
+int BPF_KPROBE(trace_folio_free, void *folio)
+{
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u64 mem_css = 0;
+	if (profiler_filter_css != 0)
+		mem_css = current_task_memory_css_addr();
+	if (!profiler_should_trace(pid_tgid, mem_css))
+		return 0;
+
+	return profiler_release_page(ctx, (u64)folio, (s32)PT_REGS_PARM3(ctx));
 }
