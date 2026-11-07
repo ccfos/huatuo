@@ -22,7 +22,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
 
-var safeIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var safeIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 
 // binaryOpSQL maps comparison operators to their SQL string equivalents.
 var binaryOpSQL = map[driver.Op]string{
