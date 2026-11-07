@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -37,6 +39,12 @@ import (
 // or B chosen by transferCnt parity; userspace flips parity each tick, then
 // drains the just-frozen ring. ~100ms balances responsiveness and overhead.
 const drainInterval = 100 * time.Millisecond
+
+// Linux UAPI include/uapi/linux/membarrier.h; x/sys/unix omits these constants.
+const (
+	membarrierCmdQuery  = 0
+	membarrierCmdGlobal = 1
+)
 
 // validateStackID reports whether an ID returned by bpf_get_stackid can index a stack map.
 // Zero is a valid key; only negative values indicate lookup errors.
@@ -56,6 +64,7 @@ type ringBufferContext struct {
 	stackMapBID        uint32
 	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
 	usym               *symbol.UsymResolver
+	synchronizeWriters func() error
 
 	// Perf loss records may arrive in a later window than their failed outputs.
 	sampleAttempts   uint64
@@ -72,6 +81,26 @@ func newRingBufferContext(
 	bufferSize int,
 	needsFallback bool,
 ) (*ringBufferContext, error) {
+	return newRingBufferContextWithQuery(b, ctx, bufferSize, needsFallback, queryMembarrier)
+}
+
+func queryMembarrier() (uintptr, unix.Errno) {
+	supported, _, errno := unix.Syscall(unix.SYS_MEMBARRIER, membarrierCmdQuery, 0, 0)
+	return supported, errno
+}
+
+func newRingBufferContextWithQuery(
+	b bpf.BPF, ctx context.Context, bufferSize int, needsFallback bool,
+	query func() (uintptr, unix.Errno),
+) (*ringBufferContext, error) {
+	// GLOBAL is disabled by kernels with NO_HZ_FULL; fail before opening readers.
+	supported, errno := query()
+	if errno != 0 {
+		return nil, fmt.Errorf("query native profiler writer synchronization: %w", errno)
+	}
+	if supported&membarrierCmdGlobal == 0 {
+		return nil, errors.New("native A/B profiling requires Linux MEMBARRIER_CMD_GLOBAL support")
+	}
 	// Start supplies the task context, so failure and timeout interrupt reads.
 	readerA, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
@@ -94,6 +123,7 @@ func newRingBufferContext(
 		stackMapAID:        b.MapIDByName("stack_map_a"),
 		stackMapBID:        b.MapIDByName("stack_map_b"),
 		needsFallback:      needsFallback,
+		synchronizeWriters: synchronizeNativeWriters,
 		usym:               symbol.NewUsymResolver(),
 	}, nil
 }
@@ -203,6 +233,19 @@ func (r *ringBufferContext) advanceSwapParity() (frozenRingBuffer, error) {
 	return ring, nil
 }
 
+// synchronizeNativeWriters relies on Linux GLOBAL membarrier using a sched-RCU
+// grace period (4.18) or unified RCU (5.0+). Non-sleepable tracing BPF runs with
+// preemption disabled, so all writers that selected the old parity have exited
+// before this returns. EXPEDITED commands only issue IPIs and are not substitutes.
+// An RCU stall can delay this syscall; an arbitrary timeout cannot prove quiescence.
+func synchronizeNativeWriters() error {
+	_, _, errno := unix.Syscall(unix.SYS_MEMBARRIER, membarrierCmdGlobal, 0, 0)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
 // drainFrozenRingBuffer preserves the A/B transfer boundary while delivering
 // bounded symbolized batches. Stack caches belong only to this frozen map.
 func (r *ringBufferContext) drainFrozenRingBuffer(
@@ -213,6 +256,12 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 	ring, err := r.advanceSwapParity()
 	if err != nil {
 		return err
+	}
+
+	if r.synchronizeWriters != nil {
+		if err := r.synchronizeWriters(); err != nil {
+			return fmt.Errorf("synchronize frozen native ring: %w", err)
+		}
 	}
 
 	accounted, expected, err := r.drainRingBuffer(
@@ -246,13 +295,28 @@ func (r *ringBufferContext) drainRingBuffer(
 	kernelCache := make(map[int32][]types.ProfileFrame)
 	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
 	for {
-		batch, readErr := ring.reader.ReadBatch(newEvent)
+		var batch bpf.PerfEventBatch
+		var readErr error
+		if drainer, ok := ring.reader.(bpf.PerfEventBatchDrainer); ok {
+			batch, readErr = drainer.ReadBatchAvailable(newEvent)
+		} else {
+			batch, readErr = ring.reader.ReadBatch(newEvent)
+		}
 		if batch.LostSamples > math.MaxUint64-uint64(len(batch.Events)) ||
 			uint64(len(batch.Events))+batch.LostSamples > math.MaxUint64-accounted {
 			return accounted, expected, fmt.Errorf("BPF transfer event count overflows uint64")
 		}
 
 		accounted += uint64(len(batch.Events)) + batch.LostSamples
+		valuesConverted := false
+		if r.needsFallback {
+			events, compactErr := compactRetainedEvents(batch.Events, convert)
+			if compactErr != nil {
+				return accounted, expected, compactErr
+			}
+			batch.Events = events
+			valuesConverted = true
+		}
 		var builder pipeline.BatchBuilder
 		for _, record := range batch.Events {
 			var base *abi.ProfilerEventBase
@@ -295,7 +359,11 @@ func (r *ringBufferContext) drainRingBuffer(
 				kernelCache[base.Kernstack] = kernel
 			}
 
-			value, err := convert(base.Value)
+			value := base.Value
+			var err error
+			if !valuesConverted {
+				value, err = convert(base.Value)
+			}
 			if err != nil {
 				return accounted, expected, err
 			}

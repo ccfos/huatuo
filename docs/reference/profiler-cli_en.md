@@ -37,6 +37,9 @@ These pprof endpoints describe the profiler process's own Go runtime, not the `-
 
 ## Collection
 
+Native on-CPU and memory collection require Linux `MEMBARRIER_CMD_GLOBAL` support (`CONFIG_MEMBARRIER` enabled and `NO_HZ_FULL` inactive). Ring swaps depend on this command providing a sched-RCU grace period on Linux 4.18 and a unified RCU grace period on Linux 5.0 and later; expedited membarrier commands cannot replace it. An RCU stall can delay a swap and collection shutdown.
+
+
 | Parameter | Default | Applies To | Description |
 | --- | --- | --- | --- |
 | `--memory-mode` | None | Native and Java memory | Memory measurement; required with `--type memory` |
