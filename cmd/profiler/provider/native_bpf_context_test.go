@@ -21,8 +21,11 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/cilium/ebpf"
 
@@ -787,11 +790,12 @@ func TestNativeReadersFollowTaskLifetime(t *testing.T) {
 			if single {
 				_, err = newSingleRingBufferContext(obj, taskCtx, 4096)
 			} else {
-				_, err = newRingBufferContext(
+				_, err = newRingBufferContextWithQuery(
 					obj,
 					taskCtx,
 					4096,
 					false,
+					supportedMembarrier,
 				)
 			}
 
@@ -972,7 +976,7 @@ func TestNativeReaderCreationPreservesCleanupFailure(t *testing.T) {
 		reader: first,
 		err:    createErr,
 	}
-	_, err := newRingBufferContext(obj, t.Context(), 4096, false)
+	_, err := newRingBufferContextWithQuery(obj, t.Context(), 4096, false, supportedMembarrier)
 	if !errors.Is(err, createErr) || !errors.Is(err, closeErr) || !first.closed {
 		t.Fatalf("creation error=%v cleanup attempted=%t", err, first.closed)
 	}
@@ -1189,5 +1193,14 @@ func TestFrozenDrainSynchronizationFailurePreservesUnreadRing(t *testing.T) {
 	err := r.drainFrozenRingBuffer(func() any { return nil }, nil, nil)
 	if !errors.Is(err, failure) || reader.reads != 0 || obj.values[bpfmap.SampleCountAIdx] != 7 {
 		t.Fatalf("err=%v reads=%d count=%d", err, reader.reads, obj.values[bpfmap.SampleCountAIdx])
+	}
+}
+
+func supportedMembarrier() (uintptr, unix.Errno) { return membarrierCmdGlobal, 0 }
+
+func TestNativeReaderRejectsUnsupportedMembarrier(t *testing.T) {
+	_, err := newRingBufferContextWithQuery(nil, t.Context(), 4096, false, func() (uintptr, unix.Errno) { return 0, 0 })
+	if err == nil || !strings.Contains(err.Error(), "requires Linux MEMBARRIER_CMD_GLOBAL") {
+		t.Fatalf("error = %v, want unsupported membarrier", err)
 	}
 }

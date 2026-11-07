@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -347,9 +348,7 @@ func TestPerfEventReaderReadBatchDoesNotWaitForMoreEvents(t *testing.T) {
 				require.NoError(t, err)
 				require.Zero(t, ret)
 			}
-			start := time.Now()
 			batch, err := readAvailableForTest(t, reader, func() any { return new([8]byte) })
-			elapsed := time.Since(start)
 			require.NoError(t, err)
 			require.Zero(t, batch.LostSamples)
 			if populated {
@@ -359,8 +358,6 @@ func TestPerfEventReaderReadBatchDoesNotWaitForMoreEvents(t *testing.T) {
 			} else {
 				require.Empty(t, batch.Events)
 			}
-			// Allow scheduling slack while still rejecting the legacy 500 ms wait.
-			require.Less(t, elapsed, 300*time.Millisecond, "drained rings must not wait for future events")
 			batch, err = readAvailableForTest(t, reader, func() any { return new([8]byte) })
 			require.NoError(t, err)
 			require.Empty(t, batch.Events)
@@ -453,4 +450,27 @@ func TestPerfEventReaderReadBatchPreservesBlockingWait(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, batch.Events)
 	require.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond, "off-CPU readers must retain an idle wait")
+}
+
+type deadlineRecordingReader struct {
+	*perf.Reader
+	deadline time.Time
+	future   bool
+}
+
+func (r *deadlineRecordingReader) SetDeadline(deadline time.Time) {
+	r.deadline = deadline
+	r.future = deadline.After(time.Now())
+}
+func (*deadlineRecordingReader) ReadInto(*perf.Record) error { return os.ErrDeadlineExceeded }
+
+func TestPerfEventReaderAvailableUsesExpiredDeadline(t *testing.T) {
+	backend := &deadlineRecordingReader{}
+	r := &perfEventReader{rd: backend}
+	before := time.Now()
+	batch, err := r.ReadBatchAvailable(func() any { return new([8]byte) })
+	require.NoError(t, err)
+	require.Empty(t, batch.Events)
+	require.False(t, backend.deadline.Before(before))
+	require.False(t, backend.future)
 }
