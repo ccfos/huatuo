@@ -60,6 +60,9 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 | --- | --- | --- | --- | --- | --- |
 | `runqlat_container_latency` | 调度延迟分桶计数 | 计数 | 容器 | eBPF | zone |
 | `runqlat_latency` | 调度延迟分桶计数 | 计数 | 宿主机 | eBPF | zone |
+| `runqlat_workload_latency` | 沙箱调度延迟分桶计数 | 计数 | 沙箱 Host | eBPF | zone、workload 公共标签 |
+
+对象指标按已绑定的 CPU CSS 关联，不要求代表 PID、网络或内存控制器。CSS 缺失时跳过对象，不输出旧缓存；普通容器选择、Kata 共享 cgroup 的代表选择和原容器标签保持。计数随实例保留，普通元数据刷新不重置。v1/v2 均需内核支持对应的 CSS 和调度探针；此项为公共采集能力，生产 CubeSandbox 来源仍待接入，不增加沙箱 Guest 指标。
 
 ### 软中断延迟
 

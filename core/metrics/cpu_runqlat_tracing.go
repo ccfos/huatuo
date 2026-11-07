@@ -109,9 +109,9 @@ func aggregatePerCPUValue(raw []byte, dst *latencyBpfData) error {
 	return nil
 }
 
-func (c *runqlatCollector) updateContainerDataCache(
+func (c *runqlatCollector) updateWorkloadDataCache(
 	object bpf.BPF,
-	cssContainers map[uint64]*pod.Container,
+	cssWorkloads map[uint64]*pod.Pod,
 ) error {
 	items, err := object.DumpMapByName("cpu_tg_metric")
 	if err != nil {
@@ -127,12 +127,12 @@ func (c *runqlatCollector) updateContainerDataCache(
 			return fmt.Errorf("read cpu_tg_metric key: %w", err)
 		}
 
-		container, ok := cssContainers[css]
+		workload, ok := cssWorkloads[css]
 		if !ok {
 			continue
 		}
 
-		cache, ok := container.LifeResources("runqlat").(*latencyBpfData)
+		cache, ok := workload.LifeResources("runqlat").(*latencyBpfData)
 		if !ok || cache == nil {
 			continue
 		}
@@ -169,39 +169,24 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 	}
 	defer lease.Release()
 
-	containers, err := pod.ContainersByType(pod.ContainerTypeNormal)
-	if err != nil {
-		return nil, err
-	}
+	workloads := pod.PodsByCgroupCSS(subsystem.SubsystemCPU, pod.ContainerTypeNormal)
 
-	cssContainer := pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
-
-	// update all containers cache data
-	if err := c.updateContainerDataCache(lease.BPF, cssContainer); err != nil {
-		log.Warnf("runqlat: update container cache: %v", err)
+	if err := c.updateWorkloadDataCache(lease.BPF, workloads); err != nil {
+		log.Warnf("runqlat: update workload cache: %v", err)
 	}
 
 	data := []*metric.Data{}
-	for _, container := range containers {
-		// Skip containers with no CPU cgroup address: they are absent from
-		// cssContainer and therefore never updated by updateContainerDataCache.
-		// Reporting their zero/stale cache would produce misleading metrics.
-		if css := container.CgroupCss[subsystem.SubsystemCPU]; css == 0 ||
-			(container.HostKataSandboxID() != "" &&
-				cssContainer[css] != container) {
-			continue
-		}
-
-		cache, ok := container.LifeResources("runqlat").(*latencyBpfData)
+	for _, workload := range workloads {
+		cache, ok := workload.LifeResources("runqlat").(*latencyBpfData)
 		if !ok || cache == nil {
 			continue
 		}
 
 		data = append(data,
-			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
-			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
-			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
-			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
+			metric.NewPodCounterData(workload, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
+			metric.NewPodCounterData(workload, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
+			metric.NewPodCounterData(workload, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
+			metric.NewPodCounterData(workload, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
 	}
 
 	return append(data, c.fetchHostRunqlat(lease.BPF)...), nil

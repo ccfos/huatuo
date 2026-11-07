@@ -620,6 +620,9 @@ Source 填写待校验位置，不填写 CSS。发布给采集器的路径和 CS
 
 公共查询新增 `PodByID` 和 `Pods`，返回已发布只读视图；返回 nil 对象表示缓存中没有可用对象。发现状态通过 Manager/订阅状态独立查询，不能因来源暂时失败而隐藏已有元数据。旧 `ContainerByID`、`Containers` 及容器分类入口在迁移期仅返回 `TypeContainer`。
 
+BPF 指标使用 `PodsByCgroupCSS(controller, containerTypes)` 获取同一缓存快照下的 CSS 到 Pod 映射。`containerTypes` 仅延续 Container 来源的旧类型筛选，沙箱不要求 ContainerInfo；零 CSS 不返回。Kata 共享地址沿用兼容视图的稳定首次发现时间选择代表，不能使用每次刷新的 Pod.SyncedAt 重新排序。查询不触发来源或内核 I/O，不增加一份实例缓存。
+
+
 Store 每条记录以 Pod 为公共对象。为避免一次迁移全部调用方，可在同一记录内保留一次提交生成的只读 Container 兼容视图，和 Pod 共用同一份实例采集状态；禁止另建容器 Store 或独立更新该视图。来源返回的 map 和视图在提交前建立明确所有权，提交后不可原地变更。
 
 迁移期间，`ContainerInfo` 以不序列化字段保留旧视图所需的 `CgroupPath`、Guest 扫描标记及独立 `MemoryCgroupPath`。Guest 缺少内存控制器时，旧视图仍明确返回不可用，不回退到 CPU 路径。Manager 的 `ProcRoot` 选项接收原有 Guest 扫描根目录，使 mountinfo、进程及网络核验读取同一本地 proc 视图；默认沿用现有 proc 配置，不新增用户配置开关。Store 不保存来源实例或扫描器指针，Guest 引用校验使用已发布的进程与本机状态。容器来源由启动方通过 `container.NewSource` 创建并传入 `pod.StartManager`；根包不反向依赖来源子包。容器专有的本地 runtime 查询和引用校验留在来源子包，公共层提供目录身份/CSS 与内核资源校验，旧 CLI/API 的行为由调用方适配保持。

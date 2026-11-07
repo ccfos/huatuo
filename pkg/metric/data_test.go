@@ -489,3 +489,23 @@ func BenchmarkPodGaugeData(b *testing.B) {
 		})
 	}
 }
+
+// TestNewPodCounterData 验证容器 counter 与旧入口完全一致，沙箱沿用固定身份、
+// 名称回退和 zone 标签，并保持 counter 类型而非 gauge。
+func TestNewPodCounterData(t *testing.T) {
+	for _, kind := range []string{pod.TypeContainer, pod.TypeCubeSandbox, pod.TypeOpenSandbox} {
+		t.Run(kind, func(t *testing.T) {
+			workload := &pod.Pod{ID: "checkout-sandbox", Type: kind, Labels: map[string]any{pod.LabelHostNamespace: "production"}, Container: &pod.ContainerInfo{Hostname: "huatuo-dev", Type: pod.ContainerTypeNormal, Qos: pod.ContainerQosLevelMin}}
+			labels := map[string]string{LabelHost: "huatuo-dev", LabelRegion: "huatuo-region", "zone": "2"}
+			got := NewPodCounterData(workload, "latency", 12, "CPU queue latency", labels)
+			want := NewPodGaugeData(workload, "latency", 12, "CPU queue latency", labels)
+			want.valueType = MetricTypeCounter
+			if kind == pod.TypeContainer {
+				want = NewContainerCounterData(&pod.Container{Hostname: "huatuo-dev", Type: pod.ContainerTypeNormal, Qos: pod.ContainerQosLevelMin, Labels: workload.Labels}, "latency", 12, "CPU queue latency", labels)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("counter=%+v want=%+v", got, want)
+			}
+		})
+	}
+}

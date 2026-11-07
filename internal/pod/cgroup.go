@@ -318,3 +318,34 @@ func (b *CgroupBinding) invalidateDirectory(directory string) {
 		}
 	}
 }
+
+// PodsByCgroupCSS returns one cached owner per bound controller address.
+// Container filtering and Kata selection retain the compatibility view's first
+// discovery timestamp; Pod.SyncedAt changes on every successful refresh.
+func PodsByCgroupCSS(controller string, containerTypes ContainerType) map[uint64]*Pod {
+	containerView.mu.RLock()
+	defer containerView.mu.RUnlock()
+	owners := make(map[uint64]*Pod, len(containerView.records))
+	for _, record := range containerView.records {
+		workload := record.pod
+		if workload == nil {
+			continue
+		}
+		css := workload.Cgroups.CSS[controller]
+		if css == 0 {
+			continue
+		}
+		if workload.Type == TypeContainer {
+			container := record.container
+			if container == nil || container.Type&containerTypes == 0 || container.Qos < ContainerQosLevelMin {
+				continue
+			}
+			if current := owners[css]; current != nil && container.HostKataSandboxID() != "" &&
+				keepKataRepresentative(containerView.records[current.ID].container, container) {
+				continue
+			}
+		}
+		owners[css] = workload
+	}
+	return owners
+}

@@ -21,9 +21,9 @@ int bpf_cgroup_rmdir_prog(struct bpf_raw_tracepoint_args *ctx)
 				       CGROUP_CSS_OPERATION_REMOVE);
 }
 
-/* CPU-only v2 cgroups may have no memory.current notification file. */
-SEC("kprobe/cpu_weight_nice_read_s64")
-int bpf_cgroup_cpu_weight_nice_prog(struct pt_regs *ctx)
+/* Binding reads also resolve cgroups that predate agent startup. */
+SEC("kprobe/cgroup_clone_children_read_or_cpu_weight_nice_read_s64")
+int bpf_cgroup_read_prog(struct pt_regs *ctx)
 {
 	struct cgroup_subsys_state *css = (void *)PT_REGS_PARM1(ctx);
 

@@ -65,6 +65,9 @@ Scheduling latency is the wait from becoming runnable to actually receiving CPU 
 | --- | --- | --- | --- | --- | --- |
 | `runqlat_container_latency` | Scheduling-latency bucket count | Count | Container | eBPF | zone |
 | `runqlat_latency` | Scheduling-latency bucket count | Count | Host | eBPF | zone |
+| `runqlat_workload_latency` | Sandbox scheduling-latency bucket count | Count | Sandbox Host | eBPF | zone, common workload labels |
+
+Workload attribution uses bound CPU CSS without a representative PID, network or memory controller. Workloads without CSS are skipped rather than emitting stale cached values. Normal-container selection, Kata shared-cgroup representatives and container labels are preserved. Instance counters survive metadata refreshes. V1/v2 require the corresponding CSS and scheduler probes. This is a common collector capability; the production CubeSandbox source is still pending, and no sandbox Guest metrics are added.
 
 ### Softirq Latency
 

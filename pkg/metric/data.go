@@ -301,6 +301,13 @@ func NewPodGaugeData(workload *pod.Pod, name string, value float64, help string,
 	return data
 }
 
+// NewPodCounterData uses the same identity boundary as workload gauges.
+func NewPodCounterData(workload *pod.Pod, name string, value float64, help string, label map[string]string) *Data {
+	data := NewPodGaugeData(workload, name, value, help, label)
+	data.valueType = MetricTypeCounter
+	return data
+}
+
 // NewContainerGaugeData creates a new instance of container Data.
 //
 // NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.

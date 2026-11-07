@@ -165,3 +165,46 @@ func TestKataRepresentativePrefersBusinessOverGuestAgent(t *testing.T) {
 		}
 	}
 }
+
+// TestPodsByCgroupCSS 验证公共查询只返回非零控制器绑定，容器筛选不作用于沙箱；
+// Kata 代表沿用首次发现时间，刷新 Pod.SyncedAt 不换代表，删除后才切换。
+func TestPodsByCgroupCSS(t *testing.T) {
+	previous := containerView
+	containerView = newTestContainerStore()
+	t.Cleanup(func() { containerView = previous })
+	members := map[string]*Container{
+		"checkout-first":   {ID: "checkout-first", Type: ContainerTypeNormal, RuntimeType: "io.containerd.kata.v2", SandboxID: "checkout-vm", SyncedAt: time.Unix(100, 0), CgroupCss: map[string]uint64{"cpu": 8100}},
+		"checkout-next":    {ID: "checkout-next", Type: ContainerTypeNormal, RuntimeType: "io.containerd.kata.v2", SandboxID: "checkout-vm", SyncedAt: time.Unix(200, 0), CgroupCss: map[string]uint64{"cpu": 8100}},
+		"checkout-sidecar": {ID: "checkout-sidecar", Type: ContainerTypeSidecar, CgroupCss: map[string]uint64{"cpu": 8200}},
+		"checkout-unbound": {ID: "checkout-unbound", Type: ContainerTypeNormal},
+	}
+	for id, container := range members {
+		container.Qos = ContainerQosLevelMin
+		containerView.records[id] = &containerRecord{pod: podFromContainer(container), container: container}
+	}
+	sandbox := &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Cgroups: CgroupBinding{CSS: map[string]uint64{"cpu": 8300, "memory": 8400}}}
+	containerView.records[sandbox.ID] = &containerRecord{pod: sandbox}
+	for range 20 {
+		owners := PodsByCgroupCSS("cpu", ContainerTypeNormal)
+		if len(owners) != 2 || owners[8100] != containerView.records["checkout-first"].pod || owners[8300] != sandbox {
+			t.Errorf("CPU owners=%v", owners)
+		}
+	}
+	containerView.records["checkout-first"].pod.SyncedAt = time.Unix(500, 0)
+	if got := PodsByCgroupCSS("cpu", ContainerTypeNormal)[8100]; got == nil || got.ID != "checkout-first" {
+		t.Errorf("refresh changed Kata representative: %v", got)
+	}
+	delete(containerView.records, "checkout-first")
+	if got := PodsByCgroupCSS("cpu", ContainerTypeNormal)[8100]; got == nil || got.ID != "checkout-next" {
+		t.Errorf("deleted representative was not replaced: %v", got)
+	}
+	if got := PodsByCgroupCSS("cpu", ContainerTypeNormal|ContainerTypeSidecar); len(got) != 3 {
+		t.Errorf("sidecar selection=%v", got)
+	}
+	if got := PodsByCgroupCSS("memory", ContainerTypeNormal); len(got) != 1 || got[8400] != sandbox {
+		t.Errorf("memory owners=%v", got)
+	}
+	if got := PodsByCgroupCSS("blkio", ContainerTypeNormal); len(got) != 0 {
+		t.Errorf("unbound controller owners=%v", got)
+	}
+}

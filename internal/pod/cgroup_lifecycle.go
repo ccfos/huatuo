@@ -104,8 +104,10 @@ func cgroupCssInitEventSync() error {
 	if cgroups.CgroupMode() == cgroups.Unified {
 		opts = append(
 			opts,
-			bpf.AttachOption{ProgramName: "bpf_cgroup_cpu_weight_nice_prog", Symbol: "cpu_weight_nice_read_s64", Optional: true},
+			bpf.AttachOption{ProgramName: "bpf_cgroup_read_prog", Symbol: "cpu_weight_nice_read_s64", Optional: true},
 		)
+	} else {
+		opts = append(opts, bpf.AttachOption{ProgramName: "bpf_cgroup_read_prog", Symbol: "cgroup_clone_children_read", Optional: true})
 	}
 	if err := cssBpf.AttachWithOptions(opts); err != nil {
 		cancel()

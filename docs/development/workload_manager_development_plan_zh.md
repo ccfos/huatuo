@@ -10,7 +10,7 @@ date: 2026-11-05
 
 本计划以 [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) 为依据。先保持现有 Container 和 Kata 行为完成公共层迁移，再接入 CubeSandbox Host，最后打通 Guest 数据链路。各步骤定义交付要求，实际实现与验证结果见文末记录。
 
-当前进度：步骤 00–07 已完成；步骤 08 进行中，已迁移 loadavg，其余 BPF、IO、网络采集器继续逐项处理。CubeSandbox 发现来源及生产采集配置尚未开放。
+当前进度：步骤 00–07 已完成；步骤 08 进行中，已迁移 loadavg、runqlat，其余内存 BPF、IO、网络采集器继续逐项处理。CubeSandbox 发现来源及生产采集配置尚未开放。
 
 ## 开发与提交原则
 
@@ -848,7 +848,21 @@ metrics race、v1/v2 memory-only 文件集成和 unified 根目录能力检查�
 
 172.16.135.140 上 metrics race 与上述真实 v1 集成通过；172.16.134.96 上验证 v2 仅输出宿主机负载。旧、新容器采集循环各三次 benchmark 中位数为 50979 → 53068 ns/op（约 +4.1%）、6824 → 6920 B/op、71 → 69 allocs/op，增加目录存在性检查，不访问发现来源。完整构建、全量单测及提交前 `make check` 纳入本次检查；日志位于 `rebase-20261106/logs/step08-loadavg-*`。
 
-步骤 08 尚未完成：runqlat、memory_reclaim、IO 和网络仍按清单逐项迁移。CubeSandbox 生产来源尚未开放。
+步骤 08a 完成时尚缺 runqlat、memory_reclaim、IO 和网络；runqlat 的后续交付见 08b。CubeSandbox 生产来源尚未开放。
+
+### 步骤 08b：runqlat 按 CPU CSS 采集
+
+`cpu_runqlat_tracing.go` 改用公共 `PodsByCgroupCSS` 查询和 Pod 实例状态。查询在同一缓存锁下筛选当前 CPU CSS；容器仍只选择普通类型，Kata 代表复用兼容视图的首次发现时间，沙箱不要求 ContainerInfo、PID 或网络。新增 `NewPodCounterData` 复用既有指标身份构造，保留容器 counter 名称、标签、分桶与 Host 输出，沙箱使用 `runqlat_workload_latency`。CSS 缺失不输出旧实例缓存；普通元数据刷新保留累计值。
+
+真实集成首次发现一个前置缺口：启动前已存在、名称不符合容器 ID 的 v1 cgroup，被初始化扫描跳过，而初始化后没有常驻 v1 读取探针，最终始终没有 CSS。复用常驻 CSS 程序监听 `cgroup_clone_children_read`，按 Refresh 事件补齐绑定；v2 继续使用既有 `cpu_weight_nice_read_s64`。重复信息仍不触发再次发现，未新增逐对象 BPF 加载或外部查询。
+
+新增集成用例在真实 cgroup/BPF 环境验证容器及两类沙箱：启动前创建 cgroup、自动补齐 CSS、无代表 PID、真实 per-CPU map 分桶求和与固定标签、未知 CSS 忽略、错误 map 处理、元数据刷新保留缓存、测试进程调度事件增加计数、删除 cgroup 后仅输出 Host。只将测试自身的短时忙循环进程放入测试 cgroup，并在退出时关闭 BPF 和删除资源，不操作已有沙箱。Kata 代表及容器 counter 兼容通过原单元测试文件中的扩展用例验证；这不是实际 Kata/CubeSandbox VM 验收。
+
+172.16.135.140（v1）与 172.16.134.96（v2）的真实 cgroup/BPF 集成通过；前者同时通过集成 race 以及 pod/container、metric、metrics 的完整 race 检查。完整构建、全量单测和提交前 `make check` 纳入本步验证。日志位于 `rebase-20261106/logs/step08-runqlat-*`，v2 日志为 `/tmp/huatuo-step08-runqlat-v2.log`。
+
+旧、新容器 runqlat 采集循环各三次 benchmark 中位数为 74309 → 76719 ns/op（约 +3.2%）、约 15864 → 15802 B/op、175 → 175 allocs/op；没有新增来源查询。重复 CSS 通知处理为 68.79 ns/op、0 B/op、0 allocs/op，仍不会由重复读取形成发现循环。基准仅比较采集循环，保留本步已修复的公共 v1 CSS 绑定条件一致。
+
+步骤 08 仍剩其余内存 BPF、IO 和网络采集器，生产 CubeSandbox 来源尚未开放。
 
 ## 后续统一事项
 
