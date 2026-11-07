@@ -56,7 +56,7 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dump memcg reclaim count: %w", err)
 	}
-	if !pod.KubeletPodListRunningEnabled() {
+	if !pod.DiscoveryInitialized() {
 		return memcgReclaimMetrics(items, nil)
 	}
 	// A nonzero host count without container rows may reflect lost metadata or

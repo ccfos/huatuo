@@ -60,6 +60,9 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 | --- | --- | --- | --- | --- | --- |
 | `runqlat_container_latency` | 调度延迟分桶计数 | 计数 | 容器 | eBPF | zone |
 | `runqlat_latency` | 调度延迟分桶计数 | 计数 | 宿主机 | eBPF | zone |
+| `runqlat_workload_latency` | 沙箱调度延迟分桶计数 | 计数 | 沙箱 Host | eBPF | zone、workload 公共标签 |
+
+对象指标按已绑定的 CPU CSS 关联，不要求代表 PID、网络或内存控制器。CSS 缺失时跳过对象，不输出旧缓存；普通容器选择、Kata 共享 cgroup 的代表选择和原容器标签保持。计数随实例保留，普通元数据刷新不重置。v1/v2 均需内核支持对应的 CSS 和调度探针；此项为公共采集能力，生产 CubeSandbox 来源仍待接入，不增加沙箱 Guest 指标。
 
 ### 软中断延迟
 
@@ -116,6 +119,22 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 | `cpu_stat_container_burst_time` | 使用突发 CPU 容量的累计时间 | 纳秒 | 容器 | — |
 | `cpu_stat_container_nr_bursts` | 使用突发 CPU 容量的累计周期数 | 计数 | 容器 | — |
 
+### 沙箱 CPU 文件指标
+
+`cpu_util` 和 `cpu_stat` 已支持从公共 workload 的 cgroup 绑定采集，保留容器原有 `container_` 指标及标签。沙箱使用下列对应指标；当前配置尚未开放 CubeSandbox/OpenSandbox 发现，这些能力先通过合成来源验证，不代表沙箱已可部署采集。
+
+| 指标 | 含义与单位 |
+| --- | --- |
+| `cpu_util_workload_cores` | 可用 CPU 容量，核 |
+| `cpu_util_workload_usr`、`cpu_util_workload_sys`、`cpu_util_workload_total` | 用户态、内核态、总利用率，% |
+| `cpu_stat_workload_nr_throttled`、`cpu_stat_workload_throttled_time` | 累计限流周期数、累计限流时间（纳秒） |
+| `cpu_stat_workload_wait_sum_percent` | 区间等待占比，% |
+| `cpu_stat_workload_nr_bursts`、`cpu_stat_workload_burst_time` | 累计突发周期数、累计突发时间（纳秒） |
+
+固定公共标签为 `host`、`region`、`workload_id`、`workload_type`、`workload_name`、`workload_namespace`。名称缺失时取 ID，未知命名空间保留空字符串；保留采集器自己的标签，不展开来源 Labels，也不添加容器专有标签。
+
+CPU 文件指标不要求代表 PID、网络或 CSS。v1 分别使用已绑定的 cpu、cpuacct、cpuset 目录，v2 使用已绑定的 unified 目录，支持挂载子树。资源缺失不回退到宿主机目录；缺少 cpuacct 时不输出利用率或等待占比，但仍输出可读取的限流和突发计数。字段未由内核提供时不补零；容量计算仍沿用有效 cpuset、配额和在线核数规则。元数据刷新保留实例的差值基线。本次不增加沙箱 Guest 指标。
+
 ### 负载
 
 宿主机输出 1、5、15 分钟平均负载；容器输出当前可运行和不可中断任务数，两者不是相同时间窗口的统计。
@@ -127,6 +146,10 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 | `loadavg_load15` | 系统过去 15 分钟的平均负载 | 任务数 | 宿主机 | — | — |
 | `loadavg_container_nr_running` | 当前可运行任务数（含正在运行和等待 CPU 的任务） | 计数 | 容器 | — | 只支持 cgroup v1 |
 | `loadavg_container_nr_uninterruptible` | 容器中不可中断任务的数量 | 计数 | 容器 | — | 只支持 cgroup v1 |
+| `loadavg_workload_nr_running` | 沙箱当前可运行任务数 | 计数 | 沙箱 Host | workload 公共标签 | 仅 legacy v1 与 TASKSTATS 可用时 |
+| `loadavg_workload_nr_uninterruptible` | 沙箱当前不可中断任务数 | 计数 | 沙箱 Host | workload 公共标签 | 同上 |
+
+负载采集使用已绑定的 v1 CPU 目录，不要求代表 PID、netns 或 CSS；目录缺失或内核查询失败时只跳过该对象，宿主机平均负载仍继续输出。保持原先仅在 legacy cgroup 模式启用对象负载的限制，v2/hybrid 不新增支持。容器标签和 normal/sidecar 选择保持不变。沙箱条目描述公共采集能力，生产 CubeSandbox 来源仍待后续接入。
 
 ## 内存
 
@@ -142,11 +165,21 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 
 `memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 依赖滴滴定制内核的 `memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time` 接口。
 
+对应沙箱指标使用 `memory_others_workload_` 前缀和固定 workload 标签，从已绑定的 memory/unified 目录读取相同文件，不要求 CPU、PID 或 CSS。缺失或无法解析的可选文件只跳过对应指标。启动检查支持 legacy memory 根目录和 unified 根目录；当前沙箱发现来源仍未开放。
+
 主线及常见发行版内核缺少这些接口时不会输出对应指标，无需额外加载模块。标准内核上的容器直接回收次数可使用 `memory_reclaim_container_directstall` 观测。
+
+### 内存事件计数
+
+`memory_events` 从对象已绑定的 memory/unified 目录读取 `memory.events`。容器保留 `memory_events_container_<字段>`；沙箱输出 `memory_events_workload_<字段>`，例如 `memory_events_workload_oom`，沿用六个固定 workload 标签。字段计数保持内核原值并使用现有 Gauge 类型，受 `MetricCollector.MemoryEvents.Included/Excluded` 控制。
+
+缺少 CPU、进程或 CSS 不影响读取；缺少 memory 绑定或文件时跳过该对象，非法内容仍报错。当前沙箱发现配置尚未开放，本路径使用合成来源验证。
 
 ### 内存状态
 
 容器字段来自 `memory.stat`，宿主机字段来自 `/proc/vmstat`，均受 `MetricCollector.Vmstat` 过滤规则影响。字段是否存在及其含义取决于内核和 cgroup 版本。
+
+沙箱使用对应的 `memory_vmstat_workload_<字段>` 名称（如 `memory_vmstat_workload_active_file`）和六个固定 workload 标签，容器原名称保持不变。只读取已绑定的 memory/unified 目录，不要求 CPU、PID 或 CSS；缺失或无法解析的对象文件不会影响其他对象及宿主机指标。沙箱先复用旧 `IncludedOnContainer` / `ExcludedOnContainer` 规则，后续统一配置命名与语义。当前沙箱发现配置尚未开放。
 
 **容器内存**
 

@@ -224,6 +224,7 @@ assert_cpuidle_logs() {
 	# Discovery races are retried; target metadata and flame graphs are verified.
 	awk '/level="?warn|"level":"warn"/ &&
 		!/creation is not yet reflected by kubelet/ &&
+		!/msg="refresh workload view" error="resolve container \\"[0-9a-f]+\\": (container [0-9a-f]+ has no matching running CRI status|stat \/proc\/[0-9]+: no such file or directory)" file="manager.go:[0-9]+" func="internal\/pod\.\(\*workloadManager\)\.run"/ &&
 		!/msg="lost BPF perf event samples".*func="internal\/pod\.cgroupCssEventSyncHandler\.func1"/ {
 			print; unexpected = 1
 		} END {exit unexpected}' "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \

@@ -74,12 +74,11 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Container, numCores float64) error {
+func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, workload *pod.Pod, numCores float64) error {
 	var (
-		usrUtil    float64
-		sysUtil    float64
-		totalUtil  float64
-		cgroupPath string
+		usrUtil   float64
+		sysUtil   float64
+		totalUtil float64
 	)
 
 	c.mutex.Lock()
@@ -90,11 +89,13 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 		return nil
 	}
 
-	if container != nil {
-		cgroupPath = container.CgroupPath
+	var stat *stats.CpuUsage
+	var err error
+	if workload == nil {
+		stat, err = c.cgroup.CpuUsage("")
+	} else {
+		stat, err = workloadCPUUsage(workload)
 	}
-
-	stat, err := c.cgroup.CpuUsage(cgroupPath)
 	if err != nil {
 		return err
 	}
@@ -142,15 +143,18 @@ func (c *cpuUtilCollector) updateHostDataCache() ([]*metric.Data, error) {
 func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
-	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
+	workloads, err := pod.Pods()
 	if err != nil {
 		return nil, err
 	}
 
-	for _, container := range containers {
-		cpuQuota, err := c.cgroup.CpuQuotaAndPeriod(container.CgroupPath)
+	for _, workload := range workloads {
+		if !isCPUWorkload(workload) {
+			continue
+		}
+		cpuQuota, err := workloadCPUQuota(workload)
 		if err != nil {
-			log.Infof("cpu quota: container=%s err=%v", container, err)
+			log.Infof("cpu quota: workload=%s err=%v", workload.ID, err)
 			continue
 		}
 
@@ -159,26 +163,26 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			cpuQuota.EffectiveCPUCount, uint64(c.numCores),
 		)
 		if err != nil {
-			log.Infof("cpu capacity: container=%s err=%v", container, err)
+			log.Infof("cpu capacity: workload=%s err=%v", workload.ID, err)
 			continue
 		}
 
-		dataCache, ok := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
+		dataCache, ok := workload.LifeResources("collector_cpu_util").(*cpuUtilStat)
 		if !ok || dataCache == nil {
-			log.Warnf("cpu cache: container=%s unavailable", container)
+			log.Warnf("cpu cache: workload=%s unavailable", workload.ID)
 			continue
 		}
-		if err := c.updateDataCache(dataCache, container, numCores); err != nil {
-			log.Infof("cpu usage: container=%s err=%v", container, err)
+		if err := c.updateDataCache(dataCache, workload, numCores); err != nil {
+			log.Infof("cpu usage: workload=%s err=%v", workload.ID, err)
 			continue
 		}
 
 		metrics = append(
 			metrics,
-			metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
-			metric.NewContainerGaugeData(container, "usr", dataCache.usrUtil, "cpu usr for the containers", nil),
-			metric.NewContainerGaugeData(container, "sys", dataCache.sysUtil, "cpu sys for the containers", nil),
-			metric.NewContainerGaugeData(container, "total", dataCache.totalUtil, "cpu total for the containers", nil),
+			metric.NewPodGaugeData(workload, "cores", numCores, "cpu core number for the containers", nil),
+			metric.NewPodGaugeData(workload, "usr", dataCache.usrUtil, "cpu usr for the containers", nil),
+			metric.NewPodGaugeData(workload, "sys", dataCache.sysUtil, "cpu sys for the containers", nil),
+			metric.NewPodGaugeData(workload, "total", dataCache.totalUtil, "cpu total for the containers", nil),
 		)
 	}
 

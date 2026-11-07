@@ -31,6 +31,7 @@ import (
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/pidfile"
 	"github.com/ccfos/huatuo/internal/version"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -85,6 +86,7 @@ type Daemon struct {
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
 	tracingStore     *tracingstore.Store
+	profileStore     *profilingstore.Store
 	apiServer        *httpserver.Server
 }
 
@@ -144,6 +146,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		{"storage", setupStorage},
 		{"pod", setupPodManager},
 		{"metrics", setupMetrics},
+		{"guestbridge", startGuestBridge},
 		{"toolstream", startToolstream},
 		{"tracing", startTracing},
 		{"operations", startOperations},

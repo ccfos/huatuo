@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,22 +14,4 @@
 
 package pod
 
-import (
-	corev1 "k8s.io/api/core/v1"
-)
-
-const (
-	labelHostNamespace = "HostNamespace"
-)
-
-func parseContainerLabels(typ ContainerType, pod *corev1.Pod) (map[string]any, error) {
-	var err error
-	labels := make(map[string]any)
-
-	labels[labelHostNamespace], err = parseContainerLabelHostNamespace(typ, pod)
-	if err != nil {
-		return nil, err
-	}
-
-	return labels, nil
-}
+const LabelHostNamespace = "HostNamespace"

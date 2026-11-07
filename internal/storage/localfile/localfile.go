@@ -22,7 +22,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/filerotate"
@@ -73,7 +74,10 @@ func (b *Storage) Save(
 		return driver.ErrUnsupportedOp
 	}
 	filename := tracerFilename(rec)
-	if filename == "" {
+	if !filepath.IsLocal(filename) || filename == "." || filepath.Base(filename) != filename || strings.ContainsAny(
+		filename,
+		"\\\x00",
+	) {
 		return driver.ErrInvalidField
 	}
 
@@ -121,7 +125,7 @@ func (b *Storage) Close(_ context.Context) error {
 }
 
 func (b *Storage) newFileWriter(filename string) io.Writer {
-	fp := path.Join(b.path, filename)
+	fp := filepath.Join(b.path, filename)
 
 	fileWriter, ok := b.writerCache.Load(fp)
 	if !ok {
@@ -134,10 +138,7 @@ func (b *Storage) newFileWriter(filename string) io.Writer {
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
-	}
-
+	// Cache reads share the lock with insertion of a different tracer name.
 	b.lock.Lock()
 	defer b.lock.Unlock()
 

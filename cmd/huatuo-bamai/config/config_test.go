@@ -709,3 +709,53 @@ func TestUpdatePublishesConsistentSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestPodDiscoveryConfiguration 验证默认及显式来源配置、Host/Guest 对未实现来源的
+// 拒绝，以及同步周期和超时的零值、负值、溢出边界；加载失败不得发布新配置。
+func TestPodDiscoveryConfiguration(t *testing.T) {
+	for _, mode := range []string{"none", "sandbox"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, test := range []struct {
+				name    string
+				body    string
+				invalid bool
+			}{
+				{name: "defaults"},
+				{name: "explicit", body: "Source=\"container\"\nSyncIntervalSeconds=7\nDiscoveryTimeoutSeconds=3"},
+				{name: "cube", body: "Source=\"cubesandbox\"", invalid: true},
+				{name: "open", body: "Source=\"opensandbox\"", invalid: true},
+				{name: "unknown", body: "Source=\"unsupported\"", invalid: true},
+				{name: "empty", body: "Source=\"\"", invalid: true},
+				{name: "zero interval", body: "SyncIntervalSeconds=0", invalid: true},
+				{name: "negative interval", body: "SyncIntervalSeconds=-1", invalid: true},
+				{name: "overflow interval", body: "SyncIntervalSeconds=9223372037", invalid: true},
+				{name: "zero timeout", body: "DiscoveryTimeoutSeconds=0", invalid: true},
+				{name: "negative timeout", body: "DiscoveryTimeoutSeconds=-1", invalid: true},
+				{name: "overflow timeout", body: "DiscoveryTimeoutSeconds=9223372037", invalid: true},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					before := Get()
+					path := writeConfigFile(t, t.TempDir(), "discovery.conf", fmt.Sprintf("Mode=%q\n[Pod]\n%s", mode, test.body))
+					err := Load(path)
+					if (err != nil) != test.invalid {
+						t.Errorf("Load()=%v, invalid=%t", err, test.invalid)
+					}
+					if test.invalid {
+						if Get() != before {
+							t.Error("rejected configuration was published")
+						}
+						return
+					}
+					interval, timeout := 30, 10
+					if test.name == "explicit" {
+						interval, timeout = 7, 3
+					}
+					got := Get().Pod
+					if got.Source != "container" || got.SyncIntervalSeconds != interval || got.DiscoveryTimeoutSeconds != timeout {
+						t.Errorf("discovery configuration=%+v", got)
+					}
+				})
+			}
+		})
+	}
+}

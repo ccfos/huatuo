@@ -15,14 +15,19 @@
 package pod
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
 func newTestContainerStore() *containerStore {
@@ -294,5 +299,754 @@ func TestMemoryCgroupDirectoryPreservesPublishedIdentity(t *testing.T) {
 	store.err = ErrContainersUnavailable
 	if _, err := store.memoryCgroupDirectory(record.ref); !errors.Is(err, ErrContainersUnavailable) {
 		t.Fatalf("unavailable directory lookup = %v", err)
+	}
+}
+
+// TestPodPublicationPreservesContainerContract 验证普通容器提交后的公共类型、
+// 容器分类、进程和网络映射，以及旧 JSON 和同步时间保持不变；来源 map
+// 的后续改动不能覆盖已经发布的标签、CSS 和独立 memory 路径。
+func TestPodPublicationPreservesContainerContract(t *testing.T) {
+	store := newTestContainerStore()
+	record := containerRecordForTest("checkout-container")
+	memory := "/memory/checkout"
+	source := record.container
+	source.Name, source.Hostname = "checkout", "huatuo-dev"
+	source.CgroupPath, source.memoryCgroupPath = "/cpu/checkout", &memory
+	source.CgroupCss = map[string]uint64{"cpu": 7100}
+	source.Labels = map[string]any{LabelHostNamespace: "checkout-services"}
+	source.SyncedAt = time.Unix(100, 0)
+	source.NetNamespaceInum, source.NetNamespaceCookie = 5100, 6100
+	source.IPAddress = "172.16.0.2"
+	wantJSON, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: record}, isComplete: true}, nil)
+	view := store.records[source.ID]
+	if view.pod.Type != TypeContainer || view.pod.Container.Type != source.Type || view.pod.Container.Hostname != source.Hostname {
+		t.Errorf("container classification changed: %+v", view.pod)
+	}
+	if view.pod.Process == nil || view.pod.Process.PID != source.InitPid {
+		t.Errorf("process = %+v, want PID %d", view.pod.Process, source.InitPid)
+	}
+	if view.pod.Network == nil || view.pod.Network.NamespaceInum != source.NetNamespaceInum ||
+		view.pod.Network.NamespaceCookie != source.NetNamespaceCookie || view.pod.Network.PID != source.InitPid {
+		t.Errorf("network binding = %+v", view.pod.Network)
+	}
+	gotJSON, err := json.Marshal(view.container)
+	if err != nil || !bytes.Equal(gotJSON, wantJSON) {
+		t.Errorf("legacy JSON = %s, %v; want %s", gotJSON, err, wantJSON)
+	}
+	if !view.container.SyncedAt.Equal(source.SyncedAt) || !view.pod.SyncedAt.After(source.SyncedAt) {
+		t.Errorf("sync timestamps: legacy=%s, pod=%s", view.container.SyncedAt, view.pod.SyncedAt)
+	}
+	source.Labels[LabelHostNamespace] = "changed-at-source"
+	source.CgroupCss["cpu"] = 7200
+	memory = "/memory/changed-at-source"
+	if view.pod.Labels[LabelHostNamespace] != "checkout-services" || view.pod.Cgroups.CSS["cpu"] != 7100 ||
+		view.container.MemoryCgroupPath() != "/memory/checkout" {
+		t.Error("source metadata mutated a published view")
+	}
+}
+
+// TestPodInstanceResources 验证采集状态只在实例创建时初始化，Pod 和旧容器入口
+// 共享同一状态；元数据刷新保留状态与代次、旧视图不变，实例替换重新初始化，
+// 完整空快照同时删除公共对象和兼容视图。
+func TestPodInstanceResources(t *testing.T) {
+	type usage struct{ Total uint64 }
+	const resource = "test-checkout-usage"
+	if err := RegisterContainerLifeResources(resource, reflect.TypeOf(&usage{})); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lifeResourcesTpl.Delete(resource) })
+	store := newTestContainerStore()
+	first := containerRecordForTest("checkout-container")
+	store.commit(containerSnapshot{records: map[string]*containerRecord{first.container.ID: first}, isComplete: true}, nil)
+	initial := first.pod
+	state, ok := initial.LifeResources(resource).(*usage)
+	if !ok || state == nil {
+		t.Fatal("initial instance has no usage state")
+	}
+	state.Total = 72
+	if first.container.LifeResources(resource) != state {
+		t.Error("legacy container does not share the Pod state")
+	}
+	metadata := containerRecordForTest(first.container.ID)
+	metadata.container.Name = "checkout-renamed"
+	store.commit(containerSnapshot{records: map[string]*containerRecord{first.container.ID: metadata}, isComplete: true}, nil)
+	if metadata.ref.Key != first.ref.Key || metadata.pod.LifeResources(resource) != state || state.Total != 72 {
+		t.Error("metadata update reset the instance or its usage baseline")
+	}
+	if initial.Name == metadata.pod.Name || initial == metadata.pod {
+		t.Error("metadata update changed the previously published Pod")
+	}
+	replacement := containerRecordForTest(first.container.ID)
+	replacement.startTime++
+	store.commit(containerSnapshot{records: map[string]*containerRecord{first.container.ID: replacement}, isComplete: true}, nil)
+	fresh, ok := replacement.pod.LifeResources(resource).(*usage)
+	if !ok || fresh == nil || fresh == state || fresh.Total != 0 || replacement.ref.Key == first.ref.Key {
+		t.Errorf("replacement retained old state: %+v", fresh)
+	}
+	if first.container.LifeResources(resource) != state || state.Total != 72 {
+		t.Error("replacement mutated the old compatibility view")
+	}
+	store.commit(containerSnapshot{isComplete: true}, nil)
+	if len(store.records) != 0 {
+		t.Error("deleted workload retained a cached view")
+	}
+}
+
+// TestPodQueriesKeepSandboxIdentity 验证仅有 cgroup 的沙箱可查询但不会进入旧
+// 容器入口；发现失败和 nil 成员保留原对象与同步时间，返回集合可独立修改，
+// 完整空列表删除对象，未启动 Manager 时查询返回空集。
+func TestPodQueriesKeepSandboxIdentity(t *testing.T) {
+	previous := containerView
+	containerView = newTestContainerStore()
+	t.Cleanup(func() { containerView = previous })
+	source := &Pod{
+		ID: "checkout-sandbox", Type: TypeCubeSandbox, Name: "checkout",
+		Cgroups: CgroupBinding{Controllers: map[string]string{"memory": "/cube_sandbox/sandbox/8"}},
+		Labels:  map[string]any{"workload_namespace": "checkout-services"},
+	}
+	record := &containerRecord{pod: source}
+	containerView.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: record}, isComplete: true}, nil)
+	view, err := PodByID(source.ID)
+	if err != nil || view == nil {
+		t.Errorf("sandbox lookup = %+v, %v", view, err)
+		return
+	}
+	if view.Type != TypeCubeSandbox || view.Process != nil || view.Network != nil || view.Container != nil {
+		t.Errorf("invented sandbox resource or container metadata: %+v", view)
+	}
+	if legacy, lookupErr := ContainerByID(source.ID); lookupErr != nil || legacy != nil {
+		t.Errorf("sandbox exposed as container: %+v, %v", legacy, lookupErr)
+	}
+	if legacy, lookupErr := Containers(); lookupErr != nil || len(legacy) != 0 {
+		t.Errorf("sandbox exposed in container list: %+v, %v", legacy, lookupErr)
+	}
+	if legacy, lookupErr := ContainerRefByID(source.ID); lookupErr != nil || legacy != (ContainerRef{}) {
+		t.Errorf("sandbox exposed as container reference: %+v, %v", legacy, lookupErr)
+	}
+	delete(source.Cgroups.Controllers, "memory")
+	if view.Cgroups.Controllers["memory"] != "/cube_sandbox/sandbox/8" {
+		t.Error("discovery metadata shared a mutable controller map")
+	}
+	containerView.commit(containerSnapshot{}, errors.New("cubelet unavailable"))
+	containerView.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: nil}, isComplete: true}, nil)
+	retained, err := PodByID(source.ID)
+	if err != nil || retained != view {
+		t.Errorf("unresolved member replaced cached view: %+v, %v", retained, err)
+	}
+	all, err := Pods()
+	if err != nil || all[source.ID] != view {
+		t.Errorf("Pods() = %+v, %v", all, err)
+	}
+	delete(all, source.ID)
+	if retained, _ := PodByID(source.ID); retained != view {
+		t.Error("modifying query result removed a cached object")
+	}
+	containerView.commit(containerSnapshot{isComplete: true}, nil)
+	if removed, _ := PodByID(source.ID); removed != nil {
+		t.Error("complete empty discovery retained sandbox")
+	}
+	containerView = newContainerStore()
+	if empty, lookupErr := Pods(); lookupErr != nil || len(empty) != 0 {
+		t.Errorf("disabled Manager lookup = %+v, %v", empty, lookupErr)
+	}
+}
+
+// TestPodSuccessfulRefreshPreservesLegacyView 验证复用已解析容器记录时发布新的
+// Pod 同步时间，旧 Pod 和 Container 视图不变，不重复发送创建事件。
+func TestPodSuccessfulRefreshPreservesLegacyView(t *testing.T) {
+	store := newTestContainerStore()
+	record := containerRecordForTest("checkout-container")
+	record.container.SyncedAt = time.Unix(100, 0)
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.container.ID: record}, isComplete: true}, nil)
+	oldPod, oldContainer := record.pod, record.container
+	oldTime := oldPod.SyncedAt
+	sub := subscribeForTest(t, store)
+	if _, err := sub.DrainEvents(); err != nil {
+		t.Fatal(err)
+	}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.container.ID: record}, isComplete: true}, nil)
+	current := store.records[record.container.ID]
+	if current.pod == oldPod || current.pod.SyncedAt.Before(oldTime) || !oldPod.SyncedAt.Equal(oldTime) {
+		t.Error("successful refresh did not preserve immutable Pod views")
+	}
+	if current.container != oldContainer || current.ref != record.ref {
+		t.Error("successful refresh changed the legacy view or instance reference")
+	}
+	if update, err := sub.DrainEvents(); err != nil || len(update.Events) != 0 {
+		t.Errorf("successful refresh emitted lifecycle: %+v, %v", update, err)
+	}
+}
+
+// TestPodPublicationKeepsBoundCgroups 验证已绑定的公共控制器路径不会被旧容器
+// 的共享路径覆盖，兼容视图仍保留原字段，且来源修改不会影响已发布目录。
+func TestPodPublicationKeepsBoundCgroups(t *testing.T) {
+	store := newTestContainerStore()
+	record := containerRecordForTest("checkout-container")
+	record.container.CgroupPath = "/legacy-checkout"
+	record.pod = podFromContainer(record.container)
+	record.pod.Cgroups = CgroupBinding{
+		Controllers: map[string]string{"cpu": "/checkout-cpu", "memory": "/checkout-memory"},
+		directories: map[string]string{"cpu": "/mounted-cpu/checkout-cpu"},
+	}
+	source := record.pod
+	store.commit(containerSnapshot{records: map[string]*containerRecord{source.ID: record}, isComplete: true}, nil)
+	published := store.records[source.ID]
+	if published.pod.Cgroups.Controllers["memory"] != "/checkout-memory" ||
+		published.container.CgroupPath != "/legacy-checkout" {
+		t.Error("legacy and public cgroup paths were conflated")
+	}
+	source.Cgroups.directories["cpu"] = "/changed-at-source"
+	if published.pod.Cgroups.directories["cpu"] != "/mounted-cpu/checkout-cpu" {
+		t.Error("source mutation changed a published directory")
+	}
+}
+
+// TestPodFirstResourceReadiness 验证 PID、启动时间、内存目录、CSS、公共 cgroup、
+// 进程及网络首次补齐时保留代次和采集基线，发送一次全量通知；重复提交、
+// 名称或 IP 元数据更新不产生额外通知，已发布的旧视图保持不变。
+func TestPodFirstResourceReadiness(t *testing.T) {
+	directory, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Errorf("stat ready directory: %v", err)
+		return
+	}
+	cases := []struct {
+		name    string
+		prepare func(*containerRecord, *containerRecord)
+		notify  bool
+	}{
+		{name: "init PID", notify: true, prepare: func(before, after *containerRecord) { before.ref.InitPID = 0 }},
+		{name: "process identity", notify: true, prepare: func(before, after *containerRecord) { before.startTime = 0 }},
+		{name: "memory membership", notify: true, prepare: func(before, after *containerRecord) { before.ref.MemoryCgroupPath = "" }},
+		{name: "memory directory", notify: true, prepare: func(before, after *containerRecord) { after.directory = directory }},
+		{name: "CSS", notify: true, prepare: func(before, after *containerRecord) { after.pod.Cgroups.CSS = map[string]uint64{"memory": 7500} }},
+		{name: "cgroup directory", notify: true, prepare: func(before, after *containerRecord) {
+			after.pod.Cgroups.directories = map[string]string{"memory": "/bound-checkout"}
+		}},
+		{name: "process binding", notify: true, prepare: func(before, after *containerRecord) { before.pod.Process = nil }},
+		{name: "network binding", notify: true, prepare: func(before, after *containerRecord) { after.pod.Network = &HostNetwork{PID: 42, NamespaceInum: 6500} }},
+		{name: "IP metadata", prepare: func(before, after *containerRecord) { after.pod.Network = &HostNetwork{IPAddress: "172.16.0.2"} }},
+		{name: "name metadata", prepare: func(before, after *containerRecord) { after.pod.Name = "checkout-worker" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestContainerStore()
+			before, after := containerRecordForTest("checkout-container"), containerRecordForTest("checkout-container")
+			before.pod, after.pod = podFromContainer(before.container), podFromContainer(after.container)
+			tc.prepare(before, after)
+			store.commit(containerSnapshot{records: map[string]*containerRecord{before.container.ID: before}, isComplete: true}, nil)
+			baseline := &struct{ total uint64 }{total: 6400}
+			before.pod.lifeResources["readiness-baseline"] = baseline
+			subscriber := subscribeForTest(t, store)
+			initial, err := subscriber.DrainEvents()
+			if err != nil {
+				t.Errorf("initial snapshot: %v", err)
+				return
+			}
+			oldView := before.pod
+			store.commit(containerSnapshot{records: map[string]*containerRecord{after.container.ID: after}, isComplete: true}, nil)
+			if after.ref.Key != before.ref.Key || after.pod.LifeResources("readiness-baseline") != baseline {
+				t.Error("first resource readiness replaced instance state")
+			}
+			if oldView == after.pod {
+				t.Error("resource completion mutated the published view")
+			}
+			update, err := subscriber.DrainEvents()
+			if err != nil {
+				t.Errorf("resource readiness notification: %v", err)
+				return
+			}
+			if tc.notify {
+				if update.Mode != ContainerUpdateFull || len(update.Events) != 1 || update.Events[0].Container != after.ref || update.Revision <= initial.Revision {
+					t.Errorf("readiness must produce a current full view: %+v", update)
+				}
+			} else if update.Mode != ContainerUpdateIncremental || len(update.Events) != 0 {
+				t.Errorf("metadata emitted lifecycle notification: %+v", update)
+			}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{after.container.ID: after}, isComplete: true}, nil)
+			if duplicate, err := subscriber.DrainEvents(); err != nil || len(duplicate.Events) != 0 {
+				t.Errorf("duplicate readiness notification: %+v, %v", duplicate, err)
+			}
+		})
+	}
+}
+
+// TestPodSubscriptionIsolation 验证公共订阅返回容器和沙箱的独立身份，旧订阅
+// 仅返回容器；首次快照、删除增量以及已借出数据的不可变性遵循同一队列规则。
+func TestPodSubscriptionIsolation(t *testing.T) {
+	store := newTestContainerStore()
+	container := containerRecordForTest("checkout-container")
+	sandbox := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Name: "checkout"}}
+	records := map[string]*containerRecord{container.container.ID: container, sandbox.pod.ID: sandbox}
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+	public, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Errorf("subscribe workloads: %v", err)
+		return
+	}
+	t.Cleanup(public.Close)
+	legacy := subscribeForTest(t, store)
+	full, err := public.DrainEvents()
+	if err != nil || full.Mode != PodUpdateFull || len(full.Events) != len(records) || full.DiscoveryError != nil {
+		t.Errorf("workload snapshot=%+v, err=%v", full, err)
+		return
+	}
+	for _, event := range full.Events {
+		if event.Pod == nil || event.Key != records[event.Pod.ID].ref.Key || event.Kind != PodEventUnknown {
+			t.Errorf("workload snapshot entry=%+v", event)
+		}
+	}
+	old, err := legacy.DrainEvents()
+	if err != nil || len(old.Events) != 1 || old.Events[0].Container != container.ref {
+		t.Errorf("legacy projection=%+v, err=%v", old, err)
+	}
+	borrowed := slices.Clone(full.Events)
+	delete(records, sandbox.pod.ID)
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+	if !slices.Equal(full.Events, borrowed) {
+		t.Error("publication mutated a borrowed workload snapshot")
+	}
+	deleted, err := public.DrainEvents()
+	if err != nil || deleted.Mode != PodUpdateIncremental || len(deleted.Events) != 1 || deleted.Events[0].Kind != PodDeleted || deleted.Events[0].Key != sandbox.ref.Key || deleted.Events[0].Pod.Type != TypeCubeSandbox {
+		t.Errorf("sandbox delete=%+v, err=%v", deleted, err)
+	}
+	if update, err := legacy.DrainEvents(); err != nil || len(update.Events) != 0 {
+		t.Errorf("sandbox leaked into legacy lifecycle: %+v, %v", update, err)
+	}
+}
+
+// TestPodSubscriptionDiscoveryFailure 验证首次发现失败不能伪装成空快照；已有
+// 非空或完整空缓存后，发现错误随快照返回，恢复后正常核对成员，旧接口仍返回错误。
+func TestPodSubscriptionDiscoveryFailure(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty=%t", empty), func(t *testing.T) {
+			store := newTestContainerStore()
+			store.err = ErrContainersUnavailable
+			public, err := store.subscribePods(t.Context())
+			if err != nil {
+				t.Errorf("subscribe workloads: %v", err)
+				return
+			}
+			t.Cleanup(public.Close)
+			legacy := subscribeForTest(t, store)
+			if update, err := public.DrainEvents(); !errors.Is(err, ErrPodsUnavailable) || update.Mode != PodUpdateUnknown {
+				t.Errorf("initial failure became a snapshot: %+v, %v", update, err)
+			}
+			records := make(map[string]*containerRecord)
+			if !empty {
+				records["checkout-sandbox"] = &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}}
+			}
+			store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+			_, _ = public.DrainEvents()
+			_, _ = legacy.DrainEvents()
+			failure := errors.New("cubelet request timed out")
+			store.commit(containerSnapshot{}, failure)
+			cached, err := public.DrainEvents()
+			if err != nil || cached.Mode != PodUpdateFull || !errors.Is(cached.DiscoveryError, failure) || len(cached.Events) != len(records) {
+				t.Errorf("cached snapshot during failure=%+v, err=%v", cached, err)
+			}
+			if _, err := legacy.DrainEvents(); !errors.Is(err, ErrContainersUnavailable) {
+				t.Errorf("legacy error contract changed: %v", err)
+			}
+			store.commit(containerSnapshot{isComplete: true}, nil)
+			recovered, err := public.DrainEvents()
+			if err != nil || recovered.DiscoveryError != nil || recovered.Mode != PodUpdateFull || len(recovered.Events) != 0 {
+				t.Errorf("recovery snapshot=%+v, err=%v", recovered, err)
+			}
+		})
+	}
+}
+
+// TestPodSubscriptionReadinessAndClose 验证 cgroup-only 沙箱首次获得资源后
+// 以同代次全量通知唤醒订阅者；关闭后借出结果不变，后续读取返回终止错误。
+func TestPodSubscriptionReadinessAndClose(t *testing.T) {
+	store := newTestContainerStore()
+	pending := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{pending.pod.ID: pending}, isComplete: true}, nil)
+	public, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Errorf("subscribe workloads: %v", err)
+		return
+	}
+	t.Cleanup(public.Close)
+	_, _ = public.DrainEvents()
+	ready := &containerRecord{pod: pending.pod.copyMetadata()}
+	ready.pod.Cgroups.CSS = map[string]uint64{"memory": 8500}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{ready.pod.ID: ready}, isComplete: true}, nil)
+	update, err := public.DrainEvents()
+	if err != nil || update.Mode != PodUpdateFull || len(update.Events) != 1 || update.Events[0].Key != pending.ref.Key || update.Events[0].Pod.Cgroups.CSS["memory"] != 8500 {
+		t.Errorf("resource readiness=%+v, err=%v", update, err)
+	}
+	borrowed := slices.Clone(update.Events)
+	public.Close()
+	if !slices.Equal(update.Events, borrowed) {
+		t.Error("close mutated borrowed workload data")
+	}
+	if _, err := public.DrainEvents(); !errors.Is(err, ErrPodSubscriptionClosed) {
+		t.Errorf("closed workload subscription=%v", err)
+	}
+}
+
+// TestPodSubscriptionQueuedIdentity 验证队列保存发布时的代次和值，而不是可被
+// 后续复用的记录指针；创建和删除通知按各自发布时的身份交付。
+func TestPodSubscriptionQueuedIdentity(t *testing.T) {
+	store := newTestContainerStore()
+	public, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Errorf("subscribe workloads: %v", err)
+		return
+	}
+	t.Cleanup(public.Close)
+	_, _ = public.DrainEvents()
+	record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox}, ref: ContainerRef{Key: PodKey{ID: "checkout-sandbox", Generation: 1}}}
+	store.mu.Lock()
+	store.publish(PodCreated, record)
+	record.ref.Key.Generation++
+	store.publish(PodDeleted, record)
+	store.mu.Unlock()
+	update, err := public.DrainEvents()
+	if err != nil || len(update.Events) != 2 {
+		t.Errorf("queued lifecycle=%+v, err=%v", update, err)
+		return
+	}
+	if update.Events[0].Key.Generation != 1 || update.Events[1].Key.Generation != 2 {
+		t.Errorf("queue retained a mutable record identity: %+v", update.Events)
+	}
+}
+
+// TestPodCgroupLifecycle 验证数字目录按已验证内核关联归属；v1 删除仅使对应
+// 控制器失效，v2 删除使统一绑定失效。来源失联时仍通知资源失效，不删除对象，
+// 恢复绑定保留代次和采集状态，完整空快照清除反向索引。
+func TestPodCgroupLifecycle(t *testing.T) {
+	for _, unified := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unified=%t", unified), func(t *testing.T) {
+			store := newTestContainerStore()
+			cpuDirectory, memoryDirectory := t.TempDir(), t.TempDir()
+			binding := CgroupBinding{
+				Controllers:  map[string]string{"cpu": "/cube_sandbox/sandbox/8", "memory": "/cube_sandbox/sandbox/8"},
+				directories:  map[string]string{"cpu": cpuDirectory, "memory": memoryDirectory},
+				CSS:          map[string]uint64{"cpu": 7501, "memory": 7502},
+				kernelGroups: map[string]uint64{"cpu": 9501, "memory": 9502},
+			}
+			if unified {
+				binding.Controllers = nil
+				binding.Unified = "/cube_sandbox/sandbox/8"
+				binding.directories = map[string]string{"": cpuDirectory}
+				binding.kernelGroups["memory"] = 9501
+			}
+			record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Cgroups: binding}}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+			baseline := &struct{ value uint64 }{value: 6400}
+			record.pod.lifeResources["lifecycle-baseline"] = baseline
+			subscriber, err := store.subscribePods(t.Context())
+			if err != nil {
+				t.Errorf("subscribe workloads: %v", err)
+				return
+			}
+			t.Cleanup(subscriber.Close)
+			_, _ = subscriber.DrainEvents()
+			store.commit(containerSnapshot{}, errors.New("cubelet offline"))
+			_, _ = subscriber.DrainEvents()
+			event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate, Cgroup: 9501}
+			copy(event.KnodeName[:], "8")
+			if id := store.cgroupEvent(event); id != record.pod.ID {
+				t.Errorf("numeric cgroup owner=%q", id)
+			}
+			event.Operation = abi.CgroupCSSOperationRemove
+			if id := store.cgroupEvent(event); id != record.pod.ID {
+				t.Errorf("removed cgroup owner=%q", id)
+			}
+			current := store.records[record.pod.ID]
+			if current == nil || current.ref.Key != record.ref.Key || current.pod.LifeResources("lifecycle-baseline") != baseline {
+				t.Error("cgroup deletion removed or replaced the workload")
+				return
+			}
+			if _, err := current.pod.Cgroups.Directory("cpu"); err == nil || current.pod.Cgroups.CSS["cpu"] != 0 {
+				t.Error("removed CPU binding remains usable")
+			}
+			_, memoryErr := current.pod.Cgroups.Directory("memory")
+			if (memoryErr != nil) != unified {
+				t.Errorf("memory availability after CPU deletion=%v", memoryErr)
+			}
+			if record.pod.Cgroups.CSS["cpu"] != 7501 {
+				t.Error("invalidation mutated the previously published view")
+			}
+			update, err := subscriber.DrainEvents()
+			if err != nil || update.DiscoveryError == nil || update.Mode != PodUpdateFull || len(update.Events) != 1 {
+				t.Errorf("resource invalidation during outage=%+v, %v", update, err)
+			}
+			restored := &containerRecord{pod: record.pod.copyMetadata()}
+			store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: restored}, isComplete: true}, nil)
+			if restored.ref.Key != record.ref.Key || restored.pod.LifeResources("lifecycle-baseline") != baseline {
+				t.Error("resource recovery reset workload state")
+			}
+			event.Operation = abi.CgroupCSSOperationUpdate
+			if id := store.cgroupEvent(event); id != record.pod.ID {
+				t.Errorf("recovered resource index owner=%q", id)
+			}
+			store.commit(containerSnapshot{isComplete: true}, nil)
+			if len(store.cgroupOwners)+len(store.cssOwners) != 0 {
+				t.Error("confirmed deletion retained resource owners")
+			}
+		})
+	}
+}
+
+// TestSharedCgroupInvalidation 验证多个容器共享 VM cgroup 时全部绑定同时失效，
+// 不选择任意容器归属；旧容器 CSS 视图更新，成员和各自实例代次仍保留。
+func TestSharedCgroupInvalidation(t *testing.T) {
+	store := newTestContainerStore()
+	records := make(map[string]*containerRecord)
+	for _, id := range []string{"checkout-api", "checkout-worker"} {
+		record := containerRecordForTest(id)
+		record.container.RuntimeType, record.container.SandboxID = "io.containerd.kata-qemu.v2", "checkout-vm"
+		record.container.CgroupCss = map[string]uint64{"cpu": 8500}
+		record.pod = podFromContainer(record.container)
+		record.pod.Cgroups = CgroupBinding{CSS: map[string]uint64{"cpu": 8500}, directories: map[string]string{"cpu": "/bound-checkout"}}
+		records[id] = record
+	}
+	store.commit(containerSnapshot{records: records, isComplete: true}, nil)
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRemove}
+	event.CSS[0] = 8500
+	if id := store.cgroupEvent(event); id != "" {
+		t.Errorf("shared resource arbitrarily assigned to %q", id)
+	}
+	for id, previous := range records {
+		current := store.records[id]
+		if current == nil || current.ref.Key != previous.ref.Key || len(current.pod.Cgroups.CSS) != 0 || len(current.container.CgroupCss) != 0 {
+			t.Errorf("shared resource invalidation failed for %s: %+v", id, current)
+		}
+	}
+}
+
+// TestUnboundCgroupIsNotIndexed 验证未经目录绑定的 CSS 以及未知事件不会进入
+// 归属索引或改变对象成员，目录名称不能冒充 workload ID。
+func TestUnboundCgroupIsNotIndexed(t *testing.T) {
+	store := newTestContainerStore()
+	record := &containerRecord{pod: &Pod{ID: "checkout-sandbox", Type: TypeCubeSandbox, Cgroups: CgroupBinding{CSS: map[string]uint64{"cpu": 8500}}}}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{record.pod.ID: record}, isComplete: true}, nil)
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRemove}
+	event.CSS[0] = 8500
+	copy(event.KnodeName[:], record.pod.ID)
+	if id := store.cgroupEvent(event); id != "" || len(store.cgroupOwners)+len(store.cssOwners) != 0 || len(store.records) != 1 {
+		t.Errorf("unbound resource changed ownership: id=%q", id)
+	}
+	ready := *record
+	ready.pod = record.pod.copyMetadata()
+	ready.pod.Cgroups.directories = map[string]string{"cpu": "/bound-checkout"}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{ready.pod.ID: &ready}, isComplete: true}, nil)
+	event.Operation = abi.CgroupCSSOperationUpdate
+	if id := store.cgroupEvent(event); id != record.pod.ID {
+		t.Errorf("first directory binding did not index existing CSS: id=%q", id)
+	}
+	unbound := ready
+	unbound.pod = ready.pod.copyMetadata()
+	unbound.pod.Cgroups.directories = nil
+	store.commit(containerSnapshot{records: map[string]*containerRecord{unbound.pod.ID: &unbound}, isComplete: true}, nil)
+	if id := store.cgroupEvent(event); id != "" || len(store.cgroupOwners)+len(store.cssOwners) != 0 {
+		t.Errorf("lost directory binding retained CSS ownership: id=%q", id)
+	}
+}
+
+// TestSourceGuestPeers 验证 peer 只随有效 Pod 提交，失败和 nil 成员保留旧值，
+// 有效更新未提供 peer 时清除；peer 不得被当作采集进程或网络目标。
+func TestSourceGuestPeers(t *testing.T) {
+	previous := containerView
+	store := newTestContainerStore()
+	containerView = store
+	t.Cleanup(func() { containerView = previous })
+	discovery := Discovery{}
+	var sourceErr error
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return discovery, sourceErr }}
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	raw := &Pod{
+		ID: "checkout-sandbox", Type: TypeCubeSandbox, StartedAt: time.Unix(80, 0), SyncedAt: time.Unix(1, 0),
+		Cgroups: CgroupBinding{CSS: map[string]uint64{"cpu": 8500}}, lifeResources: map[string]any{"untrusted": true},
+	}
+	for _, test := range []struct {
+		name      string
+		pod       *Pod
+		peer      int
+		sourceErr error
+		complete  bool
+		wantPeer  int
+		absent    bool
+	}{
+		{name: "valid peer", pod: raw, peer: 4200, complete: true, wantPeer: 4200},
+		{name: "nil member", peer: 4300, complete: true, wantPeer: 4200},
+		{name: "source failure", sourceErr: errors.New("cubelet unavailable"), wantPeer: 4200},
+		{name: "valid metadata clears peer", pod: raw, complete: true},
+		{name: "negative peer", pod: raw, peer: -1, complete: true},
+		{name: "confirmed deletion", complete: true, absent: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			discovery = Discovery{Complete: test.complete, GuestPeers: map[string]GuestPeer{"checkout-sandbox": {PID: test.peer}, "orphan": {PID: 4500}}}
+			if !test.absent && test.sourceErr == nil {
+				discovery.Pods = map[string]*Pod{raw.ID: test.pod}
+			}
+			sourceErr = test.sourceErr
+			snapshot, err, _ := manager.discover(t.Context(), nil, true)
+			store.commit(snapshot, err)
+			key, peer, exists := GuestPeerByID(raw.ID)
+			if exists != (test.wantPeer > 0) || peer.PID != test.wantPeer {
+				t.Errorf("guest peer=%+v exists=%t", peer, exists)
+			}
+			if _, _, exists := GuestPeerByID("orphan"); exists || store.records["orphan"] != nil {
+				t.Error("orphan peer created workload identity")
+			}
+			if exists && key != store.records[raw.ID].ref.Key {
+				t.Error("peer query returned a different workload instance")
+			}
+			if record := store.records[raw.ID]; record != nil {
+				if record.pod.Process != nil || record.pod.Network != nil {
+					t.Error("transport peer became a collection target")
+				}
+				if len(record.pod.Cgroups.CSS) != 0 || record.pod.LifeResources("untrusted") != nil || record.pod.SyncedAt.Equal(raw.SyncedAt) {
+					t.Error("source injected CSS, collection state, or sync time")
+				}
+			} else if !test.absent {
+				t.Error("unresolved workload disappeared")
+			}
+		})
+	}
+	if raw.lifeResources["untrusted"] != true || raw.Cgroups.CSS["cpu"] != 8500 {
+		t.Error("binding mutated source metadata")
+	}
+}
+
+// TestSourceSandboxStartedAt 验证已确认启动时间变化创建新实例，首次补齐
+// 启动信息及仅 peer 变化保留实例状态，并通知连接能力变化。
+func TestSourceSandboxStartedAt(t *testing.T) {
+	store := newTestContainerStore()
+	started := time.Time{}
+	peer := 0
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) {
+		return Discovery{
+			Pods: map[string]*Pod{"checkout-sandbox": {ID: "checkout-sandbox", Type: TypeCubeSandbox, StartedAt: started}}, Complete: true,
+			GuestPeers: map[string]GuestPeer{"checkout-sandbox": {PID: peer}},
+		}, nil
+	}}
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	commit := func() {
+		snapshot, err, _ := manager.discover(t.Context(), nil, true)
+		if err != nil {
+			t.Error(err)
+		}
+		store.commit(snapshot, err)
+	}
+	commit()
+	original := store.records["checkout-sandbox"]
+	original.pod.lifeResources["baseline"] = uint64(6400)
+	subscriber, err := store.subscribePods(t.Context())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	t.Cleanup(subscriber.Close)
+	_, _ = subscriber.DrainEvents()
+	started, peer = time.Unix(80, 0), 4200
+	commit()
+	current := store.records["checkout-sandbox"]
+	if current.ref.Key != original.ref.Key || current.pod.LifeResources("baseline") != uint64(6400) {
+		t.Error("first readiness reset the instance")
+	}
+	update, err := subscriber.DrainEvents()
+	if err != nil || update.Mode != PodUpdateFull || len(update.Events) != 1 {
+		t.Errorf("peer readiness notification=%+v err=%v", update, err)
+	}
+	started = time.Time{}
+	commit()
+	if current := store.records["checkout-sandbox"]; current.ref.Key != original.ref.Key || !current.pod.StartedAt.Equal(time.Unix(80, 0)) {
+		t.Error("unknown start time discarded confirmed instance identity")
+	}
+	started = time.Unix(90, 0)
+	commit()
+	current = store.records["checkout-sandbox"]
+	if current.ref.Key == original.ref.Key || current.pod.LifeResources("baseline") != nil {
+		t.Error("confirmed sandbox restart retained instance state")
+	}
+}
+
+// TestSourceContainerProjection 验证公共来源仍生成旧容器查询视图；暂时失去
+// 资源时只清除公共采集能力，不能仅因无法验证资源就重置已知实例。
+func TestSourceContainerProjection(t *testing.T) {
+	oldView := containerView
+	store := newTestContainerStore()
+	containerView = store
+	t.Cleanup(func() { containerView = oldView })
+	previous := containerRecordForTest("checkout-container")
+	previous.ref.InitPID, previous.container.InitPid = 1073741824, 1073741824
+	store.commit(containerSnapshot{records: map[string]*containerRecord{previous.container.ID: previous}, isComplete: true}, nil)
+	previous.pod.lifeResources["baseline"] = uint64(6400)
+	source := &sourceFixture{kind: TypeContainer, discover: func(context.Context) (Discovery, error) {
+		return Discovery{Pods: map[string]*Pod{previous.container.ID: {
+			ID: previous.container.ID, Type: TypeContainer, Name: "checkout-api", Labels: map[string]any{LabelHostNamespace: "default"},
+			Container: &ContainerInfo{Hostname: "checkout-pod", Type: ContainerTypeNormal, Qos: ContainerQosLevelMin},
+			Cgroups:   CgroupBinding{Controllers: map[string]string{"cpu": "/unavailable-checkout", "memory": "/unavailable-checkout"}},
+			Process:   &HostProcess{PID: 1073741824}, Network: &HostNetwork{IPAddress: "172.16.0.2"},
+		}}, Complete: true}, nil
+	}}
+	manager, err := newSourceManager(store, source, ManagerOptions{})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	snapshot, err, _ := manager.discover(t.Context(), nil, true)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	store.commit(snapshot, nil)
+	current := store.records[previous.container.ID]
+	if current.ref.Key != previous.ref.Key || current.pod.LifeResources("baseline") != uint64(6400) {
+		t.Error("missing resource reset the container instance")
+	}
+	if current.pod.Process != nil || current.pod.Network.PID != 0 || len(current.pod.Cgroups.CSS) != 0 {
+		t.Error("unavailable resources remained collection targets")
+	}
+	legacy, err := ContainerByID(previous.container.ID)
+	if err != nil || legacy == nil {
+		t.Errorf("legacy query=%+v err=%v", legacy, err)
+		return
+	}
+	if legacy.Name != "checkout-api" || legacy.Hostname != "checkout-pod" || legacy.Type != ContainerTypeNormal || legacy.IPAddress != "172.16.0.2" || legacy.CgroupPath != "/unavailable-checkout" || legacy.MemoryCgroupPath() != "/unavailable-checkout" {
+		t.Errorf("legacy projection=%+v", legacy)
+	}
+}
+
+func TestDiscoveryInitializedLifecycle(t *testing.T) {
+	previous := containerView
+	containerView = newContainerStore()
+	t.Cleanup(func() { containerView = previous })
+	if DiscoveryInitialized() {
+		t.Error("disabled manager reported ready")
+	}
+	containerView.isActive = true
+	if DiscoveryInitialized() {
+		t.Error("manager reported ready before discovery")
+	}
+	containerView.commit(containerSnapshot{isComplete: true}, nil)
+	if !DiscoveryInitialized() {
+		t.Error("complete empty discovery did not become ready")
+	}
+	containerView.commit(containerSnapshot{}, errors.New("source temporarily unavailable"))
+	if !DiscoveryInitialized() {
+		t.Error("transient failure reset discovery readiness")
+	}
+	containerView.isActive = false
+	if DiscoveryInitialized() {
+		t.Error("stopped manager retained discovery readiness")
 	}
 }

@@ -135,7 +135,7 @@ func (w *DocumentWriter) writeWindow(ctx context.Context, request *toolstream.Re
 		},
 	}
 
-	return w.store.SaveSync(ctx, document)
+	return w.store.Save(ctx, document)
 }
 
 // HandleStream dispatches business schemas independently of Toolstream framing.

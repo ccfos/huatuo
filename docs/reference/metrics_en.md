@@ -65,6 +65,9 @@ Scheduling latency is the wait from becoming runnable to actually receiving CPU 
 | --- | --- | --- | --- | --- | --- |
 | `runqlat_container_latency` | Scheduling-latency bucket count | Count | Container | eBPF | zone |
 | `runqlat_latency` | Scheduling-latency bucket count | Count | Host | eBPF | zone |
+| `runqlat_workload_latency` | Sandbox scheduling-latency bucket count | Count | Sandbox Host | eBPF | zone, common workload labels |
+
+Workload attribution uses bound CPU CSS without a representative PID, network or memory controller. Workloads without CSS are skipped rather than emitting stale cached values. Normal-container selection, Kata shared-cgroup representatives and container labels are preserved. Instance counters survive metadata refreshes. V1/v2 require the corresponding CSS and scheduler probes. This is a common collector capability; the production CubeSandbox source is still pending, and no sandbox Guest metrics are added.
 
 ### Softirq Latency
 
@@ -121,6 +124,22 @@ Counts periods and time using burst CPU capacity. Emitted only when the kernel p
 | `cpu_stat_container_burst_time` | Cumulative time using burst CPU capacity | Nanoseconds | Container | — |
 | `cpu_stat_container_nr_bursts` | Cumulative periods using burst CPU capacity | Count | Container | — |
 
+### Sandbox CPU File Metrics
+
+`cpu_util` and `cpu_stat` can collect from common workload cgroup bindings while preserving existing `container_` metrics and labels. Sandboxes use the corresponding metrics below. CubeSandbox/OpenSandbox discovery is not yet enabled in configuration; this collection path is currently validated with synthetic sources.
+
+| Metric | Meaning and unit |
+| --- | --- |
+| `cpu_util_workload_cores` | Available CPU capacity, cores |
+| `cpu_util_workload_usr`, `cpu_util_workload_sys`, `cpu_util_workload_total` | User, kernel and total utilization, % |
+| `cpu_stat_workload_nr_throttled`, `cpu_stat_workload_throttled_time` | Cumulative throttled periods and time (nanoseconds) |
+| `cpu_stat_workload_wait_sum_percent` | Interval wait ratio, % |
+| `cpu_stat_workload_nr_bursts`, `cpu_stat_workload_burst_time` | Cumulative burst periods and time (nanoseconds) |
+
+The fixed common labels are `host`, `region`, `workload_id`, `workload_type`, `workload_name` and `workload_namespace`. Missing names use the ID; unknown namespaces keep an empty value. Collector labels are retained, source Labels are not expanded, and container-specific labels are not added.
+
+CPU file metrics require no representative PID, network or CSS. V1 reads independently bound cpu, cpuacct and cpuset directories; v2 reads the bound unified directory, including mounted subtrees. Missing resources never fall back to host directories. Without cpuacct, utilization and wait ratio are unavailable, but readable throttle and burst counters remain available. Absent kernel fields are omitted. Capacity retains the effective-cpuset, quota and online-core rules. Metadata refreshes preserve per-instance accounting baselines. This does not add sandbox Guest metrics.
+
 ### Load
 
 Hosts report 1-, 5-, and 15-minute load averages. Containers report current runnable and uninterruptible task counts, which use a different time basis.
@@ -132,6 +151,10 @@ Hosts report 1-, 5-, and 15-minute load averages. Containers report current runn
 | `loadavg_load15` | System load average over the past 15 minutes | Tasks | Host | — | — |
 | `loadavg_container_nr_running` | Current runnable tasks, including running tasks and tasks waiting for CPU | Count | Container | — | cgroup v1 only |
 | `loadavg_container_nr_uninterruptible` | Uninterruptible tasks in the container | Count | Container | — | cgroup v1 only |
+| `loadavg_workload_nr_running` | Current runnable tasks in the sandbox | Count | Sandbox Host | Common workload labels | Requires legacy v1 and TASKSTATS |
+| `loadavg_workload_nr_uninterruptible` | Current uninterruptible tasks in the sandbox | Count | Sandbox Host | Common workload labels | Same requirement |
+
+Workload load uses the bound v1 CPU directory without a representative PID, netns or CSS. Missing directories or failed kernel queries skip only that workload; host load averages remain available. The existing legacy-only mode restriction is retained, with no new v2/hybrid support. Container labels and normal/sidecar selection remain unchanged. Sandbox entries describe the common collector capability; the production CubeSandbox source is still pending.
 
 ## Memory
 
@@ -147,11 +170,21 @@ Memory reclaim and compaction can block tasks. These metrics record host cumulat
 
 `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` depend on DiDi custom-kernel interfaces `memory.directstall_stat`, `memory.asynreclaim_stat`, and `memory.local_direct_reclaim_time`.
 
+Sandbox equivalents use the `memory_others_workload_` prefix and fixed workload labels, reading the same files from bound memory/unified directories without CPU, PID or CSS requirements. Missing or malformed optional files skip only that metric. Startup probes support legacy memory and unified roots. Sandbox discovery remains unavailable in configuration.
+
 Mainline and common distribution kernels without these interfaces do not emit the metrics; no additional module is needed. Use `memory_reclaim_container_directstall` for container direct-reclaim counts on standard kernels.
+
+### Memory Event Counts
+
+`memory_events` reads `memory.events` from the workload's bound memory/unified directory. Container names remain `memory_events_container_<field>`; sandboxes emit `memory_events_workload_<field>`, such as `memory_events_workload_oom`, with the six fixed workload labels. Kernel counts retain the existing Gauge type and `MetricCollector.MemoryEvents.Included/Excluded` field filters.
+
+No CPU, process or CSS binding is required. Missing memory bindings or files skip that workload; malformed contents remain errors. Sandbox discovery is not yet enabled in configuration; this path is validated with synthetic sources.
 
 ### Memory State
 
 Container fields come from `memory.stat`; host fields from `/proc/vmstat`. Both are subject to `MetricCollector.Vmstat` filters. Field availability and meanings depend on kernel and cgroup versions.
+
+Sandbox equivalents use `memory_vmstat_workload_<field>` names (for example, `memory_vmstat_workload_active_file`) and the six fixed workload labels. Container names remain unchanged. Collection reads only bound memory/unified directories and requires no CPU, PID or CSS. Missing or malformed workload files do not discard other workloads or Host metrics. Sandboxes reuse the legacy `IncludedOnContainer` / `ExcludedOnContainer` filters until a separate naming and compatibility migration. Sandbox discovery is not yet enabled in configuration.
 
 **Container memory**
 

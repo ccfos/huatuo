@@ -192,3 +192,61 @@ BearerToken = "test-node-secret"
 	}
 	return path
 }
+
+// TestUpdateConfigRejectsDiscoveryChanges 验证启动期来源、周期和超时通过独立字段
+// 或整个 Pod 对象修改均被拒绝；同批普通字段、内存快照和磁盘内容不得部分更新。
+// 原值重复提交仍允许，并可同时更新普通字段。
+func TestUpdateConfigRejectsDiscoveryChanges(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		key   string
+		value json.RawMessage
+	}{
+		{"source", "Pod.Source", json.RawMessage(`"cubesandbox"`)},
+		{"interval", "Pod.SyncIntervalSeconds", json.RawMessage(`7`)},
+		{"timeout", "Pod.DiscoveryTimeoutSeconds", json.RawMessage(`3`)},
+		{"parent", "Pod", json.RawMessage(`{"Source":"container","SyncIntervalSeconds":7,"DiscoveryTimeoutSeconds":10}`)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfig(t, "")
+			if err := config.Load(path); err != nil {
+				t.Error(err)
+				return
+			}
+			before := config.Get()
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			handler := &NodeAPIHandler{updateConfig: config.UpdateAndSync}
+			_, err = handler.UpdateConfig(t.Context(), nodeapi.UpdateConfigRequestObject{
+				Body: &nodeapi.UpdateConfigJSONRequestBody{Config: map[string]json.RawMessage{
+					test.key: test.value, "Runtime.MemoryLimitMiB": json.RawMessage(`1024`),
+				}},
+			})
+			var apiErr *response.APIError
+			if !errors.As(err, &apiErr) || apiErr.Code != apiv1.ErrorCodeInvalidRequest || !strings.Contains(apiErr.Message, "requires a restart") {
+				t.Errorf("UpdateConfig()=%v, want restart-required invalid request", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(original, after) || config.Get() != before {
+				t.Errorf("rejected update changed configuration or file: %v", err)
+			}
+		})
+	}
+	path := writeConfig(t, "")
+	if err := config.Load(path); err != nil {
+		t.Error(err)
+		return
+	}
+	if err := config.UpdateAndSync(map[string]any{
+		"Pod.Source": "container", "Pod.SyncIntervalSeconds": 30,
+		"Pod.DiscoveryTimeoutSeconds": 10, "Runtime.MemoryLimitMiB": int64(1024),
+	}); err != nil {
+		t.Errorf("unchanged discovery settings rejected: %v", err)
+	}
+	if err := config.Load(path); err != nil || config.Get().Runtime.MemoryLimitMiB != 1024 {
+		t.Errorf("unchanged discovery settings prevented persistence: %v", err)
+	}
+}

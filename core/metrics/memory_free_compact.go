@@ -57,7 +57,7 @@ func (c *reclaimCompact) Update() ([]*metric.Data, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dump memory stall map: %w", err)
 	}
-	if !pod.KubeletPodListRunningEnabled() {
+	if !pod.DiscoveryInitialized() {
 		return containerMemoryStalls(items, nil)
 	}
 	containers, err := pod.NormalContainers()

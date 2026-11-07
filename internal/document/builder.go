@@ -40,8 +40,9 @@ type Input struct {
 
 // Builder enriches observation metadata with Node and container fields.
 type Builder struct {
-	region   string
-	hostname string
+	region     string
+	hostname   string
+	sourceType string
 }
 
 // New binds Node-local metadata used by every generated document.
@@ -50,7 +51,7 @@ func New(region string) *Builder {
 	if err != nil {
 		hostname = defaultHostname
 	}
-	return &Builder{region: region, hostname: hostname}
+	return NewWithHostname(region, hostname)
 }
 
 // Build creates shared document metadata and resolves optional container fields.
@@ -61,7 +62,12 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 	if input == nil {
 		return types.Document{}, errors.New("document input is required")
 	}
+	sourceType := b.sourceType
+	if sourceType == "" {
+		sourceType = types.DocumentSourceHost
+	}
 	metadata := types.Document{
+		SourceType:    sourceType,
 		Hostname:      b.hostname,
 		Region:        b.region,
 		TracerName:    input.TracerName,
@@ -96,4 +102,14 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 	metadata.ContainerType = container.Type.String()
 	metadata.ContainerQoS = container.Qos.String()
 	return metadata, nil
+}
+
+// NewWithHostname binds an explicitly configured node name for Guest writers.
+func NewWithHostname(region, hostname string) *Builder {
+	return NewWithSource(region, hostname, types.DocumentSourceHost)
+}
+
+// NewWithSource binds the producer origin along with the node identity.
+func NewWithSource(region, hostname, sourceType string) *Builder {
+	return &Builder{region: region, hostname: hostname, sourceType: sourceType}
 }

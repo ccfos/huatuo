@@ -16,6 +16,8 @@ package metric
 
 import (
 	"errors"
+	"maps"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -409,6 +411,101 @@ func TestPrometheusMetric(t *testing.T) {
 	for i := range tests {
 		t.Run(tests[i].name, func(t *testing.T) {
 			tests[i].validate(t, tests[i].build().prometheusMetric("collector"))
+		})
+	}
+}
+
+func BenchmarkContainerGaugeData(b *testing.B) {
+	container := &pod.Container{
+		Name: "checkout-api", Hostname: "huatuo-dev", Type: pod.ContainerTypeNormal,
+		Labels: map[string]any{pod.LabelHostNamespace: "checkout"},
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = NewContainerGaugeData(container, "total", 25, "CPU utilization", nil)
+	}
+}
+
+// TestNewPodGaugeData 验证容器输出与旧入口完全一致，两个沙箱来源共用 workload
+// 前缀与六个固定标签；缺失名称/命名空间保持标签集合，额外 CPU 标签保留且身份不可覆盖。
+func TestNewPodGaugeData(t *testing.T) {
+	labels := map[string]string{LabelHost: "huatuo-dev", LabelRegion: "huatuo-region", "cpu": "2"}
+	legacy := &pod.Container{
+		Name: "checkout-api", Hostname: "checkout-host", Type: pod.ContainerTypeNormal,
+		Qos: pod.ContainerQosLevelMin, Labels: map[string]any{pod.LabelHostNamespace: "checkout"},
+	}
+	container := &pod.Pod{
+		Type: pod.TypeContainer, Name: legacy.Name, Labels: legacy.Labels,
+		Container: &pod.ContainerInfo{Hostname: legacy.Hostname, Type: legacy.Type, Qos: legacy.Qos},
+	}
+	want := NewContainerGaugeData(legacy, "total", 25, "CPU utilization", labels)
+	got := NewPodGaugeData(container, "total", 25, "CPU utilization", labels)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("container output changed: got=%+v want=%+v", got, want)
+	}
+	for _, kind := range []string{pod.TypeCubeSandbox, pod.TypeOpenSandbox} {
+		t.Run(kind, func(t *testing.T) {
+			workload := &pod.Pod{ID: "checkout-sandbox", Type: kind, Labels: map[string]any{"private": "not-a-metric-label"}}
+			for _, named := range []bool{false, true} {
+				if named {
+					workload.Name = "checkout"
+					workload.Labels[pod.LabelWorkloadNamespace] = "production"
+				}
+				input := maps.Clone(labels)
+				input[LabelWorkloadID] = "untrusted-override"
+				metric := NewPodGaugeData(workload, "total", 25, "CPU utilization", input)
+				name, namespace := "checkout-sandbox", ""
+				if named {
+					name, namespace = "checkout", "production"
+				}
+				wantLabels := map[string]string{
+					LabelHost: "huatuo-dev", LabelRegion: "huatuo-region", "cpu": "2",
+					LabelWorkloadID: workload.ID, LabelWorkloadType: kind, LabelWorkloadName: name, LabelWorkloadNamespace: namespace,
+				}
+				if metric.Name() != "workload_total" || metric.Type() != MetricTypeGauge || metric.Value != 25 ||
+					!maps.Equal(metric.Labels(), wantLabels) || len(metric.labelKey) != len(wantLabels) {
+					t.Errorf("sandbox output=%+v, labels=%v", metric, metric.Labels())
+				}
+				if input[LabelWorkloadID] != "untrusted-override" {
+					t.Error("metric builder mutated caller labels")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkPodGaugeData(b *testing.B) {
+	for _, kind := range []string{pod.TypeContainer, pod.TypeCubeSandbox} {
+		b.Run(kind, func(b *testing.B) {
+			workload := &pod.Pod{
+				ID: "checkout-api", Name: "checkout-api", Type: kind,
+				Container: &pod.ContainerInfo{Hostname: "huatuo-dev", Type: pod.ContainerTypeNormal},
+				Labels:    map[string]any{pod.LabelHostNamespace: "checkout"},
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = NewPodGaugeData(workload, "total", 25, "CPU utilization", nil)
+			}
+		})
+	}
+}
+
+// TestNewPodCounterData 验证容器 counter 与旧入口完全一致，沙箱沿用固定身份、
+// 名称回退和 zone 标签，并保持 counter 类型而非 gauge。
+func TestNewPodCounterData(t *testing.T) {
+	for _, kind := range []string{pod.TypeContainer, pod.TypeCubeSandbox, pod.TypeOpenSandbox} {
+		t.Run(kind, func(t *testing.T) {
+			workload := &pod.Pod{ID: "checkout-sandbox", Type: kind, Labels: map[string]any{pod.LabelHostNamespace: "production"}, Container: &pod.ContainerInfo{Hostname: "huatuo-dev", Type: pod.ContainerTypeNormal, Qos: pod.ContainerQosLevelMin}}
+			labels := map[string]string{LabelHost: "huatuo-dev", LabelRegion: "huatuo-region", "zone": "2"}
+			got := NewPodCounterData(workload, "latency", 12, "CPU queue latency", labels)
+			want := NewPodGaugeData(workload, "latency", 12, "CPU queue latency", labels)
+			want.valueType = MetricTypeCounter
+			if kind == pod.TypeContainer {
+				want = NewContainerCounterData(&pod.Container{Hostname: "huatuo-dev", Type: pod.ContainerTypeNormal, Qos: pod.ContainerQosLevelMin, Labels: workload.Labels}, "latency", 12, "CPU queue latency", labels)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("counter=%+v want=%+v", got, want)
+			}
 		})
 	}
 }

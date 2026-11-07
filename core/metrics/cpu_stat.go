@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
@@ -50,8 +49,7 @@ type cpuStatAvailability struct {
 }
 
 type cpuStatCollector struct {
-	cgroup cgroups.Cgroup
-	mutex  sync.Mutex
+	mutex sync.Mutex
 }
 
 func init() {
@@ -60,16 +58,9 @@ func init() {
 }
 
 func newCPUStat() (*tracing.EventTracingAttr, error) {
-	cgroup, err := cgroups.NewManager()
-	if err != nil {
-		return nil, err
-	}
-
 	return &tracing.EventTracingAttr{
-		TracingData: &cpuStatCollector{
-			cgroup: cgroup,
-		},
-		Flag: tracing.FlagMetric,
+		TracingData: &cpuStatCollector{},
+		Flag:        tracing.FlagMetric,
 	}, nil
 }
 
@@ -127,7 +118,7 @@ func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cp
 		}
 }
 
-func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) (cpuStatAvailability, error) {
+func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, workload *pod.Pod) (cpuStatAvailability, error) {
 	var availability cpuStatAvailability
 
 	c.mutex.Lock()
@@ -138,17 +129,25 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		return availability, nil
 	}
 
-	raw, err := c.cgroup.CpuStatRaw(container.CgroupPath)
+	raw, err := workloadCPUStat(workload)
 	if err != nil {
 		return availability, err
 	}
 
-	usage, err := c.cgroup.CpuUsage(container.CgroupPath)
-	if err != nil {
-		return availability, err
+	var total uint64
+	usageAvailable := true
+	if _, hasWait := raw["wait_sum"]; hasWait {
+		usage, err := workloadCPUUsage(workload)
+		if err != nil {
+			usageAvailable = false
+			log.Debugf("cpu wait accounting unavailable: workload=%s err=%v", workload.ID, err)
+		} else {
+			total = usage.Usage * 1000
+		}
 	}
 
-	stat, availability := newCPUStatSample(raw, usage.Usage*1000, now)
+	stat, availability := newCPUStatSample(raw, total, now)
+	availability.waitPercent = availability.waitPercent && usageAvailable
 	if !availability.waitPercent {
 		stat.lastUpdate = time.Time{}
 		*cpu = stat
@@ -170,26 +169,29 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
-	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
+	workloads, err := pod.Pods()
 	if err != nil {
 		return nil, err
 	}
 
-	for _, container := range containers {
-		dataCache, ok := container.LifeResources("collector_cpu_stat").(*cpuStat)
-		if !ok || dataCache == nil {
-			log.Warnf("cpu_stat: LifeResources for container %s returned unexpected type or nil", container)
+	for _, workload := range workloads {
+		if !isCPUWorkload(workload) {
 			continue
 		}
-		available, err := c.updateDataCache(dataCache, container)
+		dataCache, ok := workload.LifeResources("collector_cpu_stat").(*cpuStat)
+		if !ok || dataCache == nil {
+			log.Warnf("cpu_stat: LifeResources for workload %s returned unexpected type or nil", workload.ID)
+			continue
+		}
+		available, err := c.updateDataCache(dataCache, workload)
 		if err != nil {
-			log.Infof("failed to update cpu info of %s, %v", container, err)
+			log.Infof("failed to update cpu info of %s, %v", workload.ID, err)
 			continue
 		}
 
 		if available.waitPercent {
-			metrics = append(metrics, metric.NewContainerGaugeData(
-				container,
+			metrics = append(metrics, metric.NewPodGaugeData(
+				workload,
 				"wait_sum_percent",
 				dataCache.waitPercent,
 				"CFS cgroup runqueue wait as a percentage of total schedulable time (requires kernel.sched_schedstats=1)",
@@ -197,8 +199,8 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			))
 		}
 		if available.nrThrottled {
-			metrics = append(metrics, metric.NewContainerGaugeData(
-				container,
+			metrics = append(metrics, metric.NewPodGaugeData(
+				workload,
 				"nr_throttled",
 				float64(dataCache.nrThrottled),
 				"number of CFS periods in which the cgroup was throttled",
@@ -206,8 +208,8 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			))
 		}
 		if available.throttledTime {
-			metrics = append(metrics, metric.NewContainerGaugeData(
-				container,
+			metrics = append(metrics, metric.NewPodGaugeData(
+				workload,
 				"throttled_time",
 				float64(dataCache.throttledTime),
 				"total CFS cgroup throttled time in nanoseconds",
@@ -215,8 +217,8 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			))
 		}
 		if available.nrBursts {
-			metrics = append(metrics, metric.NewContainerGaugeData(
-				container,
+			metrics = append(metrics, metric.NewPodGaugeData(
+				workload,
 				"nr_bursts",
 				float64(dataCache.nrBursts),
 				"number of CFS periods in which the cgroup used burst capacity",
@@ -224,8 +226,8 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			))
 		}
 		if available.burstTime {
-			metrics = append(metrics, metric.NewContainerGaugeData(
-				container,
+			metrics = append(metrics, metric.NewPodGaugeData(
+				workload,
 				"burst_time",
 				float64(dataCache.burstTime),
 				"total CFS cgroup burst time in nanoseconds",

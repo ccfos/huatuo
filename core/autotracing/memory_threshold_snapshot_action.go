@@ -22,6 +22,8 @@ import (
 	"slices"
 	"time"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"github.com/sirupsen/logrus"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
@@ -69,7 +71,7 @@ func newActionRunner(ctx context.Context, config *Config, source *cgroupSource,
 		ops = &actionBatchOps{
 			selectProcess: selector.Select, validateProcess: selector.Validate,
 			snapshotProcessMemory: collector.Snapshot, save: tracing.Save,
-			validateContainer: pod.ValidateContainerRef,
+			validateContainer: containerdiscovery.ValidateContainerRef,
 		}
 	}
 

@@ -33,11 +33,12 @@ func BenchmarkContainerEvents(b *testing.B) {
 					subs[i] = subscribeForTest(b, store)
 					_, _ = subs[i].DrainEvents()
 				}
-				ref := ContainerRef{Key: ContainerKey{ID: "event", Generation: 1}, MemoryCgroupPath: "/event"}
+				record := containerRecordForTest("event")
+				record.ref.Key.Generation = 1
 				b.ReportAllocs()
 				for b.Loop() {
 					store.mu.Lock()
-					store.publish(ContainerCreated, ref)
+					store.publish(ContainerCreated, record)
 					store.mu.Unlock()
 					for _, sub := range subs {
 						if _, err := sub.DrainEvents(); err != nil {
@@ -68,6 +69,41 @@ func BenchmarkContainerFullUpdate(b *testing.B) {
 				update, err := sub.DrainEvents()
 				if err != nil || len(update.Events) != size {
 					b.Fatal("invalid full update")
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkPodEvents measures the sandbox projection of the shared queue.
+func BenchmarkPodEvents(b *testing.B) {
+	for _, count := range []int{1, 8} {
+		b.Run(fmt.Sprintf("subscribers=%d", count), func(b *testing.B) {
+			store := newTestContainerStore()
+			for index := range 4096 {
+				id := fmt.Sprintf("checkout-sandbox-%d", index)
+				store.records[id] = &containerRecord{pod: &Pod{ID: id, Type: TypeCubeSandbox}, ref: ContainerRef{Key: PodKey{ID: id, Generation: 1}}}
+			}
+			subscriptions := make([]*PodSubscription, count)
+			for index := range subscriptions {
+				subscription, err := store.subscribePods(b.Context())
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.Cleanup(subscription.Close)
+				_, _ = subscription.DrainEvents()
+				subscriptions[index] = subscription
+			}
+			record := store.records["checkout-sandbox-0"]
+			b.ReportAllocs()
+			for b.Loop() {
+				store.mu.Lock()
+				store.publish(PodCreated, record)
+				store.mu.Unlock()
+				for _, subscription := range subscriptions {
+					if _, err := subscription.DrainEvents(); err != nil {
+						b.Fatal(err)
+					}
 				}
 			}
 		})

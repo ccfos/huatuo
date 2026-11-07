@@ -23,8 +23,9 @@ import (
 	"strings"
 	"syscall"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"github.com/ccfos/huatuo/internal/cgroups"
-	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs"
 )
 
@@ -50,7 +51,7 @@ func containerRootPIDs(containerID string, filter executableFilter) ([]int, erro
 		return nil, err
 	}
 
-	cgroupPath, err := pod.ContainerCgroupPathByID(containerID)
+	cgroupPath, err := containerdiscovery.ContainerCgroupPathByID(containerID)
 	if err != nil {
 		return nil, err
 	}

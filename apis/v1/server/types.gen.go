@@ -311,6 +311,9 @@ type RawProfile struct {
 	ProfileType       string      `json:"profile_type"`
 	Region            string      `json:"region"`
 
+	// SourceType Observation producer origin (host or kata_guest); omitted for historical documents with unknown origin.
+	SourceType *string `json:"source_type,omitempty"`
+
 	// StartedTimestamp UTC timestamp emitted with nine fractional digits.
 	StartedTimestamp timeutil.Timestamp `json:"started_timestamp"`
 
