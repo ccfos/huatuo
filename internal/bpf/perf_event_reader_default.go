@@ -30,10 +30,18 @@ import (
 	"github.com/cilium/ebpf/perf"
 )
 
+type perfRecordReader interface {
+	Close() error
+	Flush() error
+	BufferSize() int
+	SetDeadline(deadline time.Time)
+	ReadInto(record *perf.Record) error
+}
+
 // perfEventReader reads the eBPF perf_event_array.
 type perfEventReader struct {
 	done   <-chan struct{}
-	rd     *perf.Reader
+	rd     perfRecordReader
 	cancel context.CancelFunc
 }
 

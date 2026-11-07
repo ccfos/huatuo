@@ -81,8 +81,20 @@ func newRingBufferContext(
 	bufferSize int,
 	needsFallback bool,
 ) (*ringBufferContext, error) {
-	// GLOBAL is disabled by kernels with NO_HZ_FULL; fail before opening readers.
+	return newRingBufferContextWithQuery(b, ctx, bufferSize, needsFallback, queryMembarrier)
+}
+
+func queryMembarrier() (uintptr, unix.Errno) {
 	supported, _, errno := unix.Syscall(unix.SYS_MEMBARRIER, membarrierCmdQuery, 0, 0)
+	return supported, errno
+}
+
+func newRingBufferContextWithQuery(
+	b bpf.BPF, ctx context.Context, bufferSize int, needsFallback bool,
+	query func() (uintptr, unix.Errno),
+) (*ringBufferContext, error) {
+	// GLOBAL is disabled by kernels with NO_HZ_FULL; fail before opening readers.
+	supported, errno := query()
 	if errno != 0 {
 		return nil, fmt.Errorf("query native profiler writer synchronization: %w", errno)
 	}
