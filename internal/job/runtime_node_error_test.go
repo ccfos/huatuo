@@ -148,6 +148,16 @@ func TestRuntimeReconcileJobWithErrorClassifiesErrors(t *testing.T) {
 			wantUnavailableDeadline: true,
 		},
 		{
+			name: "rate limited",
+			err: &client.NodeError{
+				StatusCode: 429,
+				Code:       apiv1.ErrorCodeRateLimited,
+				Message:    "too many requests",
+			},
+			wantStatus:              StatusPending,
+			wantUnavailableDeadline: true,
+		},
+		{
 			name: "execution failure",
 			err: &client.NodeError{
 				StatusCode: 500,
