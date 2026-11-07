@@ -63,7 +63,7 @@ if [ ! -x "_output/bin/huatuo-bamai" ]; then
 fi
 
 # Check binary architecture matches build target
-file _output/bin/huatuo-bamai | grep -q "%{_target_cpu}" || {
+file _output/bin/huatuo-bamai | grep -Eq "x86-64|%{_target_cpu}" || {
     echo "WARNING: Binary architecture may not match target architecture %{_target_cpu}"
 }
 
