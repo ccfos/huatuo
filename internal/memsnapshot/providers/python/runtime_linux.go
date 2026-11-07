@@ -316,7 +316,7 @@ func inspectModule(ctx context.Context, path string, maps []memsnapshot.ProcMap,
 			)
 		}
 	} else {
-		runtimeVersion, err = versionFromModulePath(path)
+		runtimeVersion, err = versionFromModulePath(maps[0].Path)
 		if err != nil {
 			return image{}, fmt.Errorf("%w: %w", errUnsupportedRuntime, err)
 		}
