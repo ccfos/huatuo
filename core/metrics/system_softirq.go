@@ -189,7 +189,7 @@ func (s *softirqLatency) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.DetachOnContextDone(childCtx, cancel)
+	defer object.DetachOnContextDone(childCtx, cancel)()
 
 	<-childCtx.Done()
 	return nil

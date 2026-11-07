@@ -71,7 +71,7 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	defer b.DetachOnContextDone(childCtx, cancel)()
 
 	for {
 		select {

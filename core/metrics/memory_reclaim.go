@@ -153,7 +153,7 @@ func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	obj.DetachOnContextDone(childCtx, cancel)
+	defer obj.DetachOnContextDone(childCtx, cancel)()
 
 	// wait stop
 	<-childCtx.Done()

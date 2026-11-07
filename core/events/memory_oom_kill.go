@@ -124,7 +124,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	defer b.DetachOnContextDone(childCtx, cancel)()
 
 	for {
 		select {

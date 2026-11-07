@@ -711,7 +711,7 @@ func (ras *rasTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	defer b.DetachOnContextDone(childCtx, cancel)()
 
 	return ras.rasEventLoop(childCtx, reader)
 }

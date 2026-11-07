@@ -37,6 +37,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -652,11 +653,163 @@ func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 	}
 }
 
+type detachTestLink struct {
+	link.Link
+	close func() error
+}
+
+func (l detachTestLink) Close() error {
+	return l.close()
+}
+
 func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
-	b := &defaultBPF{}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	b.DetachOnContextDone(ctx, cancel)
+	t.Run("cleanup without parent cancellation", func(t *testing.T) {
+		b := &defaultBPF{}
+		var callbacks atomic.Int32
+		cleanup := b.DetachOnContextDone(t.Context(), func() {
+			callbacks.Add(1)
+		})
+		t.Cleanup(cleanup)
+
+		cleanup()
+		cleanup()
+		require.Equal(t, int32(1), callbacks.Load())
+		require.NoError(t, b.Close())
+	})
+
+	t.Run("closed object", func(t *testing.T) {
+		b := &defaultBPF{}
+		require.NoError(t, b.Close())
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		completed := make(chan struct{})
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			close(completed)
+		})
+		t.Cleanup(cleanup)
+
+		cleanup()
+		select {
+		case <-completed:
+		default:
+			t.Fatal("cleanup returned before the completion callback")
+		}
+	})
+
+	t.Run("detach failure", func(t *testing.T) {
+		var detached, completed bool
+		b := &defaultBPF{
+			programsByID: map[uint32]*loadedProgram{
+				1: {links: map[string]link.Link{
+					"test": detachTestLink{close: func() error {
+						detached = true
+						return errors.New("detach failed")
+					}},
+				}},
+			},
+		}
+		cleanup := b.DetachOnContextDone(t.Context(), func() {
+			completed = detached && len(b.programsByID[1].links) == 0
+		})
+		t.Cleanup(cleanup)
+
+		cleanup()
+		require.True(t, completed, "detach failure must not suppress completion")
+		require.NoError(t, b.Close())
+	})
+
+	t.Run("cleanup joins callback", func(t *testing.T) {
+		b := &defaultBPF{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			close(entered)
+			<-release
+		})
+		joined := make(chan struct{})
+		go func() {
+			cleanup()
+			close(joined)
+		}()
+		t.Cleanup(func() {
+			close(release)
+			<-joined
+		})
+
+		cancel()
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("completion callback did not start")
+		}
+		select {
+		case <-joined:
+			t.Fatal("cleanup returned while the completion callback was blocked")
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
+
+	t.Run("close races cancellation", func(t *testing.T) {
+		b := &defaultBPF{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var callbacks atomic.Int32
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			callbacks.Add(1)
+		})
+		t.Cleanup(cleanup)
+		closed := make(chan error, 1)
+		go func() { closed <- b.Close() }()
+
+		cancel()
+		cleanup()
+		require.NoError(t, <-closed)
+		require.Equal(t, int32(1), callbacks.Load())
+	})
+
+	t.Run("attached program", func(t *testing.T) {
+		b := loadMinimalBpfFromBytes(t)
+		err := b.AttachWithOptions([]AttachOption{{
+			ProgramName: "test_kprobe",
+			Symbol:      "sys_openat",
+		}})
+		if err != nil && (isPerfEventUnavailable(err) || errors.Is(err, link.ErrNotSupported)) {
+			t.Skipf("kprobe attachment is unavailable: %v", err)
+		}
+
+		require.NoError(t, err)
+		hasLinks := func() bool {
+			b.mu.RLock()
+			defer b.mu.RUnlock()
+			for _, program := range b.programsByID {
+				if len(program.links) != 0 {
+					return true
+				}
+			}
+
+			return false
+		}
+		require.True(t, hasLinks())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		completed := make(chan bool, 1)
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			completed <- !hasLinks()
+		})
+		t.Cleanup(cleanup)
+
+		cancel()
+		select {
+		case detached := <-completed:
+			require.True(t, detached, "completion callback preceded detachment")
+		case <-time.After(time.Second):
+			t.Fatal("cancellation did not detach the program")
+		}
+		cleanup()
+		require.False(t, hasLinks())
+	})
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {

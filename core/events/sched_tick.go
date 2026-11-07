@@ -125,7 +125,7 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 		return fmt.Errorf("attach scheduler tick tracing: %w", err)
 	}
 
-	b.DetachOnContextDone(childCtx, cancel)
+	defer b.DetachOnContextDone(childCtx, cancel)()
 
 	for {
 		select {

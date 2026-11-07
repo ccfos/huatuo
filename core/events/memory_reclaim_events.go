@@ -76,7 +76,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	defer b.DetachOnContextDone(childCtx, cancel)()
 
 	var (
 		cssToContainer map[uint64]*pod.Container
