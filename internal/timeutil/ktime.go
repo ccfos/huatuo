@@ -35,8 +35,11 @@ var realtimeOffsetCache monotonicRealtimeOffsetCache
 func (c *monotonicRealtimeOffsetCache) loadOrRefresh(now func() time.Time, sample func() (int64, error)) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.refreshedAt.IsZero() && now().Sub(c.refreshedAt) < realtimeOffsetRefreshInterval {
-		return c.offsetNS, nil
+	if !c.refreshedAt.IsZero() {
+		age := now().Sub(c.refreshedAt)
+		if age >= 0 && age < realtimeOffsetRefreshInterval {
+			return c.offsetNS, nil
+		}
 	}
 
 	offsetNS, err := sample()
