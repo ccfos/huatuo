@@ -446,7 +446,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 - 仅配置 `Included`：仅监控匹配的容器。
 - 同时配置两者：监控匹配 `Included` 且不匹配 `Excluded` 的容器。
 
-#### 7.2 宿主机系统态 CPU 突增
+#### 7.2 宿主机 CPU 突增
 
 ```toml
 # cpusys
@@ -481,6 +481,10 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 [AutoTracing.CPUSys]
     # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
     # Tool = "perf"
+    # UserThreshold = 75
+    # DeltaUserThreshold = 45
+    # UsageThreshold = 90
+    # DeltaUsageThreshold = 55
     # SysThreshold = 45
     # DeltaSysThreshold = 20
     # Interval = 10
@@ -490,13 +494,20 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 
 | 字段 | 说明 |
 | --- | --- |
+| `UserThreshold` / `DeltaUserThreshold` | 宿主机用户态使用率 / 增量阈值，默认 `75%` / `45` 个百分点。 |
+| `UsageThreshold` / `DeltaUsageThreshold` | 宿主机总执行 CPU 使用率 / 增量阈值，默认 `90%` / `55` 个百分点。 |
 | `SysThreshold` | 宿主机系统态 CPU 使用率阈值，默认 `45%`。 |
 | `DeltaSysThreshold` | 系统态 CPU 使用率相对上次采样的增量阈值，默认 `20` 个百分点。 |
 | `Interval` | 宿主机 CPU 使用率采样间隔，单位秒，默认 `10`。 |
 | `IntervalTracing` | 两次追踪之间的最小间隔，单位秒，默认 `1800`。 |
 | `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
-**触发条件**：满足追踪间隔后，系统态 CPU 使用率严格大于 `SysThreshold`，且其增量严格大于 `DeltaSysThreshold` 时触发。
+**触发条件**：共用冷却结束后，system/user/total 任一组的使用率及增幅同时严格超过阈值即可触发。
+system 使用上表中的 CPUSys 阈值；user 和 total 分别使用 CPUSys 的
+UserThreshold/DeltaUserThreshold（默认 75/45）和
+UsageThreshold/DeltaUsageThreshold（默认 90/55），与 CPUIdle 独立配置。
+使用率单位为百分比，增幅单位为百分点。三组条件均按阈值严格比较，0 为普通阈值，不表示关闭。
+主机三组条件共用 CPUSys 的采集和冷却，不与容器触发状态共享。
 
 #### 7.3 容器 D 状态负载
 
@@ -790,7 +801,7 @@ SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒�
   `1..1000`，默认 `100`。
 - **ExternalRatioDebugFile**：可选的 CSV 路径，用于记录每个目标每秒的比例
   诊断数据。默认为空。交互式图表和 SuperMonitor 对比方法见
-  [SchedBlame Analysis](../sched-blame-analysis.md)。
+  [SchedBlame Analysis](../best-practice/sched-blame-analysis_en.md)。
 
 #### 7.9 已知问题标记
 

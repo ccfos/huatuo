@@ -78,7 +78,7 @@ cpusys_event_is_valid() {
 }
 
 integration_huatuo_bamai_start \
-	write_cpusys_autotracing_config \
+	write_config_bamai_cpusys_autotracing \
 	--region dev \
 	--procfs-prefix "${CPUSYS_FIXTURE_ROOT}" \
 	--tools-bin-dir "${CPUSYS_FIXTURE_ROOT}/tools" \
@@ -113,3 +113,4 @@ wait_until 10 1 cpusys_event_is_valid \
 call_count=$(wc -l < "${CPUSYS_PERF_CALLS_FILE}")
 [[ "${call_count}" -eq 1 ]] \
 	|| fatal "cpusys invoked perf ${call_count} times, expected once"
+assert_huatuo_bamai_log_clean

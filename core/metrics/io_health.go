@@ -228,7 +228,8 @@ func (c *ioHealthCollector) freezeMetrics() ([]*metric.Data, error) {
 				// del_gendisk precedes draining queue sysfs callbacks. A late
 				// freeze may recreate its row; reclaim it after sysfs removal.
 				err := c.freezeObject.DeleteMapItems(
-					c.freezeObject.MapIDByName("io_health_freeze_counts"), [][]byte{item.Key})
+					c.freezeObject.MapIDByName("io_health_freeze_counts"), [][]byte{item.Key},
+				)
 				if err != nil && !errors.Is(err, os.ErrNotExist) {
 					return nil, fmt.Errorf(
 						"delete retired IO health freeze counter %d:%d: %w",

@@ -24,7 +24,7 @@ source "${ROOT_DIR}/integration/config.sh"
 # The config writer reads the token from the calling test's scope.
 readonly API_TOKEN="integration-admin"
 
-require_commands curl ss
+require_commands curl jq ss
 
 APISERVER_PORT=$(allocate_available_port) || fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
@@ -47,19 +47,6 @@ assert_curl_succeeded() {
 	fatal "${label}: curl exited ${curl_status}"
 }
 
-assert_readiness_endpoint() {
-	local body="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.body"
-	local curl_status=0 status
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${body}" -w '%{http_code}' \
-		"${APISERVER_ADDR}/readyz") || curl_status=$?
-	assert_curl_succeeded "GET /readyz" "${body}" "${curl_status}"
-	assert_eq "${status}" "204" "GET /readyz status" \
-		|| fatal "GET /readyz returned status ${status}, expected 204"
-	if [[ -s "${body}" ]]; then
-		fatal "GET /readyz returned a non-empty response body"
-	fi
-}
-
 assert_metrics_endpoint() {
 	local body="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 	local headers="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.headers"
@@ -78,8 +65,9 @@ assert_metrics_endpoint() {
 		|| fatal "/metrics omitted the /readyz HTTP request counter"
 }
 
-integration_huatuo_apiserver_start write_apiserver_apis_config \
+integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_readiness_endpoint
 assert_metrics_endpoint
+assert_build_info "${APISERVER_ADDR}" huatuo_apiserver "" ""
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver

@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"sync"
 	"time"
 
@@ -145,9 +144,6 @@ type blkThrotlTracing struct {
 }
 
 func (c *blkThrotlTracing) Start(ctx context.Context) error {
-	if runtime.GOARCH != "amd64" {
-		return fmt.Errorf("%w: blk_throtl requires amd64", types.ErrNotSupported)
-	}
 	hooks, err := loadBlkThrotlHooks()
 	if err != nil {
 		return err
@@ -385,7 +381,8 @@ func blkThrotlHookRange(
 	value := profile[name]
 	if value.End == 0 {
 		return symbol.KsymbolRange{}, fmt.Errorf(
-			"kernel text range %q is unavailable", name)
+			"kernel text range %q is unavailable", name,
+		)
 	}
 	return value, nil
 }

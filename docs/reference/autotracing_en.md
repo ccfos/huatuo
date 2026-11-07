@@ -35,13 +35,13 @@ Records contain these common fields. Container fields are provided only when a c
 | `tracer_type` | Observation type; always `autotracing` for AutoTracing records |
 | `tracer_data` | Event-specific data described below |
 
-### Host System CPU
+### Host CPU
 
 Tracer: `cpusys`. Select `perf` (default) or `profiler` with `AutoTracing.CPUSys.Tool`.
 
-Periodically reads `/proc/stat` to calculate host system-mode CPU utilization and its increase between consecutive samples. Utilization above 45% and an increase above 20 percentage points trigger host-level CPU sampling to generate a CPU flame graph.
+Periodically reads `/proc/stat` to detect host system, user (`user + nice`), and executing-total (`user + nice + system + irq + softirq`) CPU bursts, including container work. Any group triggers profiling when both utilization and its increase strictly exceed its thresholds. Default utilization/increase thresholds are system 45%/20 percentage points, user 75%/45 percentage points, and total 90%/55 percentage points.
 
-These are built-in thresholds. The default global cooldown is 30 minutes.
+All three groups share a capture and a default 30-minute cooldown. Thresholds are configured under CPUSys independently of CPUIdle; see the [configuration reference](../configuration/huatuo-bamai-configuration_en.md). Records retain system fields and add matching `user_percent*` and `total_percent*` fields; zero-valued additional fields are omitted.
 
 Example with some common fields omitted:
 

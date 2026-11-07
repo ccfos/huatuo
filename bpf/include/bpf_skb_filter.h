@@ -8,7 +8,7 @@
 #include "bpf_skbuff.h"
 
 /*
- * Device filter injected via RewriteConstants + map population at load time.
+ * Device filter injected by the loader with map population at load time.
  *
  * filter_dev_mode == 0 : disabled — all devices pass (default)
  * filter_dev_mode == 1 : whitelist — only ifindexes present in
@@ -21,7 +21,7 @@
  */
 #define SKB_FILTER_DEV_MAP_MAX_ENTRIES 64
 
-static volatile const __u32 filter_dev_mode = 0;
+volatile const __u32 filter_dev_mode = 0;
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);

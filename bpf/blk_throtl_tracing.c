@@ -242,7 +242,7 @@ int kprobe_blk_throtl_add_bio_tg(struct pt_regs *ctx)
 	u64 caller = 0;
 	int ret;
 
-	BPF_KPROBE_READ_RET_IP(caller, ctx);
+	IO_CONTROL_KPROBE_READ_RET_IP(caller, ctx);
 	if (caller >= blk_throtl_ignored_caller_start &&
 	    caller < blk_throtl_ignored_caller_end)
 		return 0;

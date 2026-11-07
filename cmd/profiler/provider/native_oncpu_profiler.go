@@ -40,8 +40,28 @@ type cpuNativeProfiler struct {
 	bpf                bpf.BPF
 	ringCtx            *ringBufferContext
 	dbg                *bpf.BpfDbg
-	offCPUMode         bool
 	offCPUStatsEnabled bool
+}
+
+func (p *cpuNativeProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if err := p.bpf.Detach(); err != nil {
+		return fmt.Errorf("stop native sampling: %w", err)
+	}
+
+	if p.config.Mode == profiling.ModeOffCPU {
+		return p.drainOffCPUData(ctx, enqueue)
+	}
+
+	return p.ringCtx.drainFinalRingBuffers(
+		ctx,
+		func() any { return &abi.ProfilerOnCPUEvent{} },
+		enqueue,
+		p.convertCPUValue,
+	)
 }
 
 func (p *cpuNativeProfiler) Stop() error {
@@ -49,15 +69,16 @@ func (p *cpuNativeProfiler) Stop() error {
 		logOffCPUBPFStats(p.bpf)
 	}
 
+	var readerErr error
 	if p.ringCtx != nil {
-		p.ringCtx.Close()
+		readerErr = p.ringCtx.Close()
 		p.ringCtx = nil
 	}
 
 	err := closeBPF(p.bpf)
 	p.bpf = nil
 
-	return err
+	return errors.Join(readerErr, err)
 }
 
 func (p *cpuNativeProfiler) Start(ctx context.Context) error {
@@ -153,22 +174,16 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 	}
 
 	if attachErr != nil {
-		ringCtx.Close()
-		attachErr = fmt.Errorf("attach native CPU %s probes: %w", cfg.Mode, attachErr)
-		if closeErr := b.Close(); closeErr != nil {
-			return errors.Join(
-				attachErr,
-				fmt.Errorf("close BPF after attach failure: %w", closeErr),
-			)
-		}
-
-		return attachErr
+		return errors.Join(
+			fmt.Errorf("attach native CPU %s probes: %w", cfg.Mode, attachErr),
+			ringCtx.Close(),
+			b.Close(),
+		)
 	}
 
 	p.bpf = b
 	p.ringCtx = ringCtx
 	p.dbg = dbg
-	p.offCPUMode = offCPU
 	p.offCPUStatsEnabled = offCPU && cfg.OffCPUStatsEnabled
 	log.Infof("eBPF attached")
 
@@ -237,7 +252,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 
 	defer stopDbg()
 
-	if p.offCPUMode {
+	if p.config.Mode == profiling.ModeOffCPU {
 		return p.readOffCPUDataLoop(ctx, enqueue)
 	}
 

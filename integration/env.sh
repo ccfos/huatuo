@@ -29,24 +29,16 @@ HUATUO_BAMAI_BIN="${ROOT_DIR}/_output/bin/huatuo-bamai"
 export HUATUO_BAMAI_BIN
 HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
 export HUATUO_APISERVER_BIN
-HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
+HUATUO_BAMAI_TEST_TMPDIR=${RUNNER_OUTPUT_DIR:-$(mktemp -d /tmp/huatuo-test.XXXXXX)}
 export HUATUO_BAMAI_TEST_TMPDIR
-HUATUO_BAMAI_MATCH_KEYWORDS='level="?(error|panic|fatal)"?|panic:'
-export HUATUO_BAMAI_MATCH_KEYWORDS
 HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
 HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/testdata/expected_metrics"
 export HUATUO_BAMAI_TEST_EXPECTED
-HUATUO_BAMAI_ARGS_E2E=(
-	"--config-dir" "${ROOT_DIR}/_output/conf/"
-	"--config" "huatuo-bamai.conf"
-	"--region" "e2e"
-	"--disable-storage"
-)
-export HUATUO_BAMAI_ARGS_E2E
-HUATUO_BAMAI_ADDR="http://127.0.0.1:19704"
+unset HUATUO_BAMAI_DEFAULT_ADDR
+HUATUO_BAMAI_ADDR=""
 export HUATUO_BAMAI_ADDR
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
+HUATUO_BAMAI_METRICS_API=""
 export HUATUO_BAMAI_METRICS_API
 WAIT_HUATUO_BAMAI_TIMEOUT=120 # second
 export WAIT_HUATUO_BAMAI_TIMEOUT
@@ -60,11 +52,8 @@ PROFILER_TOOL_DIR=${PROFILER_TOOL_DIR:-${ROOT_DIR}/_output/tools}
 export PROFILER_TOOL_DIR
 PPROF_TOOL_BIN=${PPROF_TOOL_BIN:-${ROOT_DIR}/_output/tools/pprof-tool}
 export PPROF_TOOL_BIN
-
-# Arrays cannot be exported to child processes via environment variables.
-# Convert the E2E array to a string for reconstruction in child processes.
-HUATUO_BAMAI_E2E_ARGS_STR="${HUATUO_BAMAI_ARGS_E2E[*]}"
-export HUATUO_BAMAI_E2E_ARGS_STR
+SYSBENCH_BIN=${SYSBENCH_BIN:-${ROOT_DIR}/_output/tests/sysbench}
+export SYSBENCH_BIN
 
 # k8s: metadata.name == pod-name, ct-hostname
 # huatuo-bamai: name == ct-hostname, hostname == pod-name == metadata.name
@@ -78,14 +67,6 @@ BUSINESS_DEFAULT_POD_NAME_REGEX="^${BUSINESS_DEFAULT_POD_NAME}$"
 export BUSINESS_DEFAULT_POD_NAME_REGEX
 BUSINESS_DEFAULT_POD_COUNT=1 # default only one pod
 export BUSINESS_DEFAULT_POD_COUNT
-BUSINESS_E2E_TEST_POD_NAME="business-e2e-test"
-export BUSINESS_E2E_TEST_POD_NAME
-BUSINESS_E2E_TEST_POD_NAME_REGEX="^${BUSINESS_E2E_TEST_POD_NAME}-([0-9]+)?$"
-export BUSINESS_E2E_TEST_POD_NAME_REGEX
-BUSINESS_E2E_TEST_POD_LABEL="app=${BUSINESS_E2E_TEST_POD_NAME}"
-export BUSINESS_E2E_TEST_POD_LABEL
-BUSINESS_E2E_TEST_POD_COUNT=2
-export BUSINESS_E2E_TEST_POD_COUNT
 
 KUBELET_PODS_API="https://127.0.0.1:10250/pods"
 export KUBELET_PODS_API
@@ -95,9 +76,3 @@ KUBELET_CERT=${KUBELET_CERT:-/etc/kubernetes/pki/apiserver-kubelet-client.crt}
 export KUBELET_CERT
 KUBELET_KEY=${KUBELET_KEY:-/etc/kubernetes/pki/apiserver-kubelet-client.key}
 export KUBELET_KEY
-
-CURL_TIMEOUT=(
-	"--connect-timeout" "2"
-	"--max-time" "3"
-)
-export CURL_TIMEOUT

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -74,8 +75,7 @@ func (c *collector) Start(_ context.Context) error {
 			Symbol:      "irq/softirq_entry",
 		},
 	}); err != nil {
-		object.Close()
-		return fmt.Errorf("attach IRQ probes: %w", err)
+		return errors.Join(fmt.Errorf("attach IRQ probes: %w", err), object.Close())
 	}
 
 	c.bpfObj = object
@@ -83,15 +83,22 @@ func (c *collector) Start(_ context.Context) error {
 	return nil
 }
 
-func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+func (c *collector) ReadDataLoop(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
 	<-ctx.Done()
 	if !profile.IsNormalStop(ctx) {
 		return fmt.Errorf("IRQ collection stopped: %w", context.Cause(ctx))
 	}
-	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
-	defer cancel()
+
+	return nil
+}
+
+func (c *collector) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	deliver := func(batch *pipeline.SampleBatch) error {
-		if err := finalCtx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		return enqueue(batch)
@@ -110,12 +117,13 @@ func (c *collector) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.Sam
 }
 
 func (c *collector) Stop() error {
+	var err error
 	if c.bpfObj != nil {
-		c.bpfObj.Close()
+		err = c.bpfObj.Close()
 		c.bpfObj = nil
 	}
 
-	return nil
+	return err
 }
 
 func irqTracingBPFConstants(targetCPU int32, maxEventsPerSecondPerCPU uint64) map[string]any {

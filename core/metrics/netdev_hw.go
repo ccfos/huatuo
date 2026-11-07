@@ -36,8 +36,8 @@ import (
 	"github.com/safchain/ethtool"
 )
 
-// currently supports mlx5_core, i40e, ixgbe, bnxt_en; will be removed in future
-var deviceDriverList = []string{"mlx5_core", "i40e", "ixgbe", "bnxt_en", "virtio_net"}
+// Driver accounting differs; keep hardware-drop estimates behind an allowlist.
+var deviceDriverList = []string{"mlx5_core", "i40e", "ixgbe", "bnxt_en", "virtio_net", "netdevsim"}
 
 type netdevHw struct {
 	prog                  bpf.Reference
@@ -214,7 +214,7 @@ func (netdev *netdevHw) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.DetachOnContextDone(childCtx, cancel)
+	defer object.DetachOnContextDone(childCtx, cancel)()
 
 	<-childCtx.Done()
 	return nil

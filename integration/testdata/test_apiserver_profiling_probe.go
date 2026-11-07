@@ -77,9 +77,10 @@ func run() error {
 		var page struct {
 			Data struct {
 				Items []struct {
-					Type     string    `json:"profile_type"`
-					Started  time.Time `json:"started_timestamp"`
-					Uploaded time.Time `json:"uploaded_timestamp"`
+					Type        string    `json:"profile_type"`
+					ContainerID string    `json:"container_id"`
+					Started     time.Time `json:"started_timestamp"`
+					Uploaded    time.Time `json:"uploaded_timestamp"`
 				} `json:"items"`
 			} `json:"data"`
 		}
@@ -98,9 +99,13 @@ func run() error {
 				end = item.Uploaded
 			}
 		}
+		scope := "host"
+		if page.Data.Items[0].ContainerID != "" {
+			scope = "container"
+		}
 		req := &querier.SelectMergeStacktracesRequest{
 			ProfileTypeID: os.Args[5],
-			LabelSelector: fmt.Sprintf("{id=%q}", os.Args[3]),
+			LabelSelector: fmt.Sprintf("{scope=%q,id=%q}", scope, os.Args[3]),
 			Start:         start.Add(-time.Second).UnixMilli(),
 			End:           end.Add(time.Second).UnixMilli(),
 		}

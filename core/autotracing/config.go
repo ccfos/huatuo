@@ -178,6 +178,10 @@ type Config struct {
 	}
 
 	CPUSys struct {
+		UserThreshold         int64  `default:"75"`
+		DeltaUserThreshold    int64  `default:"45"`
+		UsageThreshold        int64  `default:"90"`
+		DeltaUsageThreshold   int64  `default:"55"`
 		Tool                  string `default:"perf"`
 		SysThreshold          int64  `default:"45"`
 		DeltaSysThreshold     int64  `default:"20"`
@@ -237,6 +241,12 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid autotracing settings.
 func (c *Config) Validate() error {
+	if err := c.validateCPUIdleAdditionalThresholds(); err != nil {
+		return err
+	}
+	if err := c.validateCPUSysAdditionalThresholds(); err != nil {
+		return err
+	}
 	for _, entry := range []struct {
 		name string
 		tool string
@@ -380,4 +390,38 @@ func (c *Config) Clone() *Config {
 		dst.CPUIdle.Filter = &filter
 	}
 	return &dst
+}
+
+func (c *Config) validateCPUSysAdditionalThresholds() error {
+	for _, threshold := range []struct {
+		name  string
+		value int64
+	}{
+		{"UserThreshold", c.CPUSys.UserThreshold},
+		{"DeltaUserThreshold", c.CPUSys.DeltaUserThreshold},
+		{"UsageThreshold", c.CPUSys.UsageThreshold},
+		{"DeltaUsageThreshold", c.CPUSys.DeltaUsageThreshold},
+	} {
+		if err := validateCPUPercentage(threshold.value); err != nil {
+			return fmt.Errorf("CPUSys.%s: %w", threshold.name, err)
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateCPUIdleAdditionalThresholds() error {
+	for _, threshold := range []struct {
+		name  string
+		value int64
+	}{
+		{"UserThreshold", c.CPUIdle.UserThreshold},
+		{"DeltaUserThreshold", c.CPUIdle.DeltaUserThreshold},
+		{"UsageThreshold", c.CPUIdle.UsageThreshold},
+		{"DeltaUsageThreshold", c.CPUIdle.DeltaUsageThreshold},
+	} {
+		if err := validateCPUPercentage(threshold.value); err != nil {
+			return fmt.Errorf("CPUIdle.%s: %w", threshold.name, err)
+		}
+	}
+	return nil
 }

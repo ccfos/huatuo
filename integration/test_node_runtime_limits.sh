@@ -38,10 +38,6 @@ require_commands curl ss awk mkfifo flock dd
 exec {limits_lock_fd}> "${LIMITS_LOCK_FILE}" || skip "cannot open runtime limits lock: ${LIMITS_LOCK_FILE}"
 flock -n "${limits_lock_fd}" || skip "another runtime limits test holds ${LIMITS_LOCK_FILE}"
 
-LIMITS_PORT=$(allocate_available_port) || fatal "failed to allocate a bamai port"
-readonly LIMITS_PORT
-HUATUO_BAMAI_METRICS_API="http://127.0.0.1:${LIMITS_PORT}/metrics"
-
 huatuo_bamai_require_cgroup
 
 limits_observer_pid=""
@@ -79,7 +75,7 @@ limits_locate_cgroup() {
 	pid=$(< "${LIMITS_PID_FILE}")
 	[[ -r /proc/${pid}/cgroup ]] || return 1
 
-	if [[ ${RUNTIME_CGROUP_MODE} == v2 ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		cpu_path=$(awk -F: '$1 == "0" {print $3}' "/proc/${pid}/cgroup")
 		memory_path=${cpu_path}
 	else
@@ -99,7 +95,7 @@ limits_locate_cgroup() {
 
 limits_match() {
 	local cpu=$1 memory_mib=$2
-	if [[ ${RUNTIME_CGROUP_MODE} == v2 ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		read -r limits_quota limits_period < "${limits_cpu_path}/cpu.max" || return 1
 		limits_memory=$(< "${limits_memory_path}/memory.max")
 	else
@@ -154,17 +150,17 @@ limits_observe_startup() {
 assert_limits_shutdown() {
 	local phase=$1 pid
 	pid=$(< "${LIMITS_PID_FILE}")
-	stop_gracefully_by_pid "${pid}" 20 || fatal "daemon did not exit gracefully"
+	assert_process_shutdown_by_pid "${pid}" 20 || fatal "daemon did not exit gracefully"
 	rm -f "${LIMITS_PID_FILE}"
 
 	assert_limits_cgroups_removed || fatal "runtime cgroup remains after shutdown"
 
-	huatuo_bamai_log_check || fatal "daemon logged an error during startup or shutdown"
+	assert_huatuo_bamai_log_clean || fatal "daemon logged an error during startup or shutdown"
 	mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-${phase}.log"
 }
 
 # 1. Without --enable-cgroup, the daemon must inherit the launcher's membership.
-write_runtime_limits_config "${LIMITS_PORT}" 0.75 1.25 512
+write_config_bamai_runtime_limits 0.75 1.25 512 > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 integration_huatuo_bamai_start : --region dev --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-storage --disable-kubelet
 
@@ -181,7 +177,7 @@ limits_old_pid=${limits_pid}
 for limits_values in '0.75 1.25 512' '1.5 0.5 768'; do
 	# 3. Each restart must apply the new configuration in both startup and runtime.
 	read -r limits_startup_cpu limits_cpu limits_memory_mib <<< "${limits_values}"
-	write_runtime_limits_config "${LIMITS_PORT}" "${limits_startup_cpu}" "${limits_cpu}" "${limits_memory_mib}"
+	write_config_bamai_runtime_limits "${limits_startup_cpu}" "${limits_cpu}" "${limits_memory_mib}" > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	rm -f "${LIMITS_GATE}"
 	mkfifo "${LIMITS_GATE}"
 

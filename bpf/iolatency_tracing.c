@@ -52,7 +52,7 @@ IO_CONTROL_DEVICE_HOOKS()
 #define REQ_OP_MASK ((1U << 8) - 1)
 #endif
 
-/* Go probes each raw tracepoint's argument count before loading. */
+/* Go selects raw tracepoint pointer argument positions before loading. */
 volatile const u32 block_bio_queue_bio_arg = 0;
 volatile const u32 block_bio_remap_bio_arg = 0;
 volatile const u32 block_rq_remap_request_arg = 0;

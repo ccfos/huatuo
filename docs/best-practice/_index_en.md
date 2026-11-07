@@ -19,3 +19,5 @@ Choose a guide by troubleshooting or integration goal. See [Key Features](/docs/
 | Analyze packet drops | [Packet Drops](/docs/best-practice/dropwatch_en.md) |
 | Analyze TCP retransmissions and correlated drops | [Retransmission Tracing](/docs/best-practice/tcpshark_en.md) |
 | Analyze softirq sources and preempted tasks | [IRQ Tracing](/docs/best-practice/irqtracing_en.md) |
+| Run SchedBlame independently | [Standalone SchedBlame](/docs/best-practice/sched-blame-standalone_en.md) |
+| Chart and compare scheduling contention | [SchedBlame Analysis](/docs/best-practice/sched-blame-analysis_en.md) |

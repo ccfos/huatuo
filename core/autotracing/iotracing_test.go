@@ -1056,7 +1056,8 @@ func TestReasonSnapshotPreservesIntegerDiskStatusSchema(t *testing.T) {
 		IOStatus: status,
 	})
 	require.NoError(t, err)
-	assert.JSONEq(t,
+	assert.JSONEq(
+		t,
 		`{"type":"ioutil","device":"sda","major_num":0,"minor_num":0,"iostatus":`+
 			`{"read_bps":1,"read_iops":2,"read_await":3,`+
 			`"write_bps":4,"write_iops":5,"write_await":6,`+

@@ -56,6 +56,10 @@ type ringBufferContext struct {
 	stackMapBID        uint32
 	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
 	usym               *symbol.UsymResolver
+
+	// Perf loss records may arrive in a later window than their failed outputs.
+	sampleAttempts   uint64
+	accountedSamples uint64
 }
 
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
@@ -68,6 +72,7 @@ func newRingBufferContext(
 	bufferSize int,
 	needsFallback bool,
 ) (*ringBufferContext, error) {
+	// Start supplies the task context, so failure and timeout interrupt reads.
 	readerA, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
@@ -75,8 +80,10 @@ func newRingBufferContext(
 
 	readerB, err := b.EventPipeByName(ctx, "profiler_output_b", uint32(bufferSize))
 	if err != nil {
-		readerA.Close()
-		return nil, fmt.Errorf("create readerB: %w", err)
+		return nil, errors.Join(
+			fmt.Errorf("create readerB: %w", err),
+			(&ringBufferContext{readerA: readerA}).Close(),
+		)
 	}
 
 	return &ringBufferContext{
@@ -101,6 +108,7 @@ func newSingleRingBufferContext(
 		return nil, errors.New("stack_map_a not found")
 	}
 
+	// Start supplies the task context, so failure and timeout interrupt reads.
 	reader, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
 		return nil, fmt.Errorf("create readerA: %w", err)
@@ -115,14 +123,25 @@ func newSingleRingBufferContext(
 }
 
 // Close releases the ring buffer readers. Should be called when profiling ends.
-func (r *ringBufferContext) Close() {
+func (r *ringBufferContext) Close() error {
+	var readerAErr, readerBErr error
 	if r.readerA != nil {
-		r.readerA.Close()
+		if err := r.readerA.Close(); err != nil {
+			readerAErr = fmt.Errorf("close native reader A: %w", err)
+		}
+
+		r.readerA = nil
 	}
 
 	if r.readerB != nil {
-		r.readerB.Close()
+		if err := r.readerB.Close(); err != nil {
+			readerBErr = fmt.Errorf("close native reader B: %w", err)
+		}
+
+		r.readerB = nil
 	}
+
+	return errors.Join(readerAErr, readerBErr)
 }
 
 // frozenRingBuffer represents a frozen ring buffer that is ready to be drained.
@@ -196,14 +215,41 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 		return err
 	}
 
+	accounted, expected, err := r.drainRingBuffer(
+		ring,
+		newEvent,
+		enqueue,
+		convert,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err := r.accountSamples(expected, accounted); err != nil {
+		return err
+	}
+
+	return bpfmap.WriteUint64(
+		r.bpf,
+		r.transferStateMapID,
+		ring.sampleCountIdx,
+		0,
+	)
+}
+
+func (r *ringBufferContext) drainRingBuffer(
+	ring frozenRingBuffer,
+	newEvent func() any,
+	enqueue func(*pipeline.SampleBatch) error,
+	convert func(int64) (int64, error),
+) (accounted, expected uint64, returnErr error) {
 	kernelCache := make(map[int32][]types.ProfileFrame)
 	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
-	var accounted uint64
 	for {
 		batch, readErr := ring.reader.ReadBatch(newEvent)
 		if batch.LostSamples > math.MaxUint64-uint64(len(batch.Events)) ||
 			uint64(len(batch.Events))+batch.LostSamples > math.MaxUint64-accounted {
-			return fmt.Errorf("BPF transfer event count overflows uint64")
+			return accounted, expected, fmt.Errorf("BPF transfer event count overflows uint64")
 		}
 
 		accounted += uint64(len(batch.Events)) + batch.LostSamples
@@ -218,7 +264,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 				base = &event.Base
 				cpu = &event.CPU
 			default:
-				return fmt.Errorf("unexpected native perf event %T", record)
+				return accounted, expected, fmt.Errorf("unexpected native perf event %T", record)
 			}
 
 			pid := uint32(base.PIDTGID >> 32)
@@ -232,7 +278,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 				var err error
 				user, err = r.resolveUserStackWithFallback(ring, base.Userstack, pid)
 				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
-					return err
+					return accounted, expected, err
 				}
 
 				userCache[userKey] = user
@@ -243,7 +289,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 				var err error
 				kernel, err = r.resolveKernelStackWithFallback(ring, base.Kernstack)
 				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
-					return err
+					return accounted, expected, err
 				}
 
 				kernelCache[base.Kernstack] = kernel
@@ -251,7 +297,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 
 			value, err := convert(base.Value)
 			if err != nil {
-				return err
+				return accounted, expected, err
 			}
 
 			labels := nativeLabels(pid, taskCommString(base.Comm))
@@ -261,7 +307,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 
 			labels, err = types.NormalizeLabels(labels)
 			if err != nil {
-				return err
+				return accounted, expected, err
 			}
 
 			sample := aggregation.Sample{
@@ -271,46 +317,121 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 				Value:        value,
 			}
 			if err := builder.Append(&sample, enqueue); err != nil {
-				return err
+				return accounted, expected, err
 			}
 		}
 
 		if err := builder.Flush(enqueue); err != nil {
-			return err
+			return accounted, expected, err
 		}
 
 		if batch.LostSamples != 0 {
 			if err := enqueue(&pipeline.SampleBatch{
 				DroppedSamples: map[string]uint64{types.DropReasonCollection: batch.LostSamples},
 			}); err != nil {
-				return err
+				return accounted, expected, err
 			}
 		}
 
 		if readErr != nil {
-			return readErr
-		}
-
-		if len(batch.Events) == 0 && batch.LostSamples == 0 {
-			break
+			return accounted, expected, readErr
 		}
 
 		count, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx)
 		if err != nil {
-			return fmt.Errorf("read frozen sample count: %w", err)
+			return accounted, expected, fmt.Errorf("read frozen sample count: %w", err)
 		}
 
-		if accounted >= count {
+		expected = count
+		empty := len(batch.Events) == 0 && batch.LostSamples == 0
+		if empty || accounted >= expected {
 			break
 		}
 	}
 
-	return bpfmap.WriteUint64(
-		r.bpf,
-		r.transferStateMapID,
-		ring.sampleCountIdx,
-		0,
-	)
+	return accounted, expected, nil
+}
+
+// drainFinalRingBuffers drains both rings after producers detach and accounts
+// for losses not reported by perf, keeping stack maps live during delivery.
+func (r *ringBufferContext) drainFinalRingBuffers(
+	ctx context.Context,
+	newEvent func() any,
+	enqueue func(*pipeline.SampleBatch) error,
+	convert func(int64) (int64, error),
+) error {
+	deliver := func(batch *pipeline.SampleBatch) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		return enqueue(batch)
+	}
+	var countIndices [2]uint32
+	for i := range countIndices {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		ring, err := r.advanceSwapParity()
+		if err != nil {
+			return err
+		}
+
+		// Production has stopped: counts include failed perf output attempts
+		// whose loss record may never arrive without another kernel event.
+		accounted, expected, err := r.drainRingBuffer(
+			ring,
+			newEvent,
+			deliver,
+			convert,
+		)
+		if err != nil {
+			return err
+		}
+
+		if err := r.accountSamples(expected, accounted); err != nil {
+			return err
+		}
+
+		countIndices[i] = ring.sampleCountIdx
+	}
+
+	if r.sampleAttempts > r.accountedSamples {
+		if err := deliver(&pipeline.SampleBatch{
+			DroppedSamples: map[string]uint64{types.DropReasonCollection: r.sampleAttempts - r.accountedSamples},
+		}); err != nil {
+			return err
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	for _, index := range countIndices {
+		if err := bpfmap.WriteUint64(
+			r.bpf,
+			r.transferStateMapID,
+			index,
+			0,
+		); err != nil {
+			return err
+		}
+	}
+
+	r.sampleAttempts, r.accountedSamples = 0, 0
+	return nil
+}
+
+func (r *ringBufferContext) accountSamples(expected, accounted uint64) error {
+	if expected > math.MaxUint64-r.sampleAttempts || accounted > math.MaxUint64-r.accountedSamples {
+		return errors.New("native sample accounting overflows uint64")
+	}
+
+	r.sampleAttempts += expected
+	r.accountedSamples += accounted
+	return nil
 }
 
 // Only missing IDs can belong to the other retained-memory stack map.

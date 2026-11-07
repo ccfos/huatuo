@@ -110,8 +110,8 @@ func (*offCPUReaderStub) Close() error {
 func newOffCPUReaderProfiler(reader bpf.PerfEventReader) *cpuNativeProfiler {
 	obj := stackLookupMissBPF{}
 	return &cpuNativeProfiler{
-		bpf:        obj,
-		offCPUMode: true,
+		bpf:    obj,
+		config: Config{Mode: profiling.ModeOffCPU},
 		ringCtx: &ringBufferContext{
 			bpf:         obj,
 			readerA:     reader,
@@ -569,5 +569,27 @@ func TestOffCPUBatchStackCache(t *testing.T) {
 			require.NotEqual(t, samples[2].UserFrames, samples[3].UserFrames)
 			require.NotEqual(t, samples[2].KernelFrames, samples[3].KernelFrames)
 		})
+	}
+}
+
+func BenchmarkReadOffCPUDataLoop(b *testing.B) {
+	failure := errors.New("end benchmark batch")
+	reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+		return bpf.PerfEventBatch{Events: []any{&abi.ProfilerOffCPUEvent{
+			Base: abi.ProfilerEventBase{
+				PIDTGID:   uint64(123) << 32,
+				Value:     7,
+				Userstack: -1,
+				Kernstack: -1,
+			},
+		}}}, nil
+	}}
+	p := newOffCPUReaderProfiler(reader)
+	enqueue := func(*pipeline.SampleBatch) error { return failure }
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := p.ReadDataLoop(b.Context(), enqueue); !errors.Is(err, failure) {
+			b.Fatal(err)
+		}
 	}
 }

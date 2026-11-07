@@ -88,6 +88,43 @@ printf 'VM_PACKAGE_DIR=%q\nVM_ENV_FILE=%q\nVM_DISTRO=%q\nVM_ARCH=%q\n' \
 	"$package_dir" "$env_file" "$OS_DISTRO" "$ARCH" >> "$env_file"
 # shellcheck disable=SC1090
 source "$env_file"
+disk_list=$(sudo virsh --connect "${LIBVIRT_URI:-qemu:///system}" domblklist "$VM_NAME" --details)
+disk_targets=$(awk 'NR > 2 {print $3}' <<< "$disk_list")
+test_disk_target=""
+for candidate in vd{a..z}; do
+	if ! grep -Fxq "$candidate" <<< "$disk_targets"; then
+		test_disk_target=$candidate
+		break
+	fi
+done
+[[ -n "$test_disk_target" ]] || {
+	vm_log_error "no free virtio disk target (vda-vdz) in $VM_NAME"
+	exit 1
+}
+disk_source=$(awk '$1 == "file" && $2 == "disk" {print $4; exit}' <<< "$disk_list")
+[[ -n "$disk_source" ]] || {
+	vm_log_error "no file-backed VM disk provides a test disk storage directory: $VM_NAME"
+	exit 1
+}
+disk_parent=$(sudo realpath -e -- "$(dirname "$disk_source")")
+test_disk_dir="$disk_parent/${run_root##*/}.io"
+VM_TEST_DISK="$test_disk_dir/disk.qcow2"
+if sudo test -e "$test_disk_dir" || sudo test -L "$test_disk_dir"; then
+	vm_log_error "refusing to overwrite an existing test disk directory: $test_disk_dir"
+	exit 1
+fi
+# Reuse the running VM's accessible storage without exposing its private run files.
+printf '%s\n%s\n%s\n%s\n' "$VM_TEST_DISK" "$(realpath -- "$run_root")" \
+	"$(stat -c '%d:%i' -- "$run_root")" "$(sudo stat -c '%d:%i' -- "$disk_parent")" > "$run_root/test-disk.owner"
+printf 'VM_TEST_DISK=%q\n' "$VM_TEST_DISK" >> "$env_file"
+sudo mkdir -m 0711 -- "$test_disk_dir"
+sudo stat -c '%d:%i' -- "$test_disk_dir" >> "$run_root/test-disk.owner"
+sudo qemu-img create -f qcow2 "$VM_TEST_DISK" 1G
+sudo stat -c '%d:%i' -- "$VM_TEST_DISK" >> "$run_root/test-disk.owner"
+vm_log "attaching test disk to $VM_NAME as $test_disk_target"
+sudo virsh --connect "${LIBVIRT_URI:-qemu:///system}" attach-disk "$VM_NAME" "$VM_TEST_DISK" "$test_disk_target" \
+	--targetbus virtio --driver qemu --subdriver qcow2 --serial huatuo-ci-io --live
+
 if [[ -n "$context_output" ]]; then
 	printf 'VM_IP=%s\nVM_NAME=%s\nVM_MAC=%s\nVM_SSH_KEY=%s\n' \
 		"$VM_IP" "$VM_NAME" "$VM_MAC" "$VM_SSH_KEY" >> "$context_output"

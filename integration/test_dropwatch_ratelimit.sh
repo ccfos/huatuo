@@ -26,12 +26,8 @@ set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-require_commands jq timeout unshare ip
-# StartDefault uses a fixed endpoint; isolate it from host listeners and other tests.
-if [[ ${1:-} != --isolated ]]; then
-	exec unshare --net bash "$0" --isolated
-fi
-ip link set lo up
+require_commands jq timeout ip
+
 # The isolated namespace has no access to the host's HTTP proxy.
 export no_proxy=127.0.0.1 NO_PROXY=127.0.0.1
 

@@ -21,18 +21,23 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	testutils "github.com/ccfos/huatuo/internal/testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf"
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -107,6 +112,69 @@ func TestLoadBPFFromBytes_InvalidName(t *testing.T) {
 			if !errors.Is(err, errInvalidName) {
 				t.Errorf("LoadBPFFromBytes(%q) = %v, want %v", name, err, errInvalidName)
 			}
+		})
+	}
+}
+
+func TestLoadBPFFromCollectionSpec_Constants(t *testing.T) {
+	tests := []struct {
+		name      string
+		constants map[string]any
+		writable  bool
+		wantError string
+		wantErr   error
+	}{
+		{
+			name:      "missing",
+			constants: map[string]any{"missing": uint32(1)},
+			wantError: `rewrite constant "missing": bpf: variable not found`,
+			wantErr:   ErrVariableNotFound,
+		},
+		{
+			name:      "wrong size",
+			constants: map[string]any{"target_key": uint64(1)},
+			wantError: "rewrite constant \"target_key\"",
+		},
+		{
+			name:      "writable",
+			constants: map[string]any{"target_key": uint32(1)},
+			writable:  true,
+			wantError: "variable is not read-only",
+		},
+		{
+			name:      "read-only value",
+			constants: map[string]any{"target_key": uint32(42)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(loadMinimalObjBytes(t)))
+			require.NoError(t, err)
+			if tt.writable {
+				spec.Maps[".rodata"].Flags &^= unix.BPF_F_RDONLY_PROG
+			}
+
+			if tt.wantError == "" {
+				requireBPFPermission(t)
+			}
+
+			object, err := LoadBPFFromCollectionSpec("test_minimal.elf", spec, tt.constants)
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				if tt.wantErr != nil {
+					require.ErrorIs(t, err, tt.wantErr)
+				}
+				require.Nil(t, object)
+				return
+			}
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, object.Close()) })
+			items, err := object.DumpMapByName(".rodata")
+			require.NoError(t, err)
+			require.Len(t, items, 1)
+			offset := uint64(spec.Variables["target_key"].Offset)
+			require.GreaterOrEqual(t, uint64(len(items[0].Value)), offset+4)
+			require.Equal(t, uint32(42), binary.NativeEndian.Uint32(items[0].Value[offset:offset+4]))
 		})
 	}
 }
@@ -226,7 +294,7 @@ func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 			"String",
 			func(t *testing.T) {
 				str := b.String()
-				expectedSubstr := fmt.Sprintf("%s#2#6", b.Name())
+				expectedSubstr := fmt.Sprintf("%s#3#6", b.Name())
 				assert.Contains(t, str, expectedSubstr)
 			},
 		},
@@ -235,7 +303,8 @@ func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 			func(t *testing.T) {
 				info, err := b.Info()
 				require.NoError(t, err)
-				require.Len(t, info.MapsInfo, 2)
+				// cilium/ebpf retains the read-only map for global variables.
+				require.Len(t, info.MapsInfo, 3)
 				require.Len(t, info.ProgramsInfo, 6)
 			},
 		},
@@ -584,35 +653,163 @@ func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 	}
 }
 
+type detachTestLink struct {
+	link.Link
+	close func() error
+}
+
+func (l detachTestLink) Close() error {
+	return l.close()
+}
+
 func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
-	b := loadMinimalBpfFromBytes(t)
-	err := b.AttachWithOptions([]AttachOption{
-		{ProgramName: "test_kprobe", Symbol: "sys_openat"},
+	t.Run("cleanup without parent cancellation", func(t *testing.T) {
+		b := &defaultBPF{}
+		var callbacks atomic.Int32
+		cleanup := b.DetachOnContextDone(t.Context(), func() {
+			callbacks.Add(1)
+		})
+		t.Cleanup(cleanup)
+
+		cleanup()
+		cleanup()
+		require.Equal(t, int32(1), callbacks.Load())
+		require.NoError(t, b.Close())
 	})
-	if errors.Is(err, ebpf.ErrNotSupported) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
-		t.Skipf("skipping: attach not supported: %v", err)
-	}
-	require.NoError(t, err)
 
-	hasLinks := func() bool {
-		b.mu.RLock()
-		defer b.mu.RUnlock()
-		for _, p := range b.programsByID {
-			if len(p.links) != 0 {
-				return true
-			}
+	t.Run("closed object", func(t *testing.T) {
+		b := &defaultBPF{}
+		require.NoError(t, b.Close())
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		completed := make(chan struct{})
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			close(completed)
+		})
+		t.Cleanup(cleanup)
+
+		cleanup()
+		select {
+		case <-completed:
+		default:
+			t.Fatal("cleanup returned before the completion callback")
 		}
-		return false
-	}
-	require.True(t, hasLinks(), "expected at least one link after attach")
+	})
 
-	ctx, cancel := context.WithCancel(t.Context())
-	b.DetachOnContextDone(ctx, cancel)
-	cancel()
+	t.Run("detach failure", func(t *testing.T) {
+		var detached, completed bool
+		b := &defaultBPF{
+			programsByID: map[uint32]*loadedProgram{
+				1: {links: map[string]link.Link{
+					"test": detachTestLink{close: func() error {
+						detached = true
+						return errors.New("detach failed")
+					}},
+				}},
+			},
+		}
+		cleanup := b.DetachOnContextDone(t.Context(), func() {
+			completed = detached && len(b.programsByID[1].links) == 0
+		})
+		t.Cleanup(cleanup)
 
-	require.Eventually(t, func() bool {
-		return !hasLinks()
-	}, time.Second, time.Millisecond, "context cancellation did not detach BPF links")
+		cleanup()
+		require.True(t, completed, "detach failure must not suppress completion")
+		require.NoError(t, b.Close())
+	})
+
+	t.Run("cleanup joins callback", func(t *testing.T) {
+		b := &defaultBPF{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			close(entered)
+			<-release
+		})
+		joined := make(chan struct{})
+		go func() {
+			cleanup()
+			close(joined)
+		}()
+		t.Cleanup(func() {
+			close(release)
+			<-joined
+		})
+
+		cancel()
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("completion callback did not start")
+		}
+		select {
+		case <-joined:
+			t.Fatal("cleanup returned while the completion callback was blocked")
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
+
+	t.Run("close races cancellation", func(t *testing.T) {
+		b := &defaultBPF{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var callbacks atomic.Int32
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			callbacks.Add(1)
+		})
+		t.Cleanup(cleanup)
+		closed := make(chan error, 1)
+		go func() { closed <- b.Close() }()
+
+		cancel()
+		cleanup()
+		require.NoError(t, <-closed)
+		require.Equal(t, int32(1), callbacks.Load())
+	})
+
+	t.Run("attached program", func(t *testing.T) {
+		b := loadMinimalBpfFromBytes(t)
+		err := b.AttachWithOptions([]AttachOption{{
+			ProgramName: "test_kprobe",
+			Symbol:      "sys_openat",
+		}})
+		if err != nil && (isPerfEventUnavailable(err) || errors.Is(err, link.ErrNotSupported)) {
+			t.Skipf("kprobe attachment is unavailable: %v", err)
+		}
+
+		require.NoError(t, err)
+		hasLinks := func() bool {
+			b.mu.RLock()
+			defer b.mu.RUnlock()
+			for _, program := range b.programsByID {
+				if len(program.links) != 0 {
+					return true
+				}
+			}
+
+			return false
+		}
+		require.True(t, hasLinks())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		completed := make(chan bool, 1)
+		cleanup := b.DetachOnContextDone(ctx, func() {
+			completed <- !hasLinks()
+		})
+		t.Cleanup(cleanup)
+
+		cancel()
+		select {
+		case detached := <-completed:
+			require.True(t, detached, "completion callback preceded detachment")
+		case <-time.After(time.Second):
+			t.Fatal("cancellation did not detach the program")
+		}
+		cleanup()
+		require.False(t, hasLinks())
+	})
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {
@@ -717,7 +914,7 @@ func TestDefaultBPF_CloseOrder(t *testing.T) {
 	require.True(t, hasLinks, "expected at least one link after attach")
 
 	closeErr := b.Close()
-	require.NoError(t, closeErr, "Close after attach should not return EBUSY; wrong close order would cause kernel to refuse map/program close while links are active")
+	require.NoError(t, closeErr, "Close after attach should succeed")
 }
 
 func TestDefaultBPF_DetachOrder(t *testing.T) {
@@ -925,4 +1122,110 @@ func TestDefaultBPF_CloseWaitsForOperation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Close() did not return after the operation completed")
 	}
+}
+
+var firstLoadBenchmarkStarted atomic.Bool
+
+// BenchmarkLoadBPFFirst measures the production loader without attaching BPF.
+// Use -run=^$, -benchtime=1x and -count=1 in a new process for each sample.
+func BenchmarkLoadBPFFirst(b *testing.B) {
+	// Go 1.24 may exit successfully if a later repeated benchmark fails.
+	if flag.Lookup("test.count").Value.String() != "1" ||
+		strings.Contains(flag.Lookup("test.cpu").Value.String(), ",") {
+		b.Fatal("first-load benchmark requires -count=1 and a single -cpu value; run a new process per sample")
+	}
+
+	if !firstLoadBenchmarkStarted.CompareAndSwap(false, true) {
+		b.Fatal("first-load benchmark requires a new process per sample; use -count=1")
+	}
+
+	objectPath := testutils.NativeFile(b, "../../integration/testdata/test_btf_load-%s.elf")
+	oldDir := DefaultObjDir
+	DefaultObjDir = filepath.Dir(objectPath)
+	b.Cleanup(func() { DefaultObjDir = oldDir })
+	if err := Init(nil); err != nil {
+		b.Fatalf("initialize BPF loader: %v", err)
+	}
+	b.Cleanup(Shutdown)
+
+	// Earlier tests must not turn this into a cached kernel-BTF lookup.
+	btf.FlushKernelSpec()
+	b.Cleanup(btf.FlushKernelSpec)
+
+	var cpuNS int64
+	ran := false
+	b.ReportAllocs()
+	for b.Loop() {
+		if ran {
+			b.Fatal("first-load benchmark requires -benchtime=1x")
+		}
+		ran = true
+
+		var before, after syscall.Rusage
+		if err := syscall.Getrusage(syscall.RUSAGE_SELF, &before); err != nil {
+			b.Fatalf("read CPU time before BPF load: %v", err)
+		}
+		object, err := LoadBPF(filepath.Base(objectPath), nil)
+		statErr := syscall.Getrusage(syscall.RUSAGE_SELF, &after)
+		b.StopTimer()
+		if object != nil {
+			b.Cleanup(func() {
+				if err := object.Close(); err != nil {
+					b.Errorf("close benchmark BPF object: %v", err)
+				}
+			})
+		}
+		if statErr != nil {
+			b.Fatalf("read CPU time after BPF load: %v", statErr)
+		}
+		if err != nil {
+			b.Fatalf("load %s: %v", objectPath, err)
+		}
+		if object == nil {
+			b.Fatal("BPF loader returned no object")
+		}
+		cpuNS = after.Utime.Nano() + after.Stime.Nano() - before.Utime.Nano() - before.Stime.Nano()
+		if cpuNS <= 0 {
+			b.Fatalf("BPF load reported invalid CPU time: %d ns", cpuNS)
+		}
+
+		info, err := object.Info()
+		if err != nil {
+			b.Fatalf("inspect benchmark BPF object: %v", err)
+		}
+		if len(info.ProgramsInfo) != 1 || len(info.MapsInfo) != 0 {
+			b.Fatal("BTF fixture must load one kernel program and no maps")
+		}
+		for _, program := range info.ProgramsInfo {
+			if program.ID == 0 {
+				b.Fatalf("program %q has no kernel ID", program.Name)
+			}
+		}
+		requireBenchmarkCOREObject(b, objectPath)
+		b.StartTimer()
+	}
+	b.ReportMetric(float64(cpuNS), "cpu-ns/op")
+}
+
+// A load without CO-RE could succeed without exercising kernel BTF decoding.
+// Inspect only after measurement so input validation cannot warm loader caches.
+func requireBenchmarkCOREObject(b *testing.B, path string) {
+	b.Helper()
+
+	spec, err := ebpf.LoadCollectionSpec(path)
+	if err != nil {
+		b.Fatalf("inspect benchmark ELF: %v", err)
+	}
+	program, ok := spec.Programs["minimal_core"]
+	if !ok {
+		b.Fatal("benchmark ELF has no minimal CO-RE program")
+	}
+
+	iter := program.Instructions.Iterate()
+	for iter.Next() {
+		if btf.CORERelocationMetadata(iter.Ins) != nil {
+			return
+		}
+	}
+	b.Fatal("benchmark fixture program has no CO-RE relocations")
 }

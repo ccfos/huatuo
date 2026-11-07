@@ -19,8 +19,11 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
-is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
+require_native_pid_profiling
+
+require_readable /sys/kernel/btf/vmlinux
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpu-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpu_thread_group.user.c"

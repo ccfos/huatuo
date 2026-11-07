@@ -21,13 +21,14 @@ typedef enum {
 } profiler_state_idx;
 
 /*
- * Filter configuration injected via RewriteConstants at load time.
+ * Filter configuration injected by the loader at load time.
+ * Keep rewritten constants global so cilium/ebpf exposes them as variables.
  * Naming follows skb_filter convention for consistency.
  */
-static volatile const u64 profiler_filter_css = 0;
-static volatile const u32 profiler_filter_pid = 0;
-static volatile const bool profiler_filter_threads = false;
-static volatile const u8 profiler_sampling_prob = 100;
+volatile const u64 profiler_filter_css = 0;
+volatile const u32 profiler_filter_pid = 0;
+volatile const bool profiler_filter_threads = false;
+volatile const u8 profiler_sampling_prob = 100;
 static volatile const u64 profiler_idle_class_addr = 0;
 
 /*

@@ -26,10 +26,16 @@ import (
 
 func TestIsInContainer(t *testing.T) {
 	tests := []struct {
-		name   string
-		cgroup string
-		want   bool
+		name    string
+		cgroup  string
+		want    bool
+		wantErr bool
 	}{
+		{
+			name:    "malformed cgroup",
+			cgroup:  "invalid\n",
+			wantErr: true,
+		},
 		{
 			name:   "host process",
 			cgroup: "0::/user.slice\n",
@@ -54,6 +60,12 @@ func TestIsInContainer(t *testing.T) {
 			}
 
 			inContainer, err := IsInContainer(100)
+			if tt.wantErr {
+				if err == nil || inContainer {
+					t.Fatalf("IsInContainer(100) = %t, %v, want false and error", inContainer, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("IsInContainer(100) error = %v", err)
 			}
@@ -114,6 +126,24 @@ func TestHasDifferentMountNamespace(t *testing.T) {
 	}
 }
 
+func TestHasDifferentMountNamespaceMissing(t *testing.T) {
+	for _, missingPID := range []int{1, 100} {
+		t.Run(strconv.Itoa(missingPID), func(t *testing.T) {
+			root := setProcRoot(t)
+			if missingPID == 1 {
+				writeMountNamespace(t, root, 100, "mnt:[2]")
+			} else {
+				writeMountNamespace(t, root, 1, "mnt:[1]")
+			}
+
+			got, err := HasDifferentMountNamespace(100)
+			if got || !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("HasDifferentMountNamespace(100) = %t, %v, want false and not-exist error", got, err)
+			}
+		})
+	}
+}
+
 func TestIsContainerCgroupPath(t *testing.T) {
 	containerID := strings.Repeat("a", 64)
 	tests := []struct {
@@ -121,17 +151,61 @@ func TestIsContainerCgroupPath(t *testing.T) {
 		path string
 		want bool
 	}{
-		{name: "kubernetes cgroupfs", path: "/kubepods/burstable/pod123", want: true},
-		{name: "kubernetes systemd", path: "/kubepods-burstable-pod123.slice", want: true},
-		{name: "docker cgroupfs", path: "/docker/" + containerID, want: true},
-		{name: "docker systemd", path: "/system.slice/docker-" + containerID + ".scope", want: true},
-		{name: "containerd systemd", path: "/system.slice/cri-containerd-" + containerID + ".scope", want: true},
-		{name: "crio systemd", path: "/system.slice/crio-" + containerID + ".scope", want: true},
-		{name: "podman systemd", path: "/user.slice/libpod-" + containerID + ".scope", want: true},
-		{name: "containerd daemon", path: "/system.slice/containerd.service", want: false},
-		{name: "docker daemon", path: "/system.slice/docker.service", want: false},
-		{name: "short docker scope", path: "/system.slice/docker-abcd.scope", want: false},
-		{name: "host process", path: "/user.slice/user-1000.slice/session-2.scope", want: false},
+		{
+			name: "kubernetes cgroupfs",
+			path: "/kubepods/burstable/pod123",
+			want: true,
+		},
+		{
+			name: "kubernetes systemd",
+			path: "/kubepods-burstable-pod123.slice",
+			want: true,
+		},
+		{
+			name: "docker cgroupfs",
+			path: "/docker/" + containerID,
+			want: true,
+		},
+		{
+			name: "docker systemd",
+			path: "/system.slice/docker-" + containerID + ".scope",
+			want: true,
+		},
+		{
+			name: "containerd systemd",
+			path: "/system.slice/cri-containerd-" + containerID + ".scope",
+			want: true,
+		},
+		{
+			name: "crio systemd",
+			path: "/system.slice/crio-" + containerID + ".scope",
+			want: true,
+		},
+		{
+			name: "podman systemd",
+			path: "/user.slice/libpod-" + containerID + ".scope",
+			want: true,
+		},
+		{
+			name: "containerd daemon",
+			path: "/system.slice/containerd.service",
+			want: false,
+		},
+		{
+			name: "docker daemon",
+			path: "/system.slice/docker.service",
+			want: false,
+		},
+		{
+			name: "short docker scope",
+			path: "/system.slice/docker-abcd.scope",
+			want: false,
+		},
+		{
+			name: "host process",
+			path: "/user.slice/user-1000.slice/session-2.scope",
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {

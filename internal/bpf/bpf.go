@@ -84,6 +84,7 @@ type BPF interface {
 	// DumpMapByName dump all the context of the map.
 	DumpMapByName(mapName string) ([]MapItem, error)
 
-	// DetachOnContextDone is a hook for context-driven detach handling.
-	DetachOnContextDone(ctx context.Context, cancel context.CancelFunc)
+	// DetachOnContextDone detaches on cancellation, then calls cancel.
+	// The caller must defer the returned cleanup to stop and join the watcher.
+	DetachOnContextDone(ctx context.Context, cancel context.CancelFunc) func()
 }

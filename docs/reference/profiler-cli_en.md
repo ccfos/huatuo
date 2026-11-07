@@ -17,7 +17,7 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--type`, `-t` | None | All | Observation type: `cpu` or `memory`; required |
 | `--language`, `-l` | None | All | Target language: `c`, `c++`, `go`, `java`, or `python`; required |
 | `--pid`, `-p` | None | All | Target PID; Java and Python accept comma-separated PIDs, native collection accepts at most one |
-| `--container-id` | None | All | Target container ID; mutually exclusive with `--pid` |
+| `--container-id` | None | All | Target container ID; native CPU combines it with `--pid` as an AND filter using the host PID; otherwise mutually exclusive with `--pid` |
 | `--duration`, `-d` | `10` | All | Total collection duration in seconds, minimum 1 |
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; cannot exceed duration |
 | `--freq`, `-F` | `99` | CPU | Samples per second; Java maximum: 1000 |
@@ -49,6 +49,8 @@ These pprof endpoints describe the profiler process's own Go runtime, not the `-
 | `--thread-group` | `false` | Native | Also collect other threads in the target PID's thread group |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical-memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for routine collection |
+
+When the hardware PMU event or sampling is unsupported, the command exits with code `1` and identifies the error on stderr with `Error: hardware_pmu_unavailable:`. Permission and other startup errors do not use this marker.
 
 ## Logging
 

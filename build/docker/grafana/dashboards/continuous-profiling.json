@@ -1,0 +1,438 @@
+{
+	"annotations": {
+		"list": [
+			{
+				"builtIn": 1,
+				"datasource": {
+					"type": "grafana",
+					"uid": "-- Grafana --"
+				},
+				"enable": true,
+				"hide": true,
+				"iconColor": "rgba(0, 211, 255, 1)",
+				"name": "Annotations & Alerts",
+				"target": {
+					"limit": 100,
+					"matchAny": false,
+					"tags": [],
+					"type": "dashboard"
+				},
+				"type": "dashboard"
+			}
+		]
+	},
+	"editable": false,
+	"fiscalYearStartMonth": 0,
+	"graphTooltip": 0,
+	"links": [],
+	"panels": [
+		{
+			"id": 3,
+			"type": "text",
+			"title": "Target",
+			"gridPos": {
+				"x": 0,
+				"y": 0,
+				"w": 24,
+				"h": 3
+			},
+			"options": {
+				"mode": "markdown",
+				"content": "**Region:** $region · **Node:** $hostname · **Scope:** ${scope:text} · **Container filter:** $container_id · **Task container name:** $container_name\n\nSelect a Task ID. Container selection applies only to container scope. Empty results can mean no valid samples or a time range outside collection. Physical usage shows the latest snapshot of one task, not a sum."
+			}
+		},
+		{
+			"id": 4,
+			"type": "table",
+			"title": "Task status",
+			"gridPos": {
+				"x": 0,
+				"y": 3,
+				"w": 24,
+				"h": 5
+			},
+			"datasource": {
+				"type": "yesoreyeram-infinity-datasource",
+				"uid": "huatuo-apiserver"
+			},
+			"targets": [
+				{
+					"refId": "A",
+					"type": "json",
+					"source": "url",
+					"format": "table",
+					"url": "/v1/profiling/${task_id}",
+					"parser": "backend",
+					"root_selector": "data",
+					"columns": [
+						{
+							"selector": "request_id",
+							"text": "Task ID",
+							"type": "string"
+						},
+						{
+							"selector": "status",
+							"text": "State",
+							"type": "string"
+						},
+						{
+							"selector": "terminal.outcome",
+							"text": "Outcome",
+							"type": "string"
+						},
+						{
+							"selector": "terminal.message",
+							"text": "Message",
+							"type": "string"
+						},
+						{
+							"selector": "hostname",
+							"text": "Node",
+							"type": "string"
+						},
+						{
+							"selector": "scope",
+							"text": "Scope",
+							"type": "string"
+						},
+						{
+							"selector": "container_id",
+							"text": "Container ID",
+							"type": "string"
+						},
+						{
+							"selector": "language",
+							"text": "Language",
+							"type": "string"
+						},
+						{
+							"selector": "mode",
+							"text": "Mode",
+							"type": "string"
+						},
+						{
+							"selector": "started_at",
+							"text": "Started",
+							"type": "string"
+						},
+						{
+							"selector": "ended_at",
+							"text": "Ended",
+							"type": "string"
+						}
+					],
+					"datasource": {
+						"type": "yesoreyeram-infinity-datasource",
+						"uid": "huatuo-apiserver"
+					},
+					"url_options": {
+						"method": "GET",
+						"data": ""
+					}
+				}
+			],
+			"options": {
+				"showHeader": true,
+				"cellHeight": "sm"
+			},
+			"fieldConfig": {
+				"defaults": {},
+				"overrides": []
+			}
+		},
+		{
+			"datasource": {
+				"type": "elasticsearch",
+				"uid": "huatuo-bamai-es"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"custom": {
+						"axisBorderShow": false,
+						"axisCenteredZero": false,
+						"axisColorMode": "series",
+						"axisLabel": "",
+						"axisPlacement": "auto",
+						"axisSoftMin": 0,
+						"barAlignment": 0,
+						"barWidthFactor": 0.6,
+						"drawStyle": "line",
+						"fillOpacity": 0,
+						"gradientMode": "none",
+						"hideFrom": {
+							"legend": false,
+							"tooltip": false,
+							"viz": false
+						},
+						"insertNulls": false,
+						"lineInterpolation": "linear",
+						"lineStyle": {
+							"fill": "solid"
+						},
+						"lineWidth": 1,
+						"pointSize": 8,
+						"scaleDistribution": {
+							"type": "linear"
+						},
+						"showPoints": "auto",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "none"
+						},
+						"thresholdsStyle": {
+							"mode": "off"
+						}
+					},
+					"fieldMinMax": false,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green"
+							},
+							{
+								"color": "red",
+								"value": 80
+							}
+						]
+					}
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 8,
+				"w": 24,
+				"h": 5
+			},
+			"id": 2,
+			"options": {
+				"legend": {
+					"calcs": [],
+					"displayMode": "table",
+					"placement": "bottom",
+					"showLegend": false
+				},
+				"tooltip": {
+					"hideZeros": true,
+					"mode": "multi",
+					"sort": "asc"
+				}
+			},
+			"pluginVersion": "12.0.3",
+			"targets": [
+				{
+					"alias": "",
+					"bucketAggs": [
+						{
+							"field": "uploaded_timestamp",
+							"id": "2",
+							"settings": {
+								"interval": "auto"
+							},
+							"type": "date_histogram"
+						}
+					],
+					"datasource": {
+						"type": "elasticsearch",
+						"uid": "huatuo-bamai-es"
+					},
+					"hide": false,
+					"metrics": [
+						{
+							"id": "1",
+							"type": "count"
+						}
+					],
+					"query": "region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene} AND tracer_id.keyword:${task_id:lucene}",
+					"refId": "A",
+					"timeField": "uploaded_timestamp"
+				}
+			],
+			"title": "Profiling windows — $task_id",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "grafana-pyroscope-datasource",
+				"uid": "huatuo-apiserver-pyroscope"
+			},
+			"fieldConfig": {
+				"defaults": {},
+				"overrides": []
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 13,
+				"w": 24,
+				"h": 18
+			},
+			"id": 1,
+			"options": {},
+			"pluginVersion": "12.0.3",
+			"targets": [
+				{
+					"datasource": {
+						"type": "grafana-pyroscope-datasource",
+						"uid": "huatuo-apiserver-pyroscope"
+					},
+					"groupBy": [],
+					"labelSelector": "{region=${region:doublequote},hostname=${hostname:doublequote},scope=\"${scope:text}\",container_id=\"$container_id\",id=\"$task_id\"}",
+					"profileTypeId": "$type",
+					"queryType": "profile",
+					"refId": "A",
+					"spanSelector": []
+				}
+			],
+			"title": "${scope:text} · $hostname · $task_id",
+			"type": "flamegraph"
+		}
+	],
+	"preload": false,
+	"schemaVersion": 41,
+	"tags": [
+		"profiling"
+	],
+	"templating": {
+		"list": [
+			{
+				"name": "region",
+				"label": "Region",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"region.keyword\",\n  \"query\": \"_exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"region.keyword\",\n  \"query\": \"_exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false
+			},
+			{
+				"name": "hostname",
+				"label": "Node (hostname)",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND _exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND _exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false
+			},
+			{
+				"name": "scope",
+				"label": "Scope",
+				"type": "custom",
+				"query": "host : NOT _exists_:container_id,container : _exists_:container_id",
+				"current": {
+					"text": "host",
+					"value": "NOT _exists_:container_id"
+				},
+				"options": [
+					{
+						"text": "host",
+						"value": "NOT _exists_:container_id",
+						"selected": true
+					},
+					{
+						"text": "container",
+						"value": "_exists_:container_id",
+						"selected": false
+					}
+				],
+				"multi": false,
+				"includeAll": false
+			},
+			{
+				"name": "container_id",
+				"label": "Container ID (container scope)",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw})\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw})\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false,
+				"includeAll": true,
+				"allValue": "*",
+				"current": {
+					"text": "All",
+					"value": "$__all"
+				}
+			},
+			{
+				"name": "type",
+				"label": "Profile type",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"profile_data.profile_type.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id))\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"profile_data.profile_type.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id))\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false
+			},
+			{
+				"name": "task_id",
+				"label": "Task ID",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene}\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene}\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false,
+				"description": "Select one task. Changing Region, node, scope or profile type refreshes available tasks."
+			},
+			{
+				"name": "container_name",
+				"label": "Container name",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND tracer_id.keyword:${task_id:lucene}\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND tracer_id.keyword:${task_id:lucene}\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false,
+				"hide": 2
+			}
+		]
+	},
+	"time": {
+		"from": "now-15m",
+		"to": "now"
+	},
+	"timepicker": {},
+	"timezone": "browser",
+	"title": "Continuous Profiling",
+	"uid": "continuous-profiling",
+	"description": "Host and container profiling by Region, node and task. Node is the Agent hostname; container IDs identify workloads.",
+	"version": 1,
+	"refresh": "10s"
+}

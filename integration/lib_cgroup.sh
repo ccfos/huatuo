@@ -17,14 +17,27 @@
 # Helpers for test cgroups and daemon resource limits.
 set -euo pipefail
 
+# Match Huatuo's containerd mode detection; Hybrid still uses v1 controllers.
+# Print unified, hybrid or legacy; a failed root stat is an error, not v1.
+cgroup_mode() {
+	local fs_type
+	fs_type=$(stat -f -c %t /sys/fs/cgroup) || return 1
+	if [[ ${fs_type} == 63677270 ]]; then
+		printf 'unified\n'
+	elif fs_type=$(stat -f -c %t /sys/fs/cgroup/unified 2> /dev/null) && [[ ${fs_type} == 63677270 ]]; then
+		printf 'hybrid\n'
+	else
+		printf 'legacy\n'
+	fi
+}
+
 # Prefer v1 on hybrid hosts, where it owns the memory controller.
 cgroup_memory_root() {
-	local root
-	root=$(findmnt -rn -t cgroup -O memory -o TARGET) || true
-	if [[ -z "${root}" ]]; then
-		root=$(findmnt -rn -t cgroup2 -o TARGET) || return 1
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
+		findmnt -rn -t cgroup2 -o TARGET
+	else
+		findmnt -rn -t cgroup -O memory -o TARGET
 	fi
-	printf '%s\n' "${root}"
 }
 
 # cgroup_find_container <root> <container-id>: support cgroupfs and systemd scopes.
@@ -50,7 +63,7 @@ cgroup_create() {
 cgroup_configure_memory() {
 	local path=$1 limit=$2 memory=memory.max swap=memory.swap.max
 	[[ ${limit} =~ ^[1-9][0-9]*$ ]] || return 1
-	if [[ -e "${path}/memory.limit_in_bytes" ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} != unified ]]; then
 		memory=memory.limit_in_bytes
 		swap=memory.swappiness
 		[[ -w "${path}/memory.oom_control" ]] || return 1
@@ -83,7 +96,7 @@ cgroup_delete() {
 # Outputs belong to the caller; this check never creates or configures cgroups.
 cgroup_css_require_environment() {
 	local _css_root _css_symbol _css_notify_file
-	if [[ -r /sys/fs/cgroup/cgroup.controllers ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		_css_root=/sys/fs/cgroup
 		_css_symbol=memory_current_read
 		_css_notify_file=memory.current
@@ -110,7 +123,7 @@ huatuo_bamai_require_cgroup() {
 	local controller root
 	require_commands findmnt
 
-	if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+	if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 		require_commands systemctl timeout
 		timeout --kill-after=1 10 systemctl show --property=Version > /dev/null 2>&1 \
 			|| skip "cgroup v2 runtime limits require the systemd manager"
@@ -119,13 +132,11 @@ huatuo_bamai_require_cgroup() {
 				|| skip "cgroup v2 ${controller} controller is unavailable"
 		done
 
-		readonly RUNTIME_CGROUP_MODE=v2
 		readonly RUNTIME_CGROUP_CPU_ROOT=/sys/fs/cgroup
 		readonly RUNTIME_CGROUP_MEMORY_ROOT=/sys/fs/cgroup
 		readonly RUNTIME_CGROUP_PATH=/huatuo.slice/huatuo-bamai.slice
 		readonly RUNTIME_CGROUP_ROOTS=(/sys/fs/cgroup)
 	else
-		readonly RUNTIME_CGROUP_MODE=v1
 		RUNTIME_CGROUP_CPU_ROOT=$(findmnt -rn -t cgroup -O cpu -o TARGET) \
 			|| skip "cgroup v1 CPU controller is unavailable"
 		RUNTIME_CGROUP_MEMORY_ROOT=$(cgroup_memory_root) \
@@ -142,4 +153,42 @@ huatuo_bamai_require_cgroup() {
 	done
 	[[ -w "${RUNTIME_CGROUP_CPU_ROOT}" && -w "${RUNTIME_CGROUP_MEMORY_ROOT}" ]] \
 		|| skip "CPU and memory cgroup roots must be writable"
+}
+
+# Preserve the file identity before deletion so watch removal can be checked later.
+cgroup_watch_identity() {
+	local identity inode device major minor
+	identity=$(stat -L -c '%i %d' "$1") || return 1
+	read -r inode device <<< "$identity"
+	# fdinfo prints the kernel dev_t; stat returns the userspace encoding.
+	major=$(((device >> 8) & 0xfff))
+	minor=$(((device & 0xff) | ((device >> 12) & 0xfff00)))
+	printf 'ino:%x sdev:%x\n' "$inode" "$(((major << 20) | minor))"
+}
+
+# Snapshot only watches held by this process; an unreadable snapshot is not empty.
+cgroup_read_inotify_watches() {
+	local pid=$1 output=$2 fd target watches
+	local fd_dir="/proc/${pid}/fd"
+	[[ -d "$fd_dir" && -r "$fd_dir" && -x "$fd_dir" ]] || return 1
+	local -a fds=("${fd_dir}"/*)
+	((${#fds[@]} > 0)) && [[ ${fds[0]} != *'*'* ]] || return 1
+	: > "$output" || return 1
+	for fd in "${fds[@]}"; do
+		if target=$(readlink "$fd"); then
+			[[ "$target" == anon_inode:inotify ]] || continue
+			if watches=$(awk '/^inotify / { print $3, $4 }' "/proc/${pid}/fdinfo/${fd##*/}"); then
+				if [[ -n "$watches" ]]; then
+					printf '%s\n' "$watches" >> "$output" || return 1
+				fi
+				continue
+			fi
+		fi
+		# Descriptors can close after enumeration or before fdinfo is read.
+		# Only a vanished descriptor is safe to skip; other read failures are not.
+		[[ ! -L "$fd" && -r "$fd_dir" && -x "$fd_dir" ]] || return 1
+	done
+	[[ -d "$fd_dir" && -r "$fd_dir" && -x "$fd_dir" ]] || return 1
+	# A zombie can retain its fd directory after every descriptor has closed.
+	compgen -G "${fd_dir}/[0-9]*" > /dev/null
 }

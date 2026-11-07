@@ -20,6 +20,7 @@
 struct hungtask_event {
 	u32 tid;
 	u8 comm[COMPAT_TASK_COMM_LEN];
+	u64 cpu_css_addr;
 };
 
 BPF_ABI_EXPORT(hungtask_event);

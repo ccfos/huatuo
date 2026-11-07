@@ -17,7 +17,7 @@ weight: 6
 | `--type`, `-t` | 无 | 全部 | 观测类型：`cpu` 或 `memory`，必填 |
 | `--language`, `-l` | 无 | 全部 | 目标语言：`c`、`c++`、`go`、`java` 或 `python`，必填 |
 | `--pid`, `-p` | 无 | 全部 | 目标 PID；Java、Python 可使用逗号分隔多个 PID，原生采集最多一个 PID |
-| `--container-id` | 无 | 全部 | 目标容器 ID；不能与 `--pid` 同时使用 |
+| `--container-id` | 无 | 全部 | 目标容器 ID；原生 CPU 采集可与 `--pid`（宿主机 PID）组合，两个过滤条件同时生效；其他采集类型与 `--pid` 互斥 |
 | `--duration`, `-d` | `10` | 全部 | 总采集时长，单位为秒，最小为 1 |
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
@@ -49,6 +49,8 @@ weight: 6
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
+
+硬件 PMU 事件或采样不受支持时，命令退出码为 `1`，标准错误以 `Error: hardware_pmu_unavailable:` 标识该错误；权限及其他启动错误不使用此标识。
 
 ## 日志参数
 

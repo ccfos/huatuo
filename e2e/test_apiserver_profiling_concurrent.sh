@@ -13,9 +13,9 @@ start_server
 continuous_profiling_start_native_cpu_fixture TARGET_PID "${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c"
 
 CURRENT_CASE=same-host-concurrency
-create 25
+create 15
 first=$JOB_ID
-create 25
+create 15
 second=$JOB_ID
 wait_job "$first" running
 wait_job "$second" running

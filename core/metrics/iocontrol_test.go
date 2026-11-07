@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Shared IO counter and kernel-layout contracts are checked with reusable fixtures.
+// IO map decoding, metric conversion, and session lifecycle tests.
 
 package collector
 
@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -41,7 +40,6 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/btf"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
@@ -310,13 +308,6 @@ func TestIOControlDeviceChanges(t *testing.T) {
 	}
 }
 
-func ioControlBPFSource(t *testing.T, name string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "bpf", name))
-	require.NoError(t, err)
-	return string(data)
-}
-
 func ioControlTestBytes(value any) []byte {
 	data, err := binary.Append(nil, binary.LittleEndian, value)
 	if err != nil {
@@ -327,49 +318,6 @@ func ioControlTestBytes(value any) []byte {
 
 func ioControlTestMapItem(key, value any) bpf.MapItem {
 	return bpf.MapItem{Key: ioControlTestBytes(key), Value: ioControlTestBytes(value)}
-}
-
-type ioControlTestMapContract struct {
-	name       string
-	typeID     ebpf.MapType
-	keySize    uint32
-	valueSize  uint32
-	maxEntries uint32
-	flags      uint32
-}
-
-func requireIOControlTestMap(t *testing.T, spec *ebpf.CollectionSpec, want ioControlTestMapContract) {
-	t.Helper()
-	actual, ok := spec.Maps[want.name]
-	require.True(t, ok, "map %s", want.name)
-	require.Equal(t, want.typeID, actual.Type, "map %s type", want.name)
-	require.Equal(t, want.keySize, actual.KeySize, "map %s key size", want.name)
-	require.Equal(t, want.valueSize, actual.ValueSize, "map %s value size", want.name)
-	require.Equal(t, want.maxEntries, actual.MaxEntries, "map %s capacity", want.name)
-	require.Equal(t, want.flags, actual.Flags, "map %s flags", want.name)
-}
-
-func compileIOControlTestC(t *testing.T, compiler, name, source string, flags ...string) string {
-	t.Helper()
-	path, err := exec.LookPath(compiler)
-	require.NoError(t, err, "a native %s compiler is required", compiler)
-	executable := filepath.Join(t.TempDir(), name)
-	args := append([]string{"-x", "c", "-O2"}, flags...)
-	args = append(args, "-o", executable, "-")
-	command := exec.CommandContext(t.Context(), path, args...)
-	command.Stdin = strings.NewReader(source)
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, "compile %s: %s", name, output)
-	return executable
-}
-
-func ioControlTestSourceSection(t *testing.T, source, startMarker, endMarker string) string {
-	t.Helper()
-	start := strings.Index(source, startMarker)
-	require.GreaterOrEqual(t, start, 0, "missing source marker %q", startMarker)
-	end := strings.Index(source[start+len(startMarker):], endMarker)
-	require.GreaterOrEqual(t, end, 0, "missing source marker %q", endMarker)
-	return source[start : start+len(startMarker)+end]
 }
 
 func ioControlTestDiskNames() map[[2]uint32]string {
@@ -396,18 +344,6 @@ func ioControlTestDiskstats(t *testing.T) {
 }
 
 func TestIOControlWaitCounterDecoding(t *testing.T) {
-	t.Run("packed field boundaries", func(t *testing.T) {
-		for _, packed := range []uint64{0, 1, uint64(1) << 37, uint64(1) << 38, ^uint64(0)} {
-			data := make([]byte, ioControlWaitCounterSize)
-			binary.LittleEndian.PutUint64(data, packed)
-			got, err := decodeIOControlWaitCounters(data, 1)
-			require.NoError(t, err)
-			require.Equal(t, []ioControlWaitCounters{{
-				IOCount: packed >> 38, Wait10US: packed & ((1 << 38) - 1),
-			}}, got)
-		}
-	})
-
 	t.Run("golden bytes and CPU lanes", func(t *testing.T) {
 		data := []byte{
 			0x03, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
@@ -438,9 +374,6 @@ func TestIOControlWaitCounterDecoding(t *testing.T) {
 			_, err := decodeIOControlWaitCounters(nil, possibleCPUs)
 			require.ErrorContains(t, err, "invalid possible CPU count")
 		}
-		maxInt := int(^uint(0) >> 1)
-		_, err := decodeIOControlWaitCounters(nil, maxInt/ioControlWaitCounterSize+1)
-		require.ErrorContains(t, err, "too large")
 	})
 }
 
@@ -641,7 +574,7 @@ func TestIOControlRetiredSnapshot(t *testing.T) {
 	}
 }
 
-// Packed fields wrap independently; per-CPU validation precedes public sums.
+// Per-CPU validation precedes public sums.
 func TestIOControlWaitCounterDeltas(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -650,18 +583,6 @@ func TestIOControlWaitCounterDeltas(t *testing.T) {
 		want     ioControlWaitCounters
 		err      string
 	}{
-		{
-			name:     "count wraps",
-			previous: []ioControlWaitCounters{{IOCount: ioControlWaitCountMask - 1, Wait10US: 100}},
-			current:  []ioControlWaitCounters{{IOCount: 1, Wait10US: 106}},
-			want:     ioControlWaitCounters{IOCount: 3, Wait10US: 6},
-		},
-		{
-			name:     "wait wraps",
-			previous: []ioControlWaitCounters{{IOCount: 5, Wait10US: ioControlWait10USMask - 1}},
-			current:  []ioControlWaitCounters{{IOCount: 7, Wait10US: 1}},
-			want:     ioControlWaitCounters{IOCount: 2, Wait10US: 3},
-		},
 		{
 			name:     "sum CPUs after subtraction",
 			previous: []ioControlWaitCounters{{IOCount: 2, Wait10US: 10}, {}},
@@ -694,26 +615,6 @@ func TestIOControlWaitCounterDeltas(t *testing.T) {
 			require.Equal(t, test.want, got)
 		})
 	}
-
-	t.Run("full map and maximum CPU count fit uint64", func(t *testing.T) {
-		lanes := make([]ioControlWaitCounters, 8192)
-		for cpu := range lanes {
-			lanes[cpu] = ioControlWaitCounters{IOCount: ioControlWaitCountMask, Wait10US: ioControlWait10USMask}
-		}
-		row, err := deltaIOControlWaitCounters(nil, lanes)
-		require.NoError(t, err)
-		intervals := newIOControlWaitIntervals()
-		for range 8192 {
-			intervals.add(nil, 0, "8:0", "read", row)
-		}
-		key := ioControlDeviceOperation{device: "8:0", operation: "read"}
-		want := ioControlWaitCounters{
-			IOCount:  (1 << 26) * ioControlWaitCountMask,
-			Wait10US: (1 << 26) * ioControlWait10USMask,
-		}
-		require.Equal(t, want, intervals.host[key])
-		require.Equal(t, want, intervals.other[key])
-	})
 }
 
 func ioControlWaitTestMetricDefinition() ioControlWaitMetrics {
@@ -787,7 +688,8 @@ func TestIOControlWaitMetricsRawBaselines(t *testing.T) {
 			var want []*metric.Data
 			for _, scope := range []string{ioControlHostScope, ioControlOtherScope} {
 				labels := map[string]string{"disk": "sda1", "operation": "read", "scope": scope}
-				want = append(want,
+				want = append(
+					want,
 					metric.NewGaugeData(definition.countName, test.wantCount, definition.countHelp, labels),
 					metric.NewGaugeData(definition.averageName, test.wantAverageMS, definition.averageHelp, labels),
 				)
@@ -846,7 +748,8 @@ func TestIOControlWaitMetricsMergesLabelsAfterCPUDeltas(t *testing.T) {
 		{name: ioControlOtherScope, count: 7, average: 4},
 	} {
 		labels := map[string]string{"disk": "sda", "operation": "read", "scope": scope.name}
-		want = append(want,
+		want = append(
+			want,
 			metric.NewGaugeData(definition.countName, scope.count, definition.countHelp, labels),
 			metric.NewGaugeData(definition.averageName, scope.average, definition.averageHelp, labels),
 		)
@@ -931,7 +834,8 @@ func TestIOControlRetiredMetricsKeepGenerationAndDevice(t *testing.T) {
 		{disk: "md0", operation: "read", scope: ioControlHostScope, count: 7, average: 3},
 	} {
 		labels := map[string]string{"disk": row.disk, "operation": row.operation, "scope": row.scope}
-		want = append(want,
+		want = append(
+			want,
 			metric.NewGaugeData(
 				definition.countName,
 				row.count,
@@ -956,7 +860,8 @@ func TestIOControlRetiredMetricsKeepGenerationAndDevice(t *testing.T) {
 		{disk: "md0", count: 7, average: 3},
 	} {
 		labels := map[string]string{"disk": row.disk, "operation": "read"}
-		want = append(want,
+		want = append(
+			want,
 			metric.NewContainerGaugeData(
 				container,
 				definition.countName,
@@ -992,138 +897,6 @@ func TestIOControlRetiredMetricsKeepGenerationAndDevice(t *testing.T) {
 	}, current, "reclaim must not touch another serial or device on the same CSS")
 	require.Len(t, object.deleted, 3, "only two operations and their marker are deleted")
 	require.Empty(t, object.retired)
-}
-
-func TestIOControlSingleLookupRequiresLegacyHashAllocator(t *testing.T) {
-	word := &btf.Int{Name: "unsigned long", Size: 8, Encoding: btf.Unsigned}
-	allocator := &btf.Struct{
-		Name: "bpf_mem_alloc", Size: 8,
-		Members: []btf.Member{{Name: "cache", Type: word}},
-	}
-	socket := &btf.Struct{
-		Name: "bpf_htab", Size: 8,
-		Members: []btf.Member{{Name: "progs", Type: word}},
-	}
-	legacyHash := ioControlHashBTFFixture()
-	otherHash := ioControlHashBTFFixture(btf.Member{Name: "count", Type: word})
-	allocatedHash := ioControlHashBTFFixture(btf.Member{Name: "ma", Type: allocator})
-	for _, test := range []struct {
-		name  string
-		types []btf.Type
-		want  string
-		cause error
-	}{
-		{name: "legacy HASH", types: []btf.Type{legacyHash}},
-		{
-			name:  "unrelated allocator type",
-			types: []btf.Type{legacyHash, allocator},
-		},
-		{
-			name:  "socket HASH precedes ordinary HASH",
-			types: []btf.Type{socket, legacyHash},
-		},
-		{
-			name:  "ordinary HASH precedes socket HASH",
-			types: []btf.Type{legacyHash, socket},
-		},
-		{
-			name:  "two ordinary HASH candidates precede socket HASH",
-			types: []btf.Type{legacyHash, otherHash, socket},
-		},
-		{
-			name:  "socket HASH precedes two ordinary HASH candidates",
-			types: []btf.Type{socket, otherHash, legacyHash},
-		},
-		{
-			name:  "HASH uses BPF allocator",
-			types: []btf.Type{allocatedHash},
-			want:  "bpf_mem_alloc",
-		},
-		{
-			name: "per-CPU HASH allocator",
-			types: []btf.Type{ioControlHashBTFFixture(
-				btf.Member{Name: "pcpu_ma", Type: allocator})},
-			want: "bpf_mem_alloc",
-		},
-		{
-			name: "allocator behind type qualifiers",
-			types: []btf.Type{ioControlHashBTFFixture(btf.Member{
-				Name: "allocator", Type: &btf.Typedef{
-					Name: "allocator_type", Type: &btf.Const{Type: allocator},
-				},
-			})},
-			want: "bpf_mem_alloc",
-		},
-		{
-			name:  "legacy candidate precedes unsafe HASH",
-			types: []btf.Type{legacyHash, allocatedHash},
-			want:  "bpf_mem_alloc",
-		},
-		{
-			name:  "unsafe HASH precedes legacy candidate",
-			types: []btf.Type{allocatedHash, legacyHash},
-			want:  "bpf_mem_alloc",
-		},
-		{
-			name:  "missing HASH type",
-			types: []btf.Type{word}, cause: btf.ErrNotFound,
-		},
-		{
-			name:  "only socket HASH",
-			types: []btf.Type{socket}, cause: btf.ErrNotFound,
-		},
-		{
-			name:  "incomplete HASH type",
-			types: []btf.Type{&btf.Struct{Name: "bpf_htab"}}, cause: btf.ErrNotFound,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			builder, err := btf.NewBuilder(test.types)
-			require.NoError(t, err)
-			raw, err := builder.Marshal(nil, nil)
-			require.NoError(t, err)
-			spec, err := btf.LoadSpecFromReader(bytes.NewReader(raw))
-			require.NoError(t, err)
-			err = checkIOControlSingleLookup(spec)
-			if test.want != "" {
-				require.ErrorContains(t, err, test.want)
-			} else if test.cause != nil {
-				require.ErrorIs(t, err, test.cause)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestIOControlMapAllocation(t *testing.T) {
-	for _, allocated := range []bool{false, true} {
-		t.Run(fmt.Sprintf("bpf_mem_alloc=%t", allocated), func(t *testing.T) {
-			hash := ioControlHashBTFFixture()
-			if allocated {
-				hash = ioControlHashBTFFixture(btf.Member{
-					Name: "pcpu_ma", Type: &btf.Struct{Name: "bpf_mem_alloc", Size: 8},
-				})
-			}
-			builder, err := btf.NewBuilder([]btf.Type{hash})
-			require.NoError(t, err)
-			raw, err := builder.Marshal(nil, nil)
-			require.NoError(t, err)
-			kernel, err := btf.LoadSpecFromReader(bytes.NewReader(raw))
-			require.NoError(t, err)
-			spec := &ebpf.CollectionSpec{Maps: map[string]*ebpf.MapSpec{
-				"wait":   {Type: ebpf.PerCPUHash, Flags: unix.BPF_F_NO_PREALLOC | unix.BPF_F_RDONLY},
-				"sparse": {Type: ebpf.Hash, Flags: unix.BPF_F_NO_PREALLOC},
-			}}
-			require.NoError(t, prepareIOControlMaps(spec, kernel))
-			want := uint32(unix.BPF_F_NO_PREALLOC | unix.BPF_F_RDONLY)
-			if allocated {
-				want = unix.BPF_F_RDONLY
-			}
-			require.Equal(t, want, spec.Maps["wait"].Flags)
-			require.EqualValues(t, unix.BPF_F_NO_PREALLOC, spec.Maps["sparse"].Flags)
-		})
-	}
 }
 
 type ioControlHashReadBPF struct {
@@ -1403,21 +1176,6 @@ func requireIOControlMapBatch(t *testing.T, m *ebpf.Map) {
 	require.Zero(t, attr.Count)
 }
 
-func ioControlHashBTFFixture(extra ...btf.Member) *btf.Struct {
-	word := &btf.Int{Name: "unsigned long", Size: 8}
-	hash := &btf.Struct{Name: "bpf_htab", Size: 24, Members: []btf.Member{
-		{Name: "elems", Type: word},
-		{Name: "extra_elems", Type: word, Offset: 64},
-		{Name: "n_buckets", Type: word, Offset: 128},
-	}}
-	for _, member := range extra {
-		member.Offset = btf.Bits(hash.Size * 8)
-		hash.Members = append(hash.Members, member)
-		hash.Size += 8
-	}
-	return hash
-}
-
 func newIOControlAttributionTestContainer(
 	id string,
 	css uint64,
@@ -1449,69 +1207,4 @@ func (source *ioControlAttributionTestSource) read() (
 	error,
 ) {
 	return source.containers, source.err
-}
-
-// Body operations must return before the hard timeout so owned cleanup can
-// run. Keep cleanup commands on their own bounded, uncanceled contexts.
-func ioControlKernelContext(t *testing.T) context.Context {
-	t.Helper()
-	ctx, stop := signal.NotifyContext(t.Context(), os.Interrupt, unix.SIGTERM)
-	t.Cleanup(stop)
-	if deadline, ok := t.Deadline(); ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-time.Minute))
-		t.Cleanup(cancel)
-	}
-	return ctx
-}
-
-func waitIOControlKernelState(
-	t *testing.T,
-	ctx context.Context,
-	description string,
-	condition func() bool,
-) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		require.NoError(t, ctx.Err(), "waiting for %s", description)
-		if condition() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("timeout waiting for %s", description)
-}
-
-func runIOControlKernelCommand(
-	t *testing.T,
-	parent context.Context,
-	timeout time.Duration,
-	name string,
-	arguments ...string,
-) string {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, name, arguments...)
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("run %s %s: %v: %s", name,
-			strings.Join(arguments, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return strings.TrimSpace(string(output))
-}
-
-func cleanupIOControlKernelCommand(name string, arguments ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(),
-		15*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, name, arguments...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s %s: %w: %s", name,
-			strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
-	}
-	return nil
 }

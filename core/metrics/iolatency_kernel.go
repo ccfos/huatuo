@@ -129,8 +129,7 @@ func ioLatencyTracepointArguments(
 		if definition.constant == "" {
 			continue
 		}
-		// This slot exists only in the queue-prefixed layout. Qualification
-		// tests check full argument counts on each supported kernel.
+		// This slot exists only in the queue-prefixed layout.
 		available, err := probe(definition.symbol, definition.boundaryArgument)
 		if err != nil {
 			return nil, fmt.Errorf("probe iolatency %s argument %d: %w",
@@ -194,9 +193,12 @@ func ioLatencyBioTraceCompletion(spec *btf.Spec) (uint32, error) {
 	// including anonymous enums, without selecting by kernel release.
 	flag := uint32(10)
 	found := false
-	types := spec.Iterate()
-	for types.Next() {
-		enum, ok := types.Type.(*btf.Enum)
+	for typ, err := range spec.All() {
+		if err != nil {
+			return 0, fmt.Errorf("iolatency: iterate kernel BTF: %w", err)
+		}
+
+		enum, ok := typ.(*btf.Enum)
 		if !ok {
 			continue
 		}

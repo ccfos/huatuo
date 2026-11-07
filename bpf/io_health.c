@@ -256,25 +256,32 @@ struct trace_event_raw_block_rq_completion___io_health {
 } __attribute__((preserve_access_index));
 
 /*
- * SCSI trace-event types may live in module BTF. Mirror the stable prefix
- * from include/trace/events/scsi.h instead of depending on those types.
+ * SCSI event types may live in module BTF. Their u32 payload prefix is
+ * stable, but vendor kernels can grow trace_entry; relocate that core type.
  */
-struct io_health_scsi_timeout_ctx {
-	u64 trace_entry;
+struct io_health_scsi_timeout_args {
 	u32 host_no;
 	u32 channel;
 	u32 id;
 	u32 lun;
 };
 
-struct io_health_scsi_dispatch_error_ctx {
-	u64 trace_entry;
+struct io_health_scsi_dispatch_error_args {
 	u32 host_no;
 	u32 channel;
 	u32 id;
 	u32 lun;
 	s32 rtn;
 };
+
+static __always_inline int read_scsi_args(void *dst, u32 size, const void *ctx)
+{
+	u32 offset = bpf_core_type_size(struct trace_entry);
+
+	/* SCSI starts with u32 fields, not the pointer slots of other events. */
+	offset = (offset + sizeof(u32) - 1) & ~(sizeof(u32) - 1);
+	return bpf_probe_read_kernel(dst, size, (const char *)ctx + offset);
+}
 
 static __always_inline u32 encode_dev(u32 major, u32 minor)
 {
@@ -475,34 +482,40 @@ int trace_block_rq_complete_error(struct bpf_raw_tracepoint_args *ctx)
 }
 
 SEC("tracepoint/scsi/scsi_dispatch_cmd_timeout")
-int trace_scsi_timeout(struct io_health_scsi_timeout_ctx *ctx)
+int trace_scsi_timeout(void *ctx)
 {
+	struct io_health_scsi_timeout_args args = {};
 	struct io_health_event event = {
 		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_SCSI_TIMEOUT,
-		.host = ctx->host_no,
-		.channel = ctx->channel,
-		.target = ctx->id,
-		.lun = ctx->lun,
 	};
 
+	if (read_scsi_args(&args, sizeof(args), ctx))
+		return 0;
+	event.host = args.host_no;
+	event.channel = args.channel;
+	event.target = args.id;
+	event.lun = args.lun;
 	submit_event(ctx, &event);
 	return 0;
 }
 
 SEC("tracepoint/scsi/scsi_dispatch_cmd_error")
-int trace_scsi_dispatch_error(struct io_health_scsi_dispatch_error_ctx *ctx)
+int trace_scsi_dispatch_error(void *ctx)
 {
+	struct io_health_scsi_dispatch_error_args args = {};
 	struct io_health_event event = {
 		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_SCSI_DISPATCH_ERROR,
-		.status = ctx->rtn,
-		.host = ctx->host_no,
-		.channel = ctx->channel,
-		.target = ctx->id,
-		.lun = ctx->lun,
 	};
 
+	if (read_scsi_args(&args, sizeof(args), ctx))
+		return 0;
+	event.status = args.rtn;
+	event.host = args.host_no;
+	event.channel = args.channel;
+	event.target = args.id;
+	event.lun = args.lun;
 	submit_event(ctx, &event);
 	return 0;
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -42,6 +43,7 @@ type Config struct {
 
 // Filter selects profiling aggregation windows.
 type Filter struct {
+	Scope             observation.Scope
 	ID                string
 	Region            string
 	Hostname          string
@@ -162,7 +164,7 @@ func (s *Store) Values(
 	}
 	return s.store.Values(
 		ctx,
-		normalizedField,
+		normalizedField+".keyword",
 		buildAggregationQuery(filter),
 		normalizeValuesSize(filter),
 	)
@@ -232,11 +234,17 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	appendTextFilter(types.DocumentFieldContainerID, filter.ContainerID)
 	appendTextFilter(types.DocumentFieldContainerHostname, filter.ContainerHostname)
 	appendTextFilter(fieldProfileType, filter.ProfileType)
-	if filter.Hostname != "" {
-		appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
+	appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
+	switch filter.Scope {
+	case observation.ScopeHost:
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldContainerHostname,
+			Field: types.DocumentFieldContainerID,
 			Op:    driver.OpNotExists,
+		})
+	case observation.ScopeContainer:
+		query.Filters = append(query.Filters, driver.Filter{
+			Field: types.DocumentFieldContainerID,
+			Op:    driver.OpExists,
 		})
 	}
 	return query

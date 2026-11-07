@@ -197,7 +197,7 @@ memsnapshot_dump_failure_diagnostics() (
 		log_error 'memory_threshold_snapshot event file does not exist'
 	fi
 	log_error '----- CURRENT TRACING METRICS -----'
-	timeout 5s curl --silent --show-error "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API:-http://127.0.0.1:19704/metrics}" | grep -E 'tracing_status|memory_threshold|memburst' >&2
+	timeout 5s curl --silent --show-error "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" | grep -E 'tracing_status|memory_threshold|memburst' >&2
 	log_error '----- RECENT KUBELET MESSAGES -----'
 	timeout 5s journalctl -u kubelet --no-pager -n 100 >&2
 	return 0
@@ -210,21 +210,25 @@ memsnapshot_cooldown_elapsed() {
 }
 
 assert_snapshot_runtime_payload() {
-	local language=$1 object_bytes=0 python_version=""
+	local language=$1 python_expectation=${2:-complete} object_bytes=0 python_version="" python_version_available=""
 	if [[ ${language} == python ]]; then
+		[[ ${python_expectation} == complete || ${python_expectation} == deadline-partial ]] || fatal "invalid Python snapshot expectation: ${python_expectation}"
 		object_bytes=$(sed -n "s/^object_bytes=//p" "${go_snapshot_case_dir}/workload.log")
 		[[ ${object_bytes} =~ ^[1-9][0-9]*$ ]] || fatal "Python fixture did not report object size"
 	fi
-	# CPython 3.6 predates _PyRuntime; newer interpreters must expose it.
 	if [[ ${language} == python ]]; then
-		python_version=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+		python_version=$(sed -n "s/^python_version=//p" "${go_snapshot_case_dir}/workload.log")
+		[[ ${python_version} =~ ^3\.[0-9]+\.[0-9]+$ ]] || fatal "Python fixture did not report its version"
+		python_version_available=$(sed -n "s/^python_version_available=//p" "${go_snapshot_case_dir}/workload.log")
+		[[ ${python_version_available} == 0 || ${python_version_available} == 1 ]] || fatal "Python fixture did not report version discoverability"
+		log_info "Validating CPython ${python_version} snapshot (version discoverable: ${python_version_available})"
 	fi
 	# Accept only independently established capability gaps, never arbitrary errors.
-	if [[ ${language} == python ]] && jq -e '
+	if [[ ${language} == python && ${python_version_available} == 0 ]] && jq -e '
   .tracer_data.snapshot.status == "unavailable"
   and .tracer_data.snapshot.status_reason == "CPython runtime is unsupported: Py_Version and a versioned libpython name are unavailable"
  ' "${go_snapshot_case_dir}/snapshot.json" > /dev/null || {
-		[[ ${language} == python && ${python_version} == 3.6 ]] && jq -e '
+		[[ ${language} == python && ${python_version} == 3.6.* ]] && jq -e '
   .tracer_data.snapshot.status == "unavailable"
   and .tracer_data.snapshot.status_reason == "CPython runtime is unsupported: no mapped module exports _PyRuntime"
  ' "${go_snapshot_case_dir}/snapshot.json" > /dev/null
@@ -238,7 +242,7 @@ assert_snapshot_runtime_payload() {
 		log_info "PASS: CPython unsupported-runtime result; object statistics unavailable on this runtime"
 		return
 	fi
-	jq -e --arg language "${language}" --argjson object_bytes "${object_bytes}" '
+	jq -e --arg language "${language}" --argjson object_bytes "${object_bytes}" --arg python_version "${python_version}" --arg python_expectation "${python_expectation}" '
   .tracer_data as $data | $data.snapshot as $s |
   $data.language == $language
   and $data.process_memory.rss_bytes >= 8388608
@@ -249,12 +253,24 @@ assert_snapshot_runtime_payload() {
   else
    ($s.status == "complete" or $s.status == "partial")
    and ($s.runtime_version | length > 0)
-   and ($s.entries | length > 0 and length <= 100)
+   and ($s.entries | length <= 100)
+   and (($s.entries | length > 0) or ($language == "python" and $python_expectation == "deadline-partial" and $s.status == "partial"))
    and ([$s.entries[].bytes] == ([$s.entries[].bytes] | sort | reverse))
    and all($s.entries[]; (.name | length > 0) and (.kind | length > 0)
     and .objects > 0 and .average_bytes == (.bytes / .objects))
    and (if $language == "python" then
-    any($s.entries[]; (.name | contains("MemsnapshotPayload")) and .objects == 20000 and .bytes == (20000 * $object_bytes) and .average_bytes == $object_bytes)
+    (($s.runtime_version | split(".")[:2]) == ($python_version | split(".")[:2]))
+    and ([$s.entries[] | select(.name == "__main__.MemsnapshotPayload")] as $payload |
+     if $s.status == "complete" then
+      ($s.status_reason // "") == ""
+      and ($payload | length == 1)
+      and ($payload[0] | .objects == 20000 and .bytes == (20000 * $object_bytes) and .average_bytes == $object_bytes)
+     else
+      $python_expectation == "deadline-partial"
+      and $s.status_reason == "deadline reached during external object census"
+      and ($payload | length <= 1)
+      and all($payload[]; .objects <= 20000 and .bytes == (.objects * $object_bytes) and .average_bytes == $object_bytes)
+     end)
    else
     $s.status == "partial" and ($s.status_reason | contains("concurrently"))
     and any($s.entries[]; .name == "HeapFixture$Payload"

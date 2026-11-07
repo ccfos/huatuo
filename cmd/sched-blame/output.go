@@ -57,7 +57,8 @@ func (output *schedBlameEventFile) Write(ctx context.Context, request *tracing.W
 	if data.CurrentInternalContentionPercent != nil {
 		internalPercent = fmt.Sprintf("%.4f%%", *data.CurrentInternalContentionPercent)
 	}
-	event := fmt.Appendf(nil,
+	event := fmt.Appendf(
+		nil,
 		"time=%s tracer=%s target_name=%q target_id=%s target_short_id=%s interval=%ds slice_drop_percent=%d%% current_external_contention_percent=%.4f%% current_internal_contention_percent=%s historical_p99_percent=%.4f%% external_anomaly_k=%.3f external_contention_threshold_percent=%.4f%% target_runtime_ns=%d internal_contention_ns=%d external_contention_ns=%d throttled_time_ns=%d\n",
 		request.ObservedTimestamp.Format(time.RFC3339Nano),
 		request.TracerName, data.TargetContainerName, request.ContainerID,

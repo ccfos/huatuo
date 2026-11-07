@@ -15,7 +15,7 @@
  */
 
 /*
- * Probe raw tracepoint argument counts at startup. Fixed-offset context
+ * Probe raw tracepoint layout boundaries at startup. Fixed-offset context
  * loads let the kernel reject slots beyond an event's argument list during
  * attach. Volatile preserves each load without dereferencing its value or
  * retaining event state. The context is read as the raw u64 argument array,
@@ -40,11 +40,8 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 		return 0; \
 	}
 
-PROBE_ARGUMENT(0)
 PROBE_ARGUMENT(1)
-PROBE_ARGUMENT(2)
 PROBE_ARGUMENT(3)
-PROBE_ARGUMENT(4)
 
 /*
  * Inspect initialized software encryption at startup.

@@ -1,4 +1,9 @@
 ---
+run:
+  concurrency: 2
+  timeout: 5m
+  allow-serial-runners: true
+
 linters:
   disable-all: true
   enable:

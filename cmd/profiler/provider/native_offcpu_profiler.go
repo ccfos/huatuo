@@ -161,39 +161,55 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	ctx context.Context,
 	enqueue func(*pipeline.SampleBatch) error,
 ) error {
-	ringCtx := p.ringCtx
-
-	for {
-		batch, err := ringCtx.readerA.ReadBatch(func() any { return &abi.ProfilerOffCPUEvent{} })
-		if err := ringCtx.enqueueOffCPUBatch(batch.Events, enqueue); err != nil {
-			return err
-		}
-
-		if batch.LostSamples != 0 {
-			if err := enqueue(&pipeline.SampleBatch{
-				DroppedSamples: map[string]uint64{types.DropReasonCollection: batch.LostSamples},
-			}); err != nil {
-				return err
-			}
-		}
-
-		if err != nil {
+	for ctx.Err() == nil {
+		if _, err := p.ringCtx.readOffCPUBatch(enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
 
-			return fmt.Errorf("read off-CPU perf event batch: %w", err)
-		}
-
-		if len(batch.Events) == 0 {
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-				continue
-			}
+			return err
 		}
 	}
+
+	return nil
+}
+
+func (p *cpuNativeProfiler) drainOffCPUData(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		empty, err := p.ringCtx.readOffCPUBatch(enqueue)
+		if err != nil {
+			return err
+		}
+
+		if empty {
+			return ctx.Err()
+		}
+	}
+}
+
+func (r *ringBufferContext) readOffCPUBatch(enqueue func(*pipeline.SampleBatch) error) (bool, error) {
+	batch, readErr := r.readerA.ReadBatch(func() any { return &abi.ProfilerOffCPUEvent{} })
+	if err := r.enqueueOffCPUBatch(batch.Events, enqueue); err != nil {
+		return false, err
+	}
+
+	if batch.LostSamples != 0 {
+		if err := enqueue(&pipeline.SampleBatch{
+			DroppedSamples: map[string]uint64{types.DropReasonCollection: batch.LostSamples},
+		}); err != nil {
+			return false, err
+		}
+	}
+
+	if readErr != nil {
+		return false, fmt.Errorf("read off-CPU perf event batch: %w", readErr)
+	}
+
+	return len(batch.Events) == 0 && batch.LostSamples == 0, nil
 }
 
 func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipeline.SampleBatch) error) error {
