@@ -29,6 +29,7 @@ import (
 
 type executableCache struct {
 	sections sections
+	segments []elf.ProgHeader
 	symbols  elfSymbolCache
 	typ      elf.Type
 }
@@ -36,6 +37,7 @@ type executableCache struct {
 type elfSymbolCache struct {
 	state        *elfSymbolParseState
 	namesByELFPC map[uint64]string
+	segments     []elf.ProgHeader
 }
 
 type processELF struct {
@@ -163,8 +165,12 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		if cache.typ == elf.ET_DYN && module != "" {
 			if err = r.loadProcMaps(pid); err == nil {
 				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
-					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-					addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
+					virtualAddr, ok := virtualAddress(m, addr, cache.segments)
+					if !ok {
+						result[index] = failFrame("no-load-segment", module)
+						continue
+					}
+					addPendingELFPC(groups, path, &cache.symbols, virtualAddr, index, failFrame("elf-no-sym", ""))
 					continue
 				}
 			}
@@ -196,8 +202,12 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			result[index] = failFrame("lib-load-fail", m.Pathname)
 			continue
 		}
-		baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-		addPendingELFPC(groups, libPath, libCache, addr-baseAddr, index, failFrame("lib-no-sym", m.Pathname))
+		virtualAddr, ok := virtualAddress(m, addr, libCache.segments)
+		if !ok {
+			result[index] = failFrame("no-load-segment", m.Pathname)
+			continue
+		}
+		addPendingELFPC(groups, libPath, libCache, virtualAddr, index, failFrame("lib-no-sym", m.Pathname))
 	}
 
 	for _, group := range groups {
@@ -335,6 +345,7 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
 	cache = &executableCache{
 		sections: secs,
 		typ:      f.Type,
+		segments: loadSegments(f),
 		symbols:  elfSymbolCache{state: newELFSymbolParseState(r.elfSymbolLimits)},
 	}
 	r.exeCache[key] = cache
@@ -378,12 +389,38 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*elfSymbolCache
 	if err != nil {
 		return nil, fmt.Errorf("elf.Open %q: %w", libPath, err)
 	}
-	_ = f.Close()
+	defer f.Close()
 
-	cache = &elfSymbolCache{state: newELFSymbolParseState(r.elfSymbolLimits)}
+	cache = &elfSymbolCache{
+		state:    newELFSymbolParseState(r.elfSymbolLimits),
+		segments: loadSegments(f),
+	}
 	r.libCaches[key] = cache
 	r.libKeys[libPath] = key
 	return cache, nil
+}
+
+func loadSegments(f *elf.File) []elf.ProgHeader {
+	segments := make([]elf.ProgHeader, 0, len(f.Progs))
+	for _, program := range f.Progs {
+		if program.Type == elf.PT_LOAD {
+			segments = append(segments, program.ProgHeader)
+		}
+	}
+	return segments
+}
+
+func virtualAddress(mapping *procfs.ProcMap, addr uint64, segments []elf.ProgHeader) (uint64, bool) {
+	if addr < uint64(mapping.StartAddr) {
+		return 0, false
+	}
+	offset := addr - uint64(mapping.StartAddr) + uint64(mapping.Offset)
+	for _, segment := range segments {
+		if offset >= segment.Off && offset-segment.Off < segment.Filesz {
+			return segment.Vaddr + offset - segment.Off, true
+		}
+	}
+	return 0, false
 }
 
 func (r *UsymResolver) exePath(pid uint32) (string, error) {
