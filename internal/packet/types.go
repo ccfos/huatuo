@@ -111,6 +111,9 @@ type TCP struct {
 	Checksum uint16 `json:"checksum"`
 	Urgent   uint16 `json:"urgent,omitempty"`
 	SkState  string `json:"sk_state,omitempty"`
+
+	payloadLength      uint32
+	payloadLengthKnown bool
 }
 
 // UDP holds L4 UDP fields.
