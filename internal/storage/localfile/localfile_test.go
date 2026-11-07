@@ -16,10 +16,13 @@ package localfile
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
@@ -120,6 +123,62 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Errorf("saved content = %q, want %q", got, want)
 	}
+}
+
+// TestBackendSaveConcurrentWriters exercises the writer lookup while other
+// goroutines create writers for new tracers. Tracer event loops run one
+// goroutine each and share one localfile backend, so a save that reuses an
+// existing writer runs concurrently with a save that inserts a new one.
+// Run with -race: the lookup used to read the writer map without holding
+// the lock that guards the insert.
+func TestBackendSaveConcurrentWriters(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	const (
+		warmTracer    = "race_warm"
+		savers        = 8
+		savesPerSaver = 50
+	)
+
+	record := func(name string) driver.Record {
+		return driver.Record{
+			ID:   "trace-" + name,
+			Data: []byte(fmt.Sprintf("{\"tracer_name\":%q}\n", name)),
+			Fields: map[string]any{
+				"tracer_name": name,
+			},
+		}
+	}
+
+	// Create the warm writer so later saves take the fast-path read.
+	if err := backend.Save(t.Context(), record(warmTracer), driver.SaveOptions{}); err != nil {
+		t.Fatalf("warm-up save: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(savers)
+	for g := 0; g < savers; g++ {
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < savesPerSaver; i++ {
+				// Alternate between reusing the warm writer (fast-path
+				// read) and creating new writers (locked insert).
+				name := fmt.Sprintf("race_new_%d_%d", g, i)
+				if i%2 == 0 {
+					name = warmTracer
+				}
+				if err := backend.Save(ctx, record(name), driver.SaveOptions{}); err != nil {
+					t.Errorf("save %s: %v", name, err)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
 }
 
 // TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, DeleteByQuery, Query, Count, and Terms all return ErrUnsupported.
