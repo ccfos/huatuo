@@ -43,7 +43,7 @@ func BenchmarkStackAggregatesSortedAllocations(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				allocations, err := groups.sortedAllocations(ctx)
-				if err != nil || len(allocations) != test.count || allocations[0].inuseBytes != int64(test.distinctBytes) {
+				if err != nil || len(allocations) != test.count || allocations[0].inuseBytes != uint64(test.distinctBytes) {
 					b.Fatalf("sorted allocations count=%d: %+v, %v", test.count, allocations, err)
 				}
 			}
@@ -74,7 +74,7 @@ func BenchmarkStackAggregatesPipeline(b *testing.B) {
 				if len(top) > 100 {
 					top = slices.Clone(top[:100])
 				}
-				if err != nil || len(top) != 100 || top[0].inuseBytes != int64(count*repeats) || top[0].inuseObjects != int64(repeats) {
+				if err != nil || len(top) != 100 || top[0].inuseBytes != uint64(count*repeats) || top[0].inuseObjects != uint64(repeats) {
 					b.Fatalf("aggregate pipeline repeats=%d: %+v, %v", repeats, top, err)
 				}
 			}

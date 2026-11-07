@@ -42,7 +42,7 @@ func TestStackAggregatesOwnKeysAndRankTotals(t *testing.T) {
 		got[0].inuseBytes != 50 || got[1].inuseBytes != 25 {
 		t.Fatalf("ranked aggregates = %+v", got)
 	}
-	wantObjects, exists := map[string]int64{"bravo": 1, "charlie": 2, "delta": 2}[got[1].key]
+	wantObjects, exists := map[string]uint64{"bravo": 1, "charlie": 2, "delta": 2}[got[1].key]
 	if !exists || got[1].inuseObjects != wantObjects {
 		t.Fatalf("stack and counters do not match: %+v", got[1])
 	}
@@ -74,10 +74,10 @@ func TestStackAggregatesCounterOverflow(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		samples []uint64
-		want    int64
+		want    uint64
 	}{
-		{name: "conversion", samples: []uint64{math.MaxUint64}, want: -1},
-		{name: "accumulation", samples: []uint64{math.MaxInt64, 1}, want: math.MinInt64},
+		{name: "conversion", samples: []uint64{math.MaxUint64}, want: math.MaxUint64},
+		{name: "accumulation", samples: []uint64{math.MaxUint64, 1}, want: math.MaxUint64},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			groups := newStackAggr()
@@ -115,12 +115,12 @@ func TestStackAggregatesSortedAllocations(t *testing.T) {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			groups := newStackAggr()
 			samples := make(map[string]allocation)
-			var want []int64
+			var want []uint64
 			for i := range count {
 				entry := allocation{
-					key: fmt.Sprintf("stack-%04d", i), inuseBytes: int64(i%7 + 1), inuseObjects: int64(i + 1),
+					key: fmt.Sprintf("stack-%04d", i), inuseBytes: uint64(i%7 + 1), inuseObjects: uint64(i + 1),
 				}
-				groups.addSample([]byte(entry.key), uint64(entry.inuseObjects), uint64(entry.inuseBytes), 1)
+				groups.addSample([]byte(entry.key), entry.inuseObjects, entry.inuseBytes, 1)
 				samples[entry.key] = entry
 				want = append(want, entry.inuseBytes)
 			}
@@ -144,19 +144,18 @@ func TestStackAggregatesSortedAllocations(t *testing.T) {
 func TestStackAggregatesSortedWeights(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		values []int64
-		want   []int64
+		values []uint64
+		want   []uint64
 	}{
-		{name: "mixed", values: []int64{90, 100, 90}, want: []int64{100, 90, 90}},
-		{name: "all tied", values: []int64{90, 90, 90}, want: []int64{90, 90, 90}},
-		{name: "zero", values: []int64{0, 100, 0}, want: []int64{100, 0, 0}},
-		{name: "negative", values: []int64{-2, -1, -2}, want: []int64{-1, -2, -2}},
-		{name: "minimum", values: []int64{math.MinInt64, -1, math.MinInt64}, want: []int64{-1, math.MinInt64, math.MinInt64}},
+		{name: "mixed", values: []uint64{90, 100, 90}, want: []uint64{100, 90, 90}},
+		{name: "all tied", values: []uint64{90, 90, 90}, want: []uint64{90, 90, 90}},
+		{name: "zero", values: []uint64{0, 100, 0}, want: []uint64{100, 0, 0}},
+		{name: "minimum", values: []uint64{1, 2, 1}, want: []uint64{2, 1, 1}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			groups := newStackAggr()
 			for i, value := range test.values {
-				groups.addSample([]byte(fmt.Sprint(i)), 1, uint64(value), 1)
+				groups.addSample([]byte(fmt.Sprint(i)), 1, value, 1)
 			}
 			got, err := groups.sortedAllocations(t.Context())
 			if err != nil || len(got) != len(test.want) {
@@ -199,27 +198,28 @@ func TestStackAggregatesSortedAllocationsPreserveState(t *testing.T) {
 func TestScaleHeapSample(t *testing.T) {
 	for _, test := range []struct {
 		name                   string
-		count, size, rate      int64
-		wantObjects, wantBytes int64
+		count, size            uint64
+		rate                   int64
+		wantObjects, wantBytes uint64
 	}{
 		{name: "zero objects", size: 128, rate: 100},
 		{name: "zero bytes", count: 1, rate: 100},
 		{
-			name: "no scaling", count: math.MaxInt64, size: math.MaxInt64, rate: 1,
-			wantObjects: math.MaxInt64, wantBytes: math.MaxInt64,
+			name: "no scaling", count: math.MaxUint64, size: math.MaxUint64, rate: 1,
+			wantObjects: math.MaxUint64, wantBytes: math.MaxUint64,
 		},
 		{name: "ordinary", count: 1, size: 1, rate: 100, wantObjects: 100, wantBytes: 100},
 		{
-			name: "rounded integer limit", count: 1, size: math.MaxInt64, rate: 2,
-			wantObjects: 1, wantBytes: math.MaxInt64,
+			name: "rounded integer limit", count: 1, size: math.MaxUint64, rate: 2,
+			wantObjects: 1, wantBytes: math.MaxUint64,
 		},
 		{
-			name: "finite overflow", count: 1, size: math.MaxInt64, rate: math.MaxInt64,
-			wantObjects: 1, wantBytes: math.MaxInt64,
+			name: "finite overflow", count: 1, size: math.MaxUint64, rate: math.MaxInt64,
+			wantObjects: 1, wantBytes: math.MaxUint64,
 		},
 		{
 			name: "infinite estimate", count: 1, size: 1, rate: math.MaxInt64,
-			wantObjects: math.MaxInt64, wantBytes: math.MaxInt64,
+			wantObjects: math.MaxUint64, wantBytes: math.MaxUint64,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
