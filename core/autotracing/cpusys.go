@@ -78,7 +78,7 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 				delta: cfg.CPUSys.DeltaUsageThreshold,
 			},
 		},
-		Interval: 20,
+		Interval: int(intervalSeconds),
 		Flag:     tracing.FlagTracing,
 	}, nil
 }
