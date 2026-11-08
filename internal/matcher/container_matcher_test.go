@@ -31,10 +31,14 @@ var testContainer = &pod.Container{
 }
 
 func containerSpec(field, pattern string) FieldSpec[*pod.Container] {
+	extract, ok := containerFieldExtractor(field)
+	if !ok {
+		panic("test helper: unknown container field " + field)
+	}
 	return FieldSpec[*pod.Container]{
 		Name:    field,
 		Pattern: pattern,
-		Extract: containerFieldExtractor(field),
+		Extract: extract,
 	}
 }
 
@@ -186,4 +190,53 @@ func TestNewContainerMatcherFromRules_InvalidPattern(t *testing.T) {
 		nil,
 	)
 	require.Error(t, err)
+}
+
+func TestNewContainerMatcherFromRules_RejectsUnknownField(t *testing.T) {
+	tests := []struct {
+		name    string
+		include []*Rule
+		exclude []*Rule
+		errMsg  string
+	}{
+		{
+			name:    "unknown include field",
+			include: []*Rule{{Field: "container_hostnam", Pattern: ".*"}},
+			errMsg:  `build include rules: unknown container matcher field "container_hostnam"`,
+		},
+		{
+			name:    "unknown exclude field",
+			exclude: []*Rule{{Field: "container_label", Pattern: "^team-"}},
+			errMsg:  `build exclude rules: unknown container matcher field "container_label"`,
+		},
+		{
+			name: "unknown field after a valid rule",
+			include: []*Rule{
+				{Field: FieldTypeContainerHostname, Pattern: "^app-"},
+				{Field: "container_qos_level", Pattern: ".*"},
+			},
+			errMsg: `build include rules: unknown container matcher field "container_qos_level"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewContainerMatcherFromRules(tt.include, tt.exclude)
+			require.Error(t, err)
+			assert.EqualError(t, err, tt.errMsg)
+		})
+	}
+}
+
+func TestNewContainerMatcherFromRules_AcceptsDocumentedFields(t *testing.T) {
+	for _, field := range []string{
+		FieldTypeContainerHostNamespace,
+		FieldTypeContainerHostname,
+		FieldTypeContainerQos,
+	} {
+		_, err := NewContainerMatcherFromRules(
+			[]*Rule{{Field: field, Pattern: ".*"}},
+			[]*Rule{{Field: field, Pattern: "^never-"}},
+		)
+		require.NoError(t, err, "field %s", field)
+	}
 }
