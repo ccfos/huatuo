@@ -32,9 +32,14 @@ func init() {
 }
 
 func newMemBurst() (*tracing.EventTracingAttr, error) {
+	cfg := configSnapshot()
+	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
+		return nil, fmt.Errorf("validate memory burst config: %w", err)
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: &memBurstTracing{},
-		Interval:    10,
+		Interval:    cfg.MemoryBurst.Interval,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
