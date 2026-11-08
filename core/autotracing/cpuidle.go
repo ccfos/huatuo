@@ -54,7 +54,7 @@ func newCPUIdle() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: tracer,
-		Interval:    20,
+		Interval:    int(tracer.interval / time.Second),
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
