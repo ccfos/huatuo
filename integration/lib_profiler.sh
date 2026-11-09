@@ -19,8 +19,61 @@ set -euo pipefail
 
 # Native PID filters use host PIDs; container-local PIDs cannot select targets.
 require_native_pid_profiling() {
-	if is_container; then
-		skip "native PID profiling is unsupported inside containers; run on the host"
+	require_commands stat
+	local pid_namespace_inode
+	pid_namespace_inode=$(stat -Lc '%i' /proc/self/ns/pid 2> /dev/null) \
+		|| skip "cannot inspect PID namespace: /proc/self/ns/pid"
+	# Linux reserves PROC_PID_INIT_INO (0xeffffffc) for the initial PID
+	# namespace. Comparing with /proc/1 would also accept container-local init.
+	if [[ ${pid_namespace_inode} != 4026531836 ]]; then
+		skip "native PID profiling requires the host PID namespace (inode=${pid_namespace_inode}); use --pid=host for containers"
+	fi
+}
+
+# Keep source discovery aligned with the vendored Cilium BTF loader. Parsing
+# belongs to the profiler: malformed or unreadable sources must fail the test.
+kernel_btf_sources() {
+	local -n sources=$1
+	local release
+	release=$(uname -r) || fatal "cannot determine the running kernel release"
+	sources=(
+		/sys/kernel/btf/vmlinux
+		"/boot/vmlinux-${release}"
+		"/lib/modules/${release}/vmlinux-${release}"
+		"/lib/modules/${release}/build/vmlinux"
+		"/usr/lib/modules/${release}/kernel/vmlinux"
+		"/usr/lib/debug/boot/vmlinux-${release}"
+		"/usr/lib/debug/boot/vmlinux-${release}.debug"
+		"/usr/lib/debug/lib/modules/${release}/vmlinux"
+	)
+}
+
+require_kernel_btf() {
+	local path
+	local -a candidates=()
+	kernel_btf_sources candidates
+	for path in "${candidates[@]}"; do
+		[[ ! -e ${path} ]] || return 0
+	done
+	skip "kernel BTF unavailable: ${candidates[*]}"
+}
+
+require_profiler_bpf_sampling() {
+	require_readable /proc/self/status
+	local cap_eff
+	cap_eff=$(awk '$1 == "CapEff:" { print $2 }' /proc/self/status)
+	# BPF perf-event programs require both capabilities on newer kernels;
+	# CAP_SYS_ADMIN provides the legacy equivalent.
+	if (((16#${cap_eff} & (1 << 21)) == 0)); then
+		(((16#${cap_eff} & (1 << 39)) != 0)) \
+			|| skip "BPF program loading requires CAP_BPF or CAP_SYS_ADMIN"
+		(((16#${cap_eff} & (1 << 38)) != 0)) \
+			|| skip "BPF perf-event sampling requires CAP_PERFMON or CAP_SYS_ADMIN"
+	fi
+	# The profiler raises RLIMIT_MEMLOCK to infinity during BPF initialization.
+	if [[ $(ulimit -Hl) != unlimited ]]; then
+		(((16#${cap_eff} & (1 << 24)) != 0)) \
+			|| skip "profiler BPF initialization requires CAP_SYS_RESOURCE to raise RLIMIT_MEMLOCK"
 	fi
 }
 
