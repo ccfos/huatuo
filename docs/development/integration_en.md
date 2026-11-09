@@ -209,8 +209,10 @@ sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
 ```
 
 `TEST_IO_DISK` defaults to `/dev/disk/by-id/virtio-huatuo-ci-io`. It must be a
-dedicated scratch disk whose contents may be overwritten. A missing, mounted
-or partitioned disk fails the case. MD, loop and NVMe-loop backing files also
+dedicated scratch disk whose contents may be overwritten. When the default
+device is missing, cases that require it are skipped. A missing device at a
+different configured path, a non-block device, or a mounted or partitioned disk
+fails the case. MD, loop and NVMe-loop backing files also
 use this disk. Cases requiring SCSI driver controls create separate
 `scsi_debug` devices. Container cases use the local Kubernetes node and
 existing kubelet credentials.

@@ -23,6 +23,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_io.sh"
+io_test_require_disk
 io_test_isolate_run_directory
 
 CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
