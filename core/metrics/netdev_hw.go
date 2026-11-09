@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -195,27 +194,23 @@ func (netdev *netdevHw) updateIfaceSwDroppedStat(object bpf.BPF) error {
 	return nil
 }
 
-func (netdev *netdevHw) Start(ctx context.Context) (retErr error) {
+func (netdev *netdevHw) Start(ctx context.Context) error {
 	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
 
 	if err := object.Attach(); err != nil {
-		return errors.Join(err, object.Close())
+		object.Close()
+		return err
 	}
 	if err := netdev.prog.Publish(object); err != nil {
-		return errors.Join(err, object.Close())
+		object.Close()
+		return err
 	}
-	defer func() {
-		retErr = errors.Join(retErr, netdev.prog.UnPublish())
-	}()
-
-	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	defer func() { _ = netdev.prog.UnPublish() }()
 
 	// Update triggers BPF through sysfs; keep probes attached until leases end.
-
-	<-childCtx.Done()
+	<-ctx.Done()
 	return nil
 }
