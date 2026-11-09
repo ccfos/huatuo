@@ -24,6 +24,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -60,7 +61,7 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 						log.WithError(err).Warn("lost BPF perf event samples")
 						if lifecycle {
-							requestContainerRefresh("", false)
+							requestWorkloadRefresh("", false)
 						}
 						continue
 					}
@@ -70,15 +71,15 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 					return
 				}
 
-				// Parse once: lifecycle notifications and the CSS cache share the ID.
+				// Container names remain compatibility metadata for the CSS cache.
 				containerID := extractContainerID(bytesutil.ToStr(data.KnodeName[:]))
 
 				if cgroupCSSCacheEvent != nil {
 					cgroupCSSCacheEvent(&data, containerID)
 				}
-				if lifecycle && containerID != "" &&
-					(data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
-					requestContainerRefresh(containerID, data.Operation == abi.CgroupCSSOperationRemove)
+				if lifecycle && (data.Operation == abi.CgroupCSSOperationUpdate || data.Operation == abi.CgroupCSSOperationRemove) {
+					id := containerView.cgroupEvent(&data)
+					requestWorkloadRefresh(id, id != "" && data.Operation == abi.CgroupCSSOperationRemove)
 				}
 			}
 		}
@@ -96,7 +97,26 @@ func cgroupCssInitEventSync() error {
 	childCtx, cancel := context.WithCancel(context.Background())
 	cgroupCssBpfCancelFunc = cancel
 
-	reader, err := cssBpf.AttachAndEventPipe(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
+	opts := []bpf.AttachOption{
+		{ProgramName: "bpf_cgroup_mkdir_prog", Symbol: "cgroup_mkdir"},
+		{ProgramName: "bpf_cgroup_rmdir_prog", Symbol: "cgroup_rmdir"},
+	}
+	if cgroups.CgroupMode() == cgroups.Unified {
+		opts = append(
+			opts,
+			bpf.AttachOption{ProgramName: "bpf_cgroup_read_prog", Symbol: "cpu_weight_nice_read_s64", Optional: true},
+		)
+	} else {
+		opts = append(opts, bpf.AttachOption{ProgramName: "bpf_cgroup_read_prog", Symbol: "cgroup_clone_children_read", Optional: true})
+	}
+	if err := cssBpf.AttachWithOptions(opts); err != nil {
+		cancel()
+		cssBpf.Close()
+		cgroupCssBpfInternal = nil
+		cgroupCssBpfCancelFunc = nil
+		return err
+	}
+	reader, err := cssBpf.EventPipeByName(childCtx, "cgroup_perf_events", bpf.DefaultPerfEventBufferBytes)
 	if err != nil {
 		cancel()
 		cssBpf.Close()
@@ -128,7 +148,7 @@ func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader
 		if ctx.Err() != nil {
 			return
 		}
-		requestContainerRefresh("", false)
+		requestWorkloadRefresh("", false)
 		for delay := time.Second; ; {
 			timer := time.NewTimer(delay)
 			select {
@@ -142,7 +162,7 @@ func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader
 			if err == nil {
 				log.Info("cgroup CSS event pipe recovered")
 				// Recover changes lost while the event pipe was unavailable.
-				requestContainerRefresh("", false)
+				requestWorkloadRefresh("", false)
 				break
 			}
 			log.WithError(err).Warn("reopen cgroup CSS event pipe")

@@ -33,6 +33,7 @@ WAIT_HUATUO_BAMAI_TIMEOUT=30
 pod_name="memory-metrics-${BASHPID}-${RANDOM}"
 pod_created=0
 memory_mount=""
+memory_original_fd=""
 memory_high_set=0
 expected_samples="${HUATUO_BAMAI_TEST_TMPDIR}/memory-samples.txt"
 config_case=all
@@ -43,6 +44,7 @@ cleanup() {
 	if [[ ${memory_high_set} == 1 ]]; then set_container_memory_high max || status=1; fi
 	cleanup_running_jobs
 	if [[ -n ${memory_mount} ]]; then umount "${memory_mount}" || status=1; fi
+	if [[ -n ${memory_original_fd} ]]; then exec {memory_original_fd}<&-; fi
 	if [[ ${pod_created} == 1 ]]; then k8s_delete_pod "${BUSINESS_POD_NS}" "app=${pod_name}" || status=1; fi
 	exit "${status}"
 }
@@ -162,18 +164,19 @@ if [[ ! -e ${cgroup_root}/memory.directstall_stat && ! -e ${cgroup_root}/memory.
 fi
 stop_container_memory_agent
 
-# Preserve real kernel files through an alias before replacing only this namespace's view.
-original_root="${HUATUO_BAMAI_TEST_TMPDIR}/original-memory"
+# Keep original files reachable without publishing another cgroup mount that
+# resource discovery could select instead of the fixture.
 fixture_root="${HUATUO_BAMAI_TEST_TMPDIR}/cgroup-fixtures"
-mkdir -p "${original_root}" "${fixture_root}"
-mount --bind "${cgroup_root}" "${original_root}"
+mkdir -p "${fixture_root}"
 if [[ ${HUATUO_TEST_CGROUP_MODE} == unified ]]; then
 	# Keep the cgroup2 root filesystem intact so mode detection still sees v2.
-	cp -as "${original_root}${cgroup_relative}/." "${fixture_root}/"
+	exec {memory_original_fd}< "${container_cgroup}"
+	cp -as "/proc/${BASHPID}/fd/${memory_original_fd}/." "${fixture_root}/"
 	fixture_container=${fixture_root}
 	memory_mount=${container_cgroup}
 else
-	cp -as "${original_root}/." "${fixture_root}/"
+	exec {memory_original_fd}< "${cgroup_root}"
+	cp -as "/proc/${BASHPID}/fd/${memory_original_fd}/." "${fixture_root}/"
 	fixture_container="${fixture_root}${cgroup_relative}"
 	memory_mount=${cgroup_root}
 	# The root interfaces enable the real memory_others collector on ordinary v1 CI.

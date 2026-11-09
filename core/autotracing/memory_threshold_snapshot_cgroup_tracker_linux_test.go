@@ -929,3 +929,48 @@ func TestCgroupTrackerRegistrationConflictIsTerminal(t *testing.T) {
 		})
 	}
 }
+
+// TestCgroupTrackerSameGenerationReadiness 验证内存路径和目录延迟就绪后，
+// 同代次全量快照可建立监视；重复快照保留注册与已收到的压力事件，不重复启动任务。
+func TestCgroupTrackerSameGenerationReadiness(t *testing.T) {
+	for _, pending := range []string{"membership", "directory"} {
+		t.Run(pending, func(t *testing.T) {
+			tracker, source := newTestCgroupTracker(t)
+			path := "/checkout-workload"
+			ready := containerRefForTest(path)
+			initial := ready
+			if pending == "membership" {
+				initial.MemoryCgroupPath = ""
+			}
+			if _, err := tracker.ProcessContainerEvents(t.Context(), pod.ContainerUpdate{
+				Mode: pod.ContainerUpdateFull, Events: []pod.ContainerEvent{{Container: initial}},
+			}); err != nil {
+				t.Errorf("publish pending workload: %v", err)
+				return
+			}
+			if len(tracker.targets) != 0 {
+				t.Error("pending workload started a watch")
+			}
+			createMemoryCgroupForTest(t, source.root, path, 95)
+			full := pod.ContainerUpdate{Mode: pod.ContainerUpdateFull, Events: []pod.ContainerEvent{{Container: ready}}}
+			if _, err := tracker.ProcessContainerEvents(t.Context(), full); err != nil {
+				t.Errorf("complete memory binding: %v", err)
+				return
+			}
+			entry := tracker.containers[ready.Key.ID]
+			if entry == nil || entry.registrationID == 0 || entry.container.Key != initial.Key {
+				t.Errorf("same-generation watch was not registered: %+v", entry)
+				return
+			}
+			registration := entry.registrationID
+			if _, err := tracker.ProcessMemoryEvents(t.Context(), []memoryWatchEvent{{Kind: memoryThresholdObserved, TargetID: registration}}, memoryEventOptions{AcceptPending: true}); err != nil {
+				t.Errorf("observe memory pressure: %v", err)
+				return
+			}
+			update, err := tracker.ProcessContainerEvents(t.Context(), full)
+			if err != nil || len(update.Invalidated) != 0 || tracker.containers[ready.Key.ID] != entry || entry.registrationID != registration || tracker.PendingCount() != 1 {
+				t.Errorf("duplicate readiness changed active registration: %+v, %v", update, err)
+			}
+		})
+	}
+}

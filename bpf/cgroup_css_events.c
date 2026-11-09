@@ -20,3 +20,13 @@ int bpf_cgroup_rmdir_prog(struct bpf_raw_tracepoint_args *ctx)
 	return submit_cgroup_css_event(ctx, (void *)ctx->args[0],
 				       CGROUP_CSS_OPERATION_REMOVE);
 }
+
+/* Binding reads also resolve cgroups that predate agent startup. */
+SEC("kprobe/cgroup_clone_children_read_or_cpu_weight_nice_read_s64")
+int bpf_cgroup_read_prog(struct pt_regs *ctx)
+{
+	struct cgroup_subsys_state *css = (void *)PT_REGS_PARM1(ctx);
+
+	return submit_cgroup_css_event(ctx, BPF_CORE_READ(css, cgroup),
+				       CGROUP_CSS_OPERATION_REFRESH);
+}

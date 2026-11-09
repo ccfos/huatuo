@@ -15,6 +15,9 @@
 package pod
 
 import (
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -94,6 +97,111 @@ func TestContainerIDByCgroupNetNamespace(t *testing.T) {
 			got := ContainerIDByCgroupNetNamespace(tt.ids)
 			if got != tt.want {
 				t.Errorf("ContainerIDByCgroupNetNamespace(%+v) = %q, want %q", tt.ids, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestWorkloadHostResourceBinding 验证进程和网络独立绑定，覆盖只有进程、
+// 只有 netns、只有 IP、进程不存在、命名空间不符以及代表进程和网络 PID 不同。
+// 缺少进程或网络不影响已有 cgroup；未经过绑定的 PID 不可直接用于采集。
+func TestWorkloadHostResourceBinding(t *testing.T) {
+	scanner := guestFixture(t)
+	for _, pid := range []int{150, 250} {
+		guestProc(t, scanner, pid, 1, uint64(pid), "0::/checkout\n")
+	}
+	guestFile(t, scanner.options.ProcRoot, "250/ns/net", "")
+	namespace, err := os.Stat(filepath.Join(scanner.options.ProcRoot, "250/ns/net"))
+	if err != nil {
+		t.Errorf("read fixture namespace: %v", err)
+		return
+	}
+	inode := namespace.Sys().(*syscall.Stat_t).Ino
+	cases := []struct {
+		name        string
+		process     *HostProcess
+		network     *HostNetwork
+		wantProcess int
+		wantNetwork int
+	}{
+		{name: "process only", process: &HostProcess{PID: 150}, wantProcess: 150},
+		{name: "network only", network: &HostNetwork{PID: 250}, wantNetwork: 250},
+		{name: "IP metadata only", network: &HostNetwork{IPAddress: "172.16.0.2"}},
+		{name: "nonexistent process", process: &HostProcess{PID: 350}, network: &HostNetwork{PID: 350, IPAddress: "172.16.0.2"}},
+		{name: "namespace mismatch", process: &HostProcess{PID: 150}, network: &HostNetwork{PID: 250, NamespaceInum: inode + 1}, wantProcess: 150},
+		{name: "independent process and network", process: &HostProcess{PID: 150}, network: &HostNetwork{PID: 250, NamespaceInum: inode, NamespaceCookie: ^uint64(0)}, wantProcess: 150, wantNetwork: 250},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workload := &Pod{
+				ID: "checkout-workload", Process: tc.process, Network: tc.network,
+				Cgroups: CgroupBinding{Unified: "/checkout", directories: map[string]string{"": scanner.options.CgroupRoot}},
+			}
+			if _, err := workload.ProcessPID(); err == nil {
+				t.Error("unbound source PID accepted for collection")
+			}
+			if _, err := workload.NetworkPID(); err == nil {
+				t.Error("unbound source namespace accepted for collection")
+			}
+			bindHostResources(workload, scanner.options.ProcRoot)
+			process, processErr := workload.ProcessPID()
+			if process != tc.wantProcess || (processErr == nil) != (tc.wantProcess != 0) {
+				t.Errorf("process PID=%d, err=%v, want %d", process, processErr, tc.wantProcess)
+			}
+			network, networkErr := workload.NetworkPID()
+			if network != tc.wantNetwork || (networkErr == nil) != (tc.wantNetwork != 0) {
+				t.Errorf("network PID=%d, err=%v, want %d", network, networkErr, tc.wantNetwork)
+			}
+			if workload.Network != nil && workload.Network.NamespaceCookie != 0 {
+				t.Error("source cookie published without local verification")
+			}
+			if tc.network != nil && tc.network.IPAddress != "" &&
+				(workload.Network == nil || workload.Network.IPAddress != tc.network.IPAddress) {
+				t.Error("unavailable namespace discarded IP metadata")
+			}
+			if _, err := workload.Cgroups.Directory("cpu"); err != nil {
+				t.Errorf("independent cgroup became unavailable: %v", err)
+			}
+		})
+	}
+}
+
+// TestWorkloadHostResourceInvalidation 验证 PID 启动时间变化、netns 变化和进程
+// 消失后旧绑定不能继续采集；单独的 netns 变化不使仍有效的代表进程失效。
+func TestWorkloadHostResourceInvalidation(t *testing.T) {
+	for _, change := range []string{"process start time", "network namespace", "process exit"} {
+		t.Run(change, func(t *testing.T) {
+			scanner := guestFixture(t)
+			guestProc(t, scanner, 150, 1, 150, "0::/checkout\n")
+			guestFile(t, scanner.options.ProcRoot, "150/ns/net", "")
+			workload := &Pod{ID: "checkout-workload", Process: &HostProcess{PID: 150}, Network: &HostNetwork{PID: 150}}
+			bindHostResources(workload, scanner.options.ProcRoot)
+			if _, err := workload.NetworkPID(); err != nil {
+				t.Errorf("initial network binding: %v", err)
+				return
+			}
+			switch change {
+			case "process start time":
+				guestProc(t, scanner, 150, 1, 250, "0::/checkout\n")
+			case "network namespace":
+				path := filepath.Join(scanner.options.ProcRoot, "150/ns/net")
+				if err := os.Rename(path, path+".previous"); err != nil {
+					t.Errorf("preserve previous namespace inode: %v", err)
+					return
+				}
+				guestFile(t, scanner.options.ProcRoot, "150/ns/net", "")
+			case "process exit":
+				if err := os.RemoveAll(filepath.Join(scanner.options.ProcRoot, "150")); err != nil {
+					t.Errorf("remove process fixture: %v", err)
+					return
+				}
+			}
+			if _, err := workload.NetworkPID(); err == nil {
+				t.Error("invalidated namespace remains available")
+			}
+			_, err := workload.ProcessPID()
+			if (err == nil) != (change == "network namespace") {
+				t.Errorf("representative process after %s: %v", change, err)
 			}
 		})
 	}

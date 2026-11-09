@@ -583,6 +583,9 @@ components:
       additionalProperties: false
       required: [hostname, region, observed_timestamp]
       properties:
+        source_type:
+          type: string
+          description: Observation producer origin (host or kata_guest); omitted for historical documents with unknown origin.
         hostname:
           type: string
         region:

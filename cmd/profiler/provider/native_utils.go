@@ -19,10 +19,11 @@ import (
 	"context"
 	"fmt"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
@@ -103,7 +104,7 @@ func resolveContainerCgroupCssByAPI(
 
 // resolveContainerCgroupCssByLocal retrieves CSS address using local BPF-based method.
 func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, error) {
-	cssAddr, err := pod.ContainerCSSBySubsys(containerID, subsysName)
+	cssAddr, err := containerdiscovery.CSSBySubsys(containerID, subsysName)
 	if err != nil {
 		return 0, fmt.Errorf("local CSS retrieval failed: %w", err)
 	}

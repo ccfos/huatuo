@@ -15,7 +15,12 @@
 // Package fileutil provides utility functions for file operations.
 package fileutil
 
-import "syscall"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"syscall"
+)
 
 // StatInode returns the inode number of the file at path.
 func StatInode(path string) (uint64, error) {
@@ -24,4 +29,28 @@ func StatInode(path string) (uint64, error) {
 		return 0, err
 	}
 	return s.Ino, nil
+}
+
+// RemoveIfSame removes path only when it still names the file described by
+// expected. A missing path or a replaced file is not an error: callers can
+// clean up a socket or lock they own without deleting another process's file.
+// A nil expected value makes the call a no-op.
+func RemoveIfSame(path string, expected os.FileInfo) error {
+	if expected == nil {
+		return nil
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %s before removal: %w", path, err)
+	}
+	if !os.SameFile(expected, info) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", path, err)
+	}
+	return nil
 }

@@ -21,6 +21,8 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/utils/fileutil"
 )
 
 type udsListener struct {
@@ -31,7 +33,7 @@ type udsListener struct {
 
 func (l *udsListener) Close() error {
 	closeErr := l.Listener.Close()
-	removeErr := removeSocketIfSame(l.path, l.fileInfo)
+	removeErr := fileutil.RemoveIfSame(l.path, l.fileInfo)
 	return errors.Join(closeErr, removeErr)
 }
 
@@ -52,38 +54,23 @@ func ListenUDS(path string) (net.Listener, error) {
 		// replaced since this listener was bound.
 		unixListener.SetUnlinkOnClose(false)
 	}
+	// Capture the bound inode first so cleanup can never delete a path that
+	// another process replaced before chmod or close.
+	info, err := os.Lstat(path)
+	if err != nil {
+		// The path may no longer belong to this listener; leave it alone.
+		_ = l.Close()
+		return nil, fmt.Errorf("transport: inspect bound socket %s: %w", path, err)
+	}
 	// chmod is the security boundary for who can connect; if it fails the socket
 	// would silently keep the umask-derived permissions, so refuse to expose it.
 	if err := os.Chmod(path, 0o660); err != nil {
 		_ = l.Close()
-		_ = os.Remove(path)
+		_ = fileutil.RemoveIfSame(path, info)
 		return nil, fmt.Errorf("transport: chmod %s: %w", path, err)
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		_ = l.Close()
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("transport: inspect bound socket %s: %w", path, err)
 	}
 
 	return &udsListener{Listener: l, path: path, fileInfo: info}, nil
-}
-
-func removeSocketIfSame(path string, expected os.FileInfo) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("transport: inspect socket before removal %s: %w", path, err)
-	}
-	if !os.SameFile(expected, info) {
-		return nil
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("transport: remove socket %s: %w", path, err)
-	}
-	return nil
 }
 
 func prepareSocketPath(path string) error {
@@ -107,7 +94,7 @@ func prepareSocketPath(path string) error {
 		return fmt.Errorf("transport: probe existing socket %s: %w", path, err)
 	}
 
-	if err := removeSocketIfSame(path, info); err != nil {
+	if err := fileutil.RemoveIfSame(path, info); err != nil {
 		return err
 	}
 	return nil

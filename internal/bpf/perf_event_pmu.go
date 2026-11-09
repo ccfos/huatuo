@@ -20,7 +20,9 @@ package bpf
 import (
 	"errors"
 	"fmt"
-	"runtime"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/cilium/ebpf"
 	"golang.org/x/sys/unix"
@@ -121,9 +123,10 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 	attr := newPerfEventAttr(opt)
 	cpuIDs := opt.cpuIDs
 	if len(cpuIDs) == 0 {
-		cpuIDs = make([]int, runtime.NumCPU())
-		for cpuID := range cpuIDs {
-			cpuIDs[cpuID] = cpuID
+		var err error
+		cpuIDs, err = onlinePerfCPUs("/sys/devices/system/cpu/online")
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -169,4 +172,36 @@ func closePerfEventFDs(fds []int) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// CPU counts do not describe CPU IDs after hotplug or in sparse VM topologies.
+func onlinePerfCPUs(path string) ([]int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read online perf CPUs: %w", err)
+	}
+	var ids []int
+	previous := -1
+	for _, item := range strings.Split(strings.TrimSpace(string(data)), ",") {
+		firstText, lastText, hasRange := strings.Cut(item, "-")
+		first, err := strconv.Atoi(firstText)
+		if err != nil || first < 0 || first <= previous {
+			return nil, fmt.Errorf("invalid online CPU entry %q", item)
+		}
+		last := first
+		if hasRange {
+			last, err = strconv.Atoi(lastText)
+			if err != nil || last < first {
+				return nil, fmt.Errorf("invalid online CPU range %q", item)
+			}
+		}
+		for cpu := first; ; cpu++ {
+			ids = append(ids, cpu)
+			if cpu == last {
+				break
+			}
+		}
+		previous = last
+	}
+	return ids, nil
 }

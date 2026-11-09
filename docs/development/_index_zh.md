@@ -18,3 +18,5 @@ weight: 8
 | 验证跨组件行为 | [集成测试](/docs/development/integration_zh.md) |
 | 理解 TCP 重传与丢包关联设计 | [重传与丢包关联设计](/docs/development/tcp_retransmit_dropwatch_correlation_zh.md) |
 | 理解存储写入和查询契约 | [存储接口](/docs/development/storage_zh.md) |
+| 理解容器与沙箱统一发现及资源采集设计 | [Pod 多来源重构方案](/docs/development/workload_manager_design_zh.md) |
+| 分步实施容器与沙箱统一管理 | [Pod 多来源重构开发计划](/docs/development/workload_manager_development_plan_zh.md) |

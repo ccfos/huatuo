@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"golang.org/x/sys/unix"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -128,7 +130,11 @@ func newContainerSubscriptionForTest(t *testing.T) *pod.ContainerSubscription {
 	}))
 	t.Cleanup(server.Close)
 	port := uint32(server.Listener.Addr().(*net.TCPAddr).Port)
-	if err := pod.InitManager(&pod.ManagerCtx{PodReadOnlyPort: port}); err != nil {
+	source, err := containerdiscovery.NewSource(&containerdiscovery.Options{PodReadOnlyPort: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pod.StartManager(source, pod.ManagerOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pod.ReleaseManager)

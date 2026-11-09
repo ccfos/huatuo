@@ -132,3 +132,19 @@ func TestRawProfilesRejectsOversizedEncodedPage(t *testing.T) {
 		t.Fatalf("rawProfiles() error = %v, want ErrResponseTooLarge", err)
 	}
 }
+
+func TestRawProfileCarriesProducerOrigin(t *testing.T) {
+	for _, source := range []string{"", "host", "kata_guest"} {
+		got, _, err := rawProfile(&profilinghandler.RawProfile{SourceType: source, Profile: &profilev1.Profile{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if source == "" {
+			if got.SourceType != nil {
+				t.Error("legacy profile gained an origin")
+			}
+		} else if got.SourceType == nil || *got.SourceType != source {
+			t.Errorf("source=%q output=%+v", source, got.SourceType)
+		}
+	}
+}

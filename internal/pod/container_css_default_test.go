@@ -17,17 +17,21 @@ package pod
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/procfs"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/cgroups"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -143,94 +147,6 @@ func TestExtractContainerID(t *testing.T) {
 	}
 }
 
-func TestCgroupMembershipForSubsystem(t *testing.T) {
-	paths := &cgroups.ProcessPaths{
-		Controllers: map[string]string{"cpu": "/cpu/container", "memory": "/memory/container"},
-		Unified:     "/unified/container",
-	}
-	tests := []struct {
-		name          string
-		paths         *cgroups.ProcessPaths
-		mode          cgroups.Mode
-		subsystem     string
-		expectedPath  string
-		expectedError string
-	}{
-		{name: "v1 memory uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "memory", expectedPath: "/memory/container"},
-		{name: "v1 CPU uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "cpu", expectedPath: "/cpu/container"},
-		{name: "hybrid memory ignores unified membership", paths: paths, mode: cgroups.Hybrid, subsystem: "memory", expectedPath: "/memory/container"},
-		{name: "v2 uses unified membership", paths: paths, mode: cgroups.Unified, subsystem: "memory", expectedPath: "/unified/container"},
-		{
-			name:  "missing v1 memory does not fall back to CPU or v2",
-			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"cpu": "/cpu/container"}, Unified: "/unified/container"},
-			mode:  cgroups.Legacy, subsystem: "memory", expectedError: "no memory cgroup v1 membership",
-		},
-		{
-			name:  "missing v2 membership does not fall back to v1",
-			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"memory": "/memory/container"}},
-			mode:  cgroups.Unified, subsystem: "memory", expectedError: "no cgroup v2 membership",
-		},
-		{name: "missing paths", mode: cgroups.Legacy, subsystem: "memory", expectedError: "missing process cgroup membership"},
-		{name: "unsupported mode", paths: paths, mode: cgroups.Mode(255), subsystem: "memory", expectedError: "unsupported cgroup mode"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			actualPath, actualErr := cgroupMembershipForSubsystem(test.paths, test.mode, test.subsystem)
-			if test.expectedError != "" {
-				if actualErr == nil || !strings.Contains(actualErr.Error(), test.expectedError) {
-					t.Fatalf("expected error %q, got path %q and error %v", test.expectedError, actualPath, actualErr)
-				}
-				return
-			}
-			if actualErr != nil || actualPath != test.expectedPath {
-				t.Fatalf("expected path %q, got %q and error %v", test.expectedPath, actualPath, actualErr)
-			}
-		})
-	}
-}
-
-func TestResolveCgroupFilesystemPath(t *testing.T) {
-	realRoot := t.TempDir()
-	symlinkParent := t.TempDir()
-	symlinkRoot := filepath.Join(symlinkParent, "cpu")
-	if err := os.Symlink(realRoot, symlinkRoot); err != nil {
-		t.Fatalf("Symlink() error = %v", err)
-	}
-
-	membershipPath := "/kubepods/container"
-	cgroupPath := filepath.Join(realRoot, "kubepods", "container")
-	if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cgroupPath, cgroupv1NotifyFile), nil, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	got, err := resolveCgroupFilesystemPath(symlinkRoot, membershipPath, cgroupv1NotifyFile)
-	if err != nil {
-		t.Fatalf("resolveCgroupFilesystemPath() error = %v", err)
-	}
-	if got != cgroupPath {
-		t.Fatalf("resolveCgroupFilesystemPath() = %q, want %q", got, cgroupPath)
-	}
-}
-
-func TestResolveCgroupFilesystemPathRejectsMissingNotificationFile(t *testing.T) {
-	root := t.TempDir()
-	cgroupPath := filepath.Join(root, "kubepods", "container")
-	if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-
-	_, err := resolveCgroupFilesystemPath(root, "/kubepods/container", cgroupv2NotifyFile)
-	if err == nil {
-		t.Fatal("resolveCgroupFilesystemPath() error = nil, want non-nil")
-	}
-	if !strings.Contains(err.Error(), filepath.Join(cgroupPath, cgroupv2NotifyFile)) {
-		t.Fatalf("resolveCgroupFilesystemPath() error = %q, want notification path", err)
-	}
-}
-
 func TestCgroupSubsystemInitializationRetries(t *testing.T) {
 	oldIDs, oldLoader := cgroupCssID2SubSysNameMap, cgroupSubSysLoader
 	t.Cleanup(func() { cgroupCssID2SubSysNameMap, cgroupSubSysLoader = oldIDs, oldLoader })
@@ -251,10 +167,11 @@ func TestCgroupSubsystemInitializationRetries(t *testing.T) {
 
 type lifecycleReaderTest struct {
 	bpf.PerfEventReader
-	event  *containerCssPerfEvent
-	closed chan struct{}
-	once   sync.Once
-	fail   bool
+	event     *containerCssPerfEvent
+	closed    chan struct{}
+	once      sync.Once
+	fail      bool
+	processed chan struct{}
 }
 
 func (r *lifecycleReaderTest) ReadInto(dst any) error {
@@ -266,6 +183,10 @@ func (r *lifecycleReaderTest) ReadInto(dst any) error {
 		r.event = nil
 		return nil
 	}
+	if r.processed != nil {
+		close(r.processed)
+		r.processed = nil
+	}
 	<-r.closed
 	return context.Canceled
 }
@@ -275,16 +196,27 @@ func (r *lifecycleReaderTest) Close() error {
 	return nil
 }
 
+// TestCgroupReaderRecoversAndStops 验证 reader 故障后的全量恢复、基于已绑定
+// CSS 的定向提示，以及取消后的正常退出；归属不从目录名称推断。
 func TestCgroupReaderRecoversAndStops(t *testing.T) {
-	controller := newContainerController(newTestContainerStore())
-	containerManagerMu.Lock()
-	previous := containerManager
-	containerManager = controller
-	containerManagerMu.Unlock()
-	t.Cleanup(func() { containerManagerMu.Lock(); containerManager = previous; containerManagerMu.Unlock() })
+	store := newTestContainerStore()
+	oldView := containerView
+	containerView = store
+	t.Cleanup(func() { containerView = oldView })
 	id := strings.Repeat("a", 64)
+	record := containerRecordForTest(id)
+	record.pod = podFromContainer(record.container)
+	record.pod.Cgroups = CgroupBinding{CSS: map[string]uint64{"cpu": 9150}, directories: map[string]string{"cpu": "/bound-checkout"}}
+	store.commit(containerSnapshot{records: map[string]*containerRecord{id: record}, isComplete: true}, nil)
+	controller := newWorkloadManager(store)
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = controller
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
 	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationUpdate}
-	copy(event.KnodeName[:], id)
+	event.CSS[0] = 9150
+	copy(event.KnodeName[:], "8")
 	first := &lifecycleReaderTest{closed: make(chan struct{}), fail: true}
 	next := &lifecycleReaderTest{closed: make(chan struct{}), event: event}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -317,5 +249,200 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("reader did not stop")
+	}
+}
+
+// TestLateCSSRefreshPublishesBinding 验证首次发现后才到达的 blkio CSS 会触发
+// 公共 Manager 重新绑定并发布同一实例，而不是等待周期同步。
+func TestLateCSSRefreshPublishesBinding(t *testing.T) {
+	root := t.TempDir()
+	procRoot, cgroupRoot := filepath.Join(root, "proc"), filepath.Join(root, "blkio")
+	guestFile(t, procRoot, "self/mountinfo", fmt.Sprintf("40 1 0:40 / %s rw - cgroup none rw,blkio\n", cgroupRoot))
+	guestFile(t, cgroupRoot, "sandbox/8/cgroup.clone_children", "0")
+	info, err := os.Stat(filepath.Join(cgroupRoot, "sandbox/8"))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	const css = uint64(765433)
+	oldNames := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "blkio"}
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldNames; cgroupCssMetaDataMap.Delete(css) })
+	store := newContainerStore()
+	workload := &Pod{
+		ID: "checkout-sandbox", Type: TypeCubeSandbox,
+		Cgroups: CgroupBinding{Controllers: map[string]string{"blkio": "/sandbox/8"}},
+	}
+	source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) {
+		return Discovery{Pods: map[string]*Pod{workload.ID: workload}, Complete: true}, nil
+	}}
+	manager := sourceManagerForTest(t, store, source)
+	manager.procRoot, manager.resyncInterval = procRoot, time.Hour
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = manager
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
+	manager.start()
+	t.Cleanup(func() { manager.cancel(); <-manager.done })
+	waitForBinding := func(want uint64) bool {
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			store.mu.RLock()
+			record := store.records[workload.ID]
+			ready := record != nil && record.pod.Cgroups.CSS["blkio"] == want
+			store.mu.RUnlock()
+			if ready {
+				return true
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return false
+	}
+	if !waitForBinding(0) {
+		t.Error("initial workload was not published")
+		return
+	}
+	store.mu.RLock()
+	key := store.records[workload.ID].ref.Key
+	store.mu.RUnlock()
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: info.Sys().(*syscall.Stat_t).Ino}
+	event.CSS[0] = css
+	reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := cgroupCssEventSyncHandler(ctx, reader, true)
+	t.Cleanup(func() { cancel(); _ = reader.Close(); <-done })
+	if !waitForBinding(css) {
+		t.Error("late blkio CSS remained absent from the published workload")
+	}
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+	if store.records[workload.ID].ref.Key != key {
+		t.Error("CSS readiness changed workload identity")
+	}
+}
+
+// TestCPURefreshDoesNotRetriggerDiscovery 验证重复读取已缓存的 CPU CSS 不产生
+// 发现提示，避免绑定阶段读取 cgroup 文件导致 Manager 持续自我唤醒。
+func TestCPURefreshDoesNotRetriggerDiscovery(t *testing.T) {
+	oldNames := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu"}
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldNames; cgroupCssMetaDataMap.Delete(uint64(765432)) })
+	controller := newWorkloadManager(newTestContainerStore())
+	controller.full = false
+	workloadManagerMu.Lock()
+	previous := activeManager
+	activeManager = controller
+	workloadManagerMu.Unlock()
+	t.Cleanup(func() { workloadManagerMu.Lock(); activeManager = previous; workloadManagerMu.Unlock() })
+	event := &containerCssPerfEvent{Operation: abi.CgroupCSSOperationRefresh, Inode: 42}
+	event.CSS[0] = 765432
+	containerID := strings.Repeat("c", 64)
+	copy(event.KnodeName[:], containerID)
+	cgroupCssMetaDataMap.Store(event.CSS[0], &containerCssMetaData{CSS: event.CSS[0], Inode: event.Inode, SubSys: "cpu", ContainerID: containerID})
+	processed := make(chan struct{})
+	reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event, processed: processed}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := cgroupCssEventSyncHandler(ctx, reader, true)
+	t.Cleanup(func() { cancel(); reader.Close(); <-done })
+	select {
+	case <-processed:
+	case <-time.After(time.Second):
+		t.Fatal("CSS refresh was not processed")
+	}
+	if _, ok := cgroupCssMetaDataMap.Load(uint64(765432)); !ok {
+		t.Error("CPU refresh did not populate the cache")
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	if controller.full || len(controller.hints) != 0 {
+		t.Errorf("read-time refresh produced lifecycle hints: %+v", controller.hints)
+	}
+}
+
+// TestUnknownCgroupEventRequestsFullRefresh 验证无法归属的创建和删除事件只
+// 请求合并全量刷新，数字目录或看似容器 ID 的名称都不会生成成员变更。
+func TestUnknownCgroupEventRequestsFullRefresh(t *testing.T) {
+	for _, removed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("removed=%t", removed), func(t *testing.T) {
+			store := newTestContainerStore()
+			previousView := containerView
+			containerView = store
+			controller := newWorkloadManager(store)
+			controller.full = false
+			workloadManagerMu.Lock()
+			previous := activeManager
+			activeManager = controller
+			workloadManagerMu.Unlock()
+			t.Cleanup(func() {
+				containerView = previousView
+				workloadManagerMu.Lock()
+				activeManager = previous
+				workloadManagerMu.Unlock()
+			})
+			event := &containerCssPerfEvent{Inode: 4200, Operation: abi.CgroupCSSOperationUpdate}
+			if removed {
+				event.Operation = abi.CgroupCSSOperationRemove
+			}
+			copy(event.KnodeName[:], "8")
+			processed := make(chan struct{})
+			reader := &lifecycleReaderTest{closed: make(chan struct{}), event: event, processed: processed}
+			ctx, cancel := context.WithCancel(t.Context())
+			done := cgroupCssEventSyncHandler(ctx, reader, true)
+			t.Cleanup(func() { cancel(); _ = reader.Close(); <-done })
+			select {
+			case <-processed:
+			case <-time.After(time.Second):
+				t.Error("unknown cgroup event was not processed")
+				return
+			}
+			controller.mu.Lock()
+			defer controller.mu.Unlock()
+			if !controller.full || len(controller.hints) != 0 || len(store.records) != 0 {
+				t.Error("unknown event created a targeted hint or changed membership")
+			}
+		})
+	}
+}
+
+func TestCgroupCSSByPathUsesDirectoryIdentity(t *testing.T) {
+	previousRoot := filepath.Dir(procfs.DefaultPath())
+	previousIDs := cgroupCssID2SubSysNameMap
+	root := t.TempDir()
+	procfs.RootPrefix(root)
+	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu", 1: "memory"}
+	t.Cleanup(func() {
+		procfs.RootPrefix(previousRoot)
+		cgroupCssID2SubSysNameMap = previousIDs
+		cgroupCssMetaDataMap.Delete(uint64(8500))
+		cgroupCssMetaDataMap.Delete(uint64(8600))
+	})
+	cgroupRoot := filepath.Join(root, "groups")
+	guestFile(t, filepath.Join(root, "proc"), "self/mountinfo", fmt.Sprintf("40 1 0:40 / %s rw - cgroup2 none rw\n41 1 0:41 / %s/cpu rw - cgroup none rw,cpu,cpuacct\n42 1 0:42 / %s/memory rw - cgroup none rw,memory\n", cgroupRoot, cgroupRoot, cgroupRoot))
+	for index, controller := range []string{"cpu", "memory"} {
+		directory := filepath.Join(cgroupRoot, "workloads/8")
+		if cgroups.CgroupMode() != cgroups.Unified {
+			directory = filepath.Join(cgroupRoot, controller, "workloads/8")
+		}
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		var stat syscall.Stat_t
+		if err := syscall.Stat(directory, &stat); err != nil {
+			t.Fatal(err)
+		}
+		address := uint64(8500 + index*100)
+		cgroupCssMetaDataMap.Store(address, &containerCssMetaData{CSS: address, Inode: stat.Ino, SubSys: controller})
+	}
+	for index, controller := range []string{"cpu", "memory"} {
+		address, err := CgroupCSSByPath(controller, "/workloads/8")
+		if err != nil || address != uint64(8500+index*100) {
+			t.Errorf("%s CSS=%#x err=%v", controller, address, err)
+		}
+	}
+	for _, path := range []string{"", "/", "relative", "/workloads/../8", "/missing"} {
+		if _, err := CgroupCSSByPath("memory", path); err == nil {
+			t.Errorf("unsafe or missing path %q accepted", path)
+		}
 	}
 }

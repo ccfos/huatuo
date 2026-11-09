@@ -17,6 +17,7 @@ package collector
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -63,9 +64,11 @@ func init() {
 // hasDidiMemcgInterfaces reports whether the running kernel exposes any of
 // the Didi memcg extension files on the root memory cgroup.
 func hasDidiMemcgInterfaces() bool {
-	for _, spec := range didiMemcgMetricSpecs {
-		if _, err := os.Stat(paths.Path(subsystem.SubsystemMemory, spec.path)); err == nil {
-			return true
+	for _, root := range []string{paths.Path(subsystem.SubsystemMemory), paths.Path()} {
+		for _, spec := range didiMemcgMetricSpecs {
+			if _, err := os.Stat(filepath.Join(root, spec.path)); err == nil {
+				return true
+			}
 		}
 	}
 
@@ -84,8 +87,8 @@ func newMemOthersCollector() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func parseValueWithKey(cgroupPath, cgroupFile, key string) (uint64, error) {
-	filePath := paths.Path(subsystem.SubsystemMemory, cgroupPath, cgroupFile)
+func parseValueWithKey(directory, cgroupFile, key string) (uint64, error) {
+	filePath := filepath.Join(directory, cgroupFile)
 	if key == "" {
 		return parseutil.ReadUint(filePath)
 	}
@@ -99,23 +102,30 @@ func parseValueWithKey(cgroupPath, cgroupFile, key string) (uint64, error) {
 }
 
 func (c *memOthersCollector) Update() ([]*metric.Data, error) {
-	containers, err := pod.NormalContainers()
+	workloads, err := pod.Pods()
 	if err != nil {
-		return nil, fmt.Errorf("Can't get normal container: %w", err)
+		return nil, fmt.Errorf("get workloads: %w", err)
 	}
 
 	metrics := []*metric.Data{}
 
-	for _, container := range containers {
+	for _, workload := range workloads {
+		if !isMemoryWorkload(workload) {
+			continue
+		}
+		directory, err := workload.Cgroups.Directory("memory")
+		if err != nil {
+			continue
+		}
 		for _, spec := range didiMemcgMetricSpecs {
-			value, err := parseValueWithKey(container.CgroupPath, spec.path, spec.key)
+			value, err := parseValueWithKey(directory, spec.path, spec.key)
 			if err != nil {
 				// FIXME: os maynot support this metric
 				continue
 			}
 
 			metrics = append(metrics,
-				metric.NewContainerGaugeData(container, spec.name, float64(value), fmt.Sprintf("memory cgroup %s", spec.name), nil))
+				metric.NewPodGaugeData(workload, spec.name, float64(value), fmt.Sprintf("memory cgroup %s", spec.name), nil))
 		}
 	}
 

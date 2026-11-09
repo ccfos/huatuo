@@ -18,46 +18,31 @@ import (
 	"context"
 	"fmt"
 	"testing"
-
-	corev1 "k8s.io/api/core/v1"
 )
 
-func BenchmarkContainerControllerRefresh(b *testing.B) {
-	initMu.Lock()
-	previous := currContainerProvider
-	currContainerProvider = containerProviderContainerd
-	initMu.Unlock()
-	b.Cleanup(func() { initMu.Lock(); currContainerProvider = previous; initMu.Unlock() })
+// BenchmarkSourceDiscovery measures the public discovery boundary and Store
+// commit for metadata-only workloads, without hiding binding allocations.
+func BenchmarkSourceDiscovery(b *testing.B) {
 	for _, size := range []int{1, 1024} {
 		b.Run(fmt.Sprint(size), func(b *testing.B) {
-			ids := make([]string, size)
-			for i := range ids {
-				ids[i] = fmt.Sprintf("%064x", i)
+			pods := make(map[string]*Pod, size)
+			for index := range size {
+				id := fmt.Sprintf("checkout-sandbox-%d", index)
+				pods[id] = &Pod{ID: id, Type: TypeCubeSandbox}
 			}
-			list := runningPodListForTest(ids...)
+			source := &sourceFixture{kind: TypeCubeSandbox, discover: func(context.Context) (Discovery, error) { return Discovery{Pods: pods, Complete: true}, nil }}
 			store := newTestContainerStore()
-			c := newContainerController(store)
-			c.fetch = func(context.Context) (corev1.PodList, error) { return list, nil }
-			resolves := 0
-			c.resolve = func(id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*containerRecord, error) {
-				resolves++
-				return containerRecordForTest(id), nil
-			}
-			snapshot, err, _ := c.refresh(b.Context(), nil, true)
+			manager, err := newSourceManager(store, source, ManagerOptions{})
 			if err != nil {
 				b.Fatal(err)
 			}
-			store.commit(snapshot, nil)
 			b.ReportAllocs()
 			for b.Loop() {
-				snapshot, err, _ := c.refresh(b.Context(), nil, false)
+				snapshot, err, _ := manager.discover(b.Context(), nil, true)
 				if err != nil {
 					b.Fatal(err)
 				}
 				store.commit(snapshot, nil)
-			}
-			if resolves != size {
-				b.Fatalf("healthy containers were resolved again: got %d resolutions, want %d", resolves, size)
 			}
 		})
 	}

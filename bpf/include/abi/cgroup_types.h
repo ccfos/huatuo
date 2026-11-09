@@ -23,10 +23,12 @@
 enum cgroup_css_operation {
 	CGROUP_CSS_OPERATION_UPDATE = 0,
 	CGROUP_CSS_OPERATION_REMOVE = 1,
+ CGROUP_CSS_OPERATION_REFRESH = 2,
 };
 
 struct cgroup_css_event {
 	u64 cgroup;
+	u64 inode;
 	enum cgroup_css_operation operation;
 	u32 pad0;
 	s32 cgroup_root;

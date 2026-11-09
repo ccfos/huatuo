@@ -49,7 +49,11 @@ const (
 	// LabelHost indicates the host.
 	LabelHost = "host"
 	// LabelRegion indicates the data collected from.
-	LabelRegion = "region"
+	LabelRegion            = "region"
+	LabelWorkloadID        = "workload_id"
+	LabelWorkloadType      = "workload_type"
+	LabelWorkloadName      = "workload_name"
+	LabelWorkloadNamespace = pod.LabelWorkloadNamespace
 	// LabelContainerName indicates the container name.
 	LabelContainerName = "container_name"
 	// LabelContainerHost indicates the container host.
@@ -253,6 +257,55 @@ func isDefaultContainerLabel(key string) bool {
 	default:
 		return false
 	}
+}
+
+// NewPodGaugeData preserves container metrics and gives sandboxes a fixed identity.
+// Container workloads must carry ContainerInfo and their namespace label.
+func NewPodGaugeData(workload *pod.Pod, name string, value float64, help string, label map[string]string) *Data {
+	if workload.Type == pod.TypeContainer {
+		container := pod.Container{
+			Name: workload.Name, Hostname: workload.Container.Hostname,
+			Type: workload.Container.Type, Qos: workload.Container.Qos, Labels: workload.Labels,
+		}
+		return NewContainerGaugeData(&container, name, value, help, label)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = defaultHostname
+	}
+	workloadName := workload.Name
+	if workloadName == "" {
+		workloadName = workload.ID
+	}
+	namespace, _ := workload.Labels[LabelWorkloadNamespace].(string)
+	data := &Data{
+		name: "workload_" + name, valueType: MetricTypeGauge, Value: value, help: help,
+		labelKey: make([]string, 0, 6+len(label)), labelValue: make([]string, 0, 6+len(label)),
+	}
+	data.labelKey = append(data.labelKey, LabelRegion, LabelHost, LabelWorkloadID, LabelWorkloadType, LabelWorkloadName, LabelWorkloadNamespace)
+	data.labelValue = append(data.labelValue, labelValue(label, LabelRegion, defaultRegion), labelValue(label, LabelHost, hostname),
+		workload.ID, workload.Type, workloadName, namespace)
+	keys := make([]string, 0, len(label))
+	for key := range label {
+		switch key {
+		case LabelRegion, LabelHost, LabelWorkloadID, LabelWorkloadType, LabelWorkloadName, LabelWorkloadNamespace:
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		data.labelKey = append(data.labelKey, key)
+		data.labelValue = append(data.labelValue, label[key])
+	}
+	return data
+}
+
+// NewPodCounterData uses the same identity boundary as workload gauges.
+func NewPodCounterData(workload *pod.Pod, name string, value float64, help string, label map[string]string) *Data {
+	data := NewPodGaugeData(workload, name, value, help, label)
+	data.valueType = MetricTypeCounter
+	return data
 }
 
 // NewContainerGaugeData creates a new instance of container Data.

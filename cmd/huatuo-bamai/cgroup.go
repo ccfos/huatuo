@@ -22,6 +22,7 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/runmode"
 )
 
 const bytesPerMiB = 1024 * 1024
@@ -44,6 +45,10 @@ func setupCgroup(d *Daemon) (func(context.Context) error, error) {
 			config.Get().Runtime.MemoryLimitMiB*bytesPerMiB,
 		),
 	); err != nil {
+		if d.opts.Mode == runmode.Sandbox {
+			log.Warnf("sandbox self cgroup limit unavailable: %v", err)
+			return nil, nil
+		}
 		return nil, fmt.Errorf("new runtime cgroup: %w", err)
 	}
 

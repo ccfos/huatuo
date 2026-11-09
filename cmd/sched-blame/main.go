@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"syscall"
 
+	containerdiscovery "github.com/ccfos/huatuo/internal/pod/container"
+
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/core/autotracing"
@@ -160,13 +162,19 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		return fmt.Errorf("initialize BPF: %w", err)
 	}
 	defer bpf.Shutdown()
-	if err := pod.InitManager(&pod.ManagerCtx{
+	source, err := containerdiscovery.NewSource(&containerdiscovery.Options{
 		PodReadOnlyPort:   config.Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort: config.Pod.KubeletAuthorizedPort,
 		PodClientCertPath: config.Pod.KubeletClientCertPath,
 		DockerAPIVersion:  config.Pod.DockerAPIVersion,
-	}); err != nil {
-		return fmt.Errorf("initialize container discovery: %w", err)
+	})
+	if err != nil {
+		return fmt.Errorf("prepare container discovery: %w", err)
+	}
+	if source != nil {
+		if err := pod.StartManager(source, pod.ManagerOptions{}); err != nil {
+			return fmt.Errorf("start workload manager: %w", err)
+		}
 	}
 	defer pod.ReleaseManager()
 

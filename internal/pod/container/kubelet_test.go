@@ -1,0 +1,863 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package container
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/iotest"
+	"time"
+
+	podmodel "github.com/ccfos/huatuo/internal/pod"
+
+	"github.com/ccfos/huatuo/internal/log"
+
+	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// TestHTTPRequestContextPropagatesBodyReadError reproduces issue #258: when a kubelet
+// response body fails to read, the error must be surfaced to the caller rather
+// than being swallowed and replaced with an empty body.
+func TestHTTPRequestContextPropagatesBodyReadError(t *testing.T) {
+	wantReadErr := errors.New("simulated mid-stream read failure")
+	client := &http.Client{
+		Transport: bodyReadErrorTransport{readErr: wantReadErr},
+	}
+	requestURL := "http://test.kubelet.invalid/pods"
+
+	_, err := httpRequestContext(t.Context(), client, requestURL)
+	if err == nil {
+		t.Fatal("httpRequestContext() error = nil, want non-nil")
+	}
+	if !errors.Is(err, wantReadErr) {
+		t.Errorf("errors.Is(httpRequestContext(%q) error, wantReadErr) = false, want true; error = %v", requestURL, err)
+	}
+	wantError := fmt.Sprintf("http: %s, read body: %v", requestURL, wantReadErr)
+	if err.Error() != wantError {
+		t.Errorf("httpRequestContext(%q) error = %q, want %q", requestURL, err, wantError)
+	}
+}
+
+// TestHTTPRequestContextReturnsBodyOnSuccess confirms the happy path still works
+// after the fix, guarding against regressions that drop the body.
+func TestHTTPRequestContextReturnsBodyOnSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	requestURL := srv.URL + "/pods"
+	body, err := httpRequestContext(t.Context(), srv.Client(), requestURL)
+	if err != nil {
+		t.Fatalf("httpRequestContext() error = %v, want nil", err)
+	}
+	wantBody := `{"ok":true}`
+	if string(body) != wantBody {
+		t.Errorf("httpRequestContext(%q) body = %q, want %q", requestURL, body, wantBody)
+	}
+}
+
+// TestHTTPRequestContextReportsNonOKStatusAndBody makes sure the existing
+// non-200 error path is unaffected by the read-error fix.
+func TestHTTPRequestContextReportsNonOKStatusAndBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `boom`)
+	}))
+	t.Cleanup(srv.Close)
+
+	requestURL := srv.URL + "/pods"
+	_, err := httpRequestContext(t.Context(), srv.Client(), requestURL)
+	if err == nil {
+		t.Fatal("httpRequestContext() error = nil, want non-nil")
+	}
+	wantError := fmt.Sprintf("http: %s, status: %d, body: boom", requestURL, http.StatusInternalServerError)
+	if err.Error() != wantError {
+		t.Errorf("httpRequestContext(%q) error = %q, want %q", requestURL, err, wantError)
+	}
+}
+
+// bodyReadErrorTransport returns a response whose body read fails after a
+// partial payload.
+type bodyReadErrorTransport struct {
+	readErr error
+}
+
+type kubeletRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f kubeletRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type trackingReadCloser struct {
+	reader io.Reader
+	read   int
+	closed bool
+}
+
+func (r *trackingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.read += n
+	return n, err
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
+func TestHTTPRequestContextRejectsDeclaredOversizedBodyWithoutReading(t *testing.T) {
+	body := &trackingReadCloser{reader: strings.NewReader(strings.Repeat("x", 65))}
+	client := &http.Client{Transport: kubeletRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: maxKubeletResponseBodyBytes + 1,
+			Header:        make(http.Header),
+			Body:          body,
+		}, nil
+	})}
+
+	_, err := httpRequestContext(t.Context(), client, "http://test.kubelet.invalid/pods")
+	if err == nil || !strings.Contains(err.Error(), "declares 134217729 bytes, limit is 134217728 bytes") {
+		t.Fatalf("httpRequestContext() error=%v, want declared-size rejection", err)
+	}
+	if body.read != 0 {
+		t.Fatalf("body bytes read=%d, want 0", body.read)
+	}
+	if !body.closed {
+		t.Fatal("response body was not closed after declared-size rejection")
+	}
+}
+
+func TestHTTPRequestContextBoundsUnknownLengthBody(t *testing.T) {
+	const limit = int64(64)
+	body := &trackingReadCloser{reader: strings.NewReader(strings.Repeat("x", 128))}
+	data, truncated, err := requestLimitedBody(body, limit)
+	if err != nil || !truncated {
+		t.Fatalf("requestLimitedBody() err=%v truncated=%v, want overflow", err, truncated)
+	}
+	if body.read != int(limit+1) {
+		t.Fatalf("body bytes read=%d, want %d", body.read, limit+1)
+	}
+	if len(data) != int(limit+1) {
+		t.Fatalf("returned body length=%d, want %d", len(data), limit+1)
+	}
+}
+
+func TestHTTPRequestContextAcceptsExactLimit(t *testing.T) {
+	const limit = int64(64)
+	want := strings.Repeat("x", int(limit))
+	got, truncated, err := requestLimitedBody(strings.NewReader(want), limit)
+	if err != nil {
+		t.Fatalf("requestLimitedBody() error=%v", err)
+	}
+	if truncated {
+		t.Fatal("requestLimitedBody() reported truncation at exact limit")
+	}
+	if string(got) != want {
+		t.Fatalf("body length=%d, want %d", len(got), len(want))
+	}
+}
+
+func TestHTTPRequestContextBoundsChunkedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		_, _ = io.WriteString(w, strings.Repeat("x", 65))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, truncated, err := requestLimitedBody(strings.NewReader(strings.Repeat("x", 65)), 64)
+	if err != nil || !truncated {
+		t.Fatalf("requestLimitedBody() err=%v truncated=%v, want overflow", err, truncated)
+	}
+}
+
+func TestHTTPRequestContextBoundsDecompressedBody(t *testing.T) {
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write([]byte(strings.Repeat("x", 128))); err != nil {
+		t.Fatalf("gzip.Write() error=%v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip.Close() error=%v", err)
+	}
+	if compressed.Len() >= 64 {
+		t.Fatalf("compressed body=%d bytes, want below test limit", compressed.Len())
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Length", fmt.Sprint(compressed.Len()))
+		_, _ = w.Write(compressed.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+
+	reader, err := gzip.NewReader(bytes.NewReader(compressed.Bytes()))
+	if err != nil {
+		t.Fatalf("gzip.NewReader() error=%v", err)
+	}
+	_, truncated, err := requestLimitedBody(reader, 64)
+	if err != nil || !truncated {
+		t.Fatalf("requestLimitedBody() err=%v truncated=%v, want overflow", err, truncated)
+	}
+}
+
+func TestHTTPRequestContextTruncatesNonOKBody(t *testing.T) {
+	body := &trackingReadCloser{
+		reader: strings.NewReader(strings.Repeat("x", maxKubeletErrorBodyBytes*2)),
+	}
+	client := &http.Client{Transport: kubeletRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusInternalServerError,
+			ContentLength: -1,
+			Header:        make(http.Header),
+			Body:          body,
+		}, nil
+	})}
+
+	_, err := httpRequestContext(t.Context(), client, "http://test.kubelet.invalid/pods")
+	if err == nil {
+		t.Fatal("httpRequestContext() error=nil, want non-OK response")
+	}
+	if count := strings.Count(err.Error(), "[truncated after 8192 bytes]"); count != 1 {
+		t.Fatalf("httpRequestContext() truncation markers=%d, want 1: %q", count, err)
+	}
+	if body.read != maxKubeletErrorBodyBytes+1 {
+		t.Fatalf("body bytes read=%d, want %d", body.read, maxKubeletErrorBodyBytes+1)
+	}
+	if len(err.Error()) > maxKubeletErrorBodyBytes+256 {
+		t.Fatalf("error length=%d, want bounded diagnostic", len(err.Error()))
+	}
+}
+
+func TestKubeletDecodersBoundMalformedBodyDiagnostics(t *testing.T) {
+	malformed := "[" + strings.Repeat("x", maxKubeletErrorBodyBytes+1024)
+	client := &http.Client{Transport: kubeletRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: int64(len(malformed)),
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader(malformed)),
+		}, nil
+	})}
+
+	_, podErr := FetchPodList(t.Context(), client, "http://test.kubelet.invalid/pods")
+	if podErr == nil || !strings.Contains(podErr.Error(), "[truncated after 8192 bytes]") {
+		t.Fatalf("FetchPodList() error=%v, want bounded diagnostic", podErr)
+	}
+	_, configErr := FetchKubeletConfig(t.Context(), client, "http://test.kubelet.invalid/configz")
+	if configErr == nil || !strings.Contains(configErr.Error(), "[truncated after 8192 bytes]") {
+		t.Fatalf("FetchKubeletConfig() error=%v, want bounded diagnostic", configErr)
+	}
+	for name, err := range map[string]error{"pods": podErr, "configz": configErr} {
+		if len(err.Error()) > maxKubeletErrorBodyBytes+512 {
+			t.Errorf("%s error length=%d, want bounded diagnostic", name, len(err.Error()))
+		}
+	}
+}
+
+func TestHTTPRequestContextWarnsWhenResponseExceedsLimit(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stdout) })
+	previousWarning := kubeletOversizedResponseWarning
+	kubeletOversizedResponseWarning = &rate.Sometimes{
+		Interval: kubeletOversizedResponseWarningInterval,
+	}
+	t.Cleanup(func() { kubeletOversizedResponseWarning = previousWarning })
+	body := &trackingReadCloser{reader: strings.NewReader("unused")}
+	client := &http.Client{Transport: kubeletRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: maxKubeletResponseBodyBytes + 1,
+			Header:        make(http.Header),
+			Body:          body,
+		}, nil
+	})}
+	requestURL := "http://test.kubelet.invalid/pods"
+	for attempt := range 2 {
+		_, err := httpRequestContext(t.Context(), client, requestURL)
+		if err == nil {
+			t.Fatalf("httpRequestContext() attempt %d error=nil, want size rejection", attempt+1)
+		}
+	}
+	output := logs.String()
+	for _, want := range []string{
+		"level=\"warning\"",
+		"rejecting oversized kubelet response",
+		"url=\"" + requestURL + "\"",
+		"limit_bytes=\"134217728\"",
+		"declared_size_bytes=\"134217729\"",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("warning log=%q, want field %q", output, want)
+		}
+	}
+	if count := strings.Count(output, "rejecting oversized kubelet response"); count != 1 {
+		t.Errorf("warning count=%d, want 1; output=%q", count, output)
+	}
+}
+
+func TestKubeletResponseLimitCoversDenseNodeStressProfiles(t *testing.T) {
+	const podsPerNode = 400
+	tests := []struct {
+		name string
+		pod  corev1.Pod
+	}{
+		{
+			name: "annotation-heavy workload",
+			pod: denseNodeProofPod(
+				4,
+				1,
+				12,
+				8,
+				12,
+				1024,
+				256<<10,
+			),
+		},
+		{
+			name: "spec-and-status-heavy workload",
+			pod: denseNodeProofPod(
+				16,
+				4,
+				32,
+				32,
+				32,
+				4096,
+				16<<10,
+			),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			responseBytes := repeatedPodListJSONSize(t, &test.pod, podsPerNode)
+			t.Logf(
+				"400-pod response=%d bytes, headroom=%d bytes",
+				responseBytes,
+				maxKubeletResponseBodyBytes-responseBytes,
+			)
+			if responseBytes > maxKubeletResponseBodyBytes {
+				t.Errorf(
+					"400-pod response=%d bytes, limit=%d bytes",
+					responseBytes,
+					maxKubeletResponseBodyBytes,
+				)
+			}
+		})
+	}
+}
+
+func denseNodeProofPod(
+	containers int,
+	initContainers int,
+	envPerContainer int,
+	volumes int,
+	labels int,
+	statusMessageBytes int,
+	annotationBytes int,
+) corev1.Pod {
+	annotationKey := "example.com/payload"
+	pod := corev1.Pod{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dense-node-pod-0000",
+			Namespace: "default",
+			UID:       "12345678-1234-1234-1234-123456789012",
+			Labels:    make(map[string]string, labels),
+			Annotations: map[string]string{
+				annotationKey: strings.Repeat(
+					"a",
+					annotationBytes-len(annotationKey),
+				),
+			},
+		},
+		Spec: corev1.PodSpec{
+			NodeName:       "dense-node",
+			Containers:     make([]corev1.Container, containers),
+			InitContainers: make([]corev1.Container, initContainers),
+			Volumes:        make([]corev1.Volume, volumes),
+		},
+		Status: corev1.PodStatus{
+			Phase:             corev1.PodRunning,
+			PodIP:             "10.0.0.1",
+			ContainerStatuses: make([]corev1.ContainerStatus, containers),
+		},
+	}
+	for index := 0; index < labels; index++ {
+		pod.Labels[fmt.Sprintf("example.com/label-%02d", index)] = strings.Repeat("l", 48)
+	}
+
+	for container := range pod.Spec.Containers {
+		env := make([]corev1.EnvVar, envPerContainer)
+		mounts := make([]corev1.VolumeMount, volumes)
+		for index := range env {
+			env[index] = corev1.EnvVar{
+				Name:  fmt.Sprintf("CONFIG_%03d", index),
+				Value: strings.Repeat("v", 128),
+			}
+		}
+		for index := range mounts {
+			mounts[index] = corev1.VolumeMount{
+				Name:      fmt.Sprintf("volume-%02d", index),
+				MountPath: fmt.Sprintf("/var/lib/app/%02d", index),
+			}
+		}
+
+		name := fmt.Sprintf("container-%02d", container)
+		pod.Spec.Containers[container] = corev1.Container{
+			Name: name,
+			Image: "registry.example.com/team/application@sha256:" +
+				strings.Repeat("a", 64),
+			Command:      []string{"/bin/application", "--config=/etc/application/config.yaml"},
+			Args:         []string{"--log-format=json", "--metrics=:9090"},
+			Env:          env,
+			VolumeMounts: mounts,
+		}
+		pod.Status.ContainerStatuses[container] = corev1.ContainerStatus{
+			Name:         name,
+			Ready:        true,
+			RestartCount: 3,
+			Image:        pod.Spec.Containers[container].Image,
+			ImageID:      "containerd://sha256:" + strings.Repeat("b", 64),
+			ContainerID:  "containerd://" + strings.Repeat("c", 64),
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{},
+			},
+			LastTerminationState: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 1,
+					Reason:   "Error",
+					Message:  strings.Repeat("m", statusMessageBytes),
+				},
+			},
+		}
+	}
+	for index := range pod.Spec.InitContainers {
+		pod.Spec.InitContainers[index] = pod.Spec.Containers[index%containers]
+	}
+	for index := range pod.Spec.Volumes {
+		pod.Spec.Volumes[index] = corev1.Volume{
+			Name: fmt.Sprintf("volume-%02d", index),
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		}
+	}
+
+	return pod
+}
+
+func repeatedPodListJSONSize(t *testing.T, pod *corev1.Pod, count int) int64 {
+	t.Helper()
+	podJSON, err := json.Marshal(pod)
+	if err != nil {
+		t.Fatalf("json.Marshal(pod) error=%v", err)
+	}
+	onePodListJSON, err := json.Marshal(corev1.PodList{Items: []corev1.Pod{*pod}})
+	if err != nil {
+		t.Fatalf("json.Marshal(pod list) error=%v", err)
+	}
+
+	return int64(len(onePodListJSON) + (count-1)*(len(podJSON)+1))
+}
+
+func (t bodyReadErrorTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(io.MultiReader(
+			strings.NewReader(`{"partial":`),
+			iotest.ErrReader(t.readErr),
+		)),
+	}, nil
+}
+
+func TestKubeletConnectionSelection(t *testing.T) {
+	readOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	t.Cleanup(readOnly.Close)
+	client, err := NewKubelet(KubeletOptions{ReadOnlyPort: uint32(readOnly.Listener.Addr().(*net.TCPAddr).Port)})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if _, err := client.Pods(t.Context()); err == nil {
+		t.Error("uninitialized client allowed discovery")
+	}
+	if err := client.Initialize(t.Context()); err != nil {
+		t.Error(err)
+		return
+	}
+	if _, err := client.Pods(t.Context()); err != nil {
+		t.Errorf("read-only discovery: %v", err)
+	}
+	if client.podURL != readOnly.URL+"/pods" {
+		t.Errorf("selected endpoint=%q", client.podURL)
+	}
+	for _, options := range []KubeletOptions{{}, {AuthorizedPort: 10250}} {
+		if _, err := NewKubelet(options); err == nil {
+			t.Errorf("invalid options accepted: %+v", options)
+		}
+	}
+}
+
+func TestKubeletCertificateFallback(t *testing.T) {
+	readOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(readOnly.Close)
+	authorized := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if len(request.TLS.PeerCertificates) == 0 {
+			t.Error("kubelet request has no client certificate")
+		}
+		if request.URL.Path == "/configz" {
+			_, _ = io.WriteString(w, `{"kubeletconfig":{"cgroupDriver":"systemd","containerRuntimeEndpoint":"unix:///run/containerd/custom.sock"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	authorized.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.RequireAnyClientCert}
+	authorized.StartTLS()
+	t.Cleanup(authorized.Close)
+	cert := authorized.TLS.Certificates[0]
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})
+	for _, combined := range []bool{false, true} {
+		t.Run(fmt.Sprintf("combined=%t", combined), func(t *testing.T) {
+			certPath, keyPath := filepath.Join(t.TempDir(), "cert.pem"), filepath.Join(t.TempDir(), "key.pem")
+			content := certPEM
+			if combined {
+				content = append(append([]byte{}, certPEM...), keyPEM...)
+			}
+			if err := os.WriteFile(certPath, content, 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+				t.Error(err)
+				return
+			}
+			certOption := certPath
+			if !combined {
+				certOption = " " + certPath + " , " + keyPath + " "
+			}
+			client, err := NewKubelet(KubeletOptions{
+				ReadOnlyPort:   uint32(readOnly.Listener.Addr().(*net.TCPAddr).Port),
+				AuthorizedPort: uint32(authorized.Listener.Addr().(*net.TCPAddr).Port), ClientCertPath: certOption,
+			})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := client.Initialize(t.Context()); err != nil {
+				t.Error(err)
+				return
+			}
+			t.Cleanup(client.client.CloseIdleConnections)
+			if _, err := client.Pods(t.Context()); err != nil {
+				t.Error(err)
+			}
+			config, err := client.MustConfiguration(t.Context())
+			if err != nil || config.CgroupDriver != "systemd" || config.ContainerRuntimeEndpoint != "unix:///run/containerd/custom.sock" {
+				t.Errorf("configz=%+v err=%v", config, err)
+			}
+		})
+	}
+}
+
+func TestKubeletConnectionCancellation(t *testing.T) {
+	client, err := NewKubelet(KubeletOptions{ReadOnlyPort: 10255, ClientCertPath: "/missing/certificate"})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := client.Initialize(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("canceled initialization tried certificate fallback: %v", err)
+	}
+	if client.client != nil || client.podURL != "" {
+		t.Error("failed initialization published a connection")
+	}
+	if _, err := client.MustConfiguration(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("config cancellation=%v", err)
+	}
+}
+
+func useContainerdForTest(t *testing.T) {
+	t.Helper()
+	initMu.Lock()
+	previous := currContainerProvider
+	currContainerProvider = containerProviderContainerd
+	initMu.Unlock()
+	t.Cleanup(func() { initMu.Lock(); currContainerProvider = previous; initMu.Unlock() })
+}
+
+func runningPodListForTest(ids ...string) corev1.PodList {
+	p := corev1.Pod{}
+	for _, id := range ids {
+		p.Spec.Containers = append(p.Spec.Containers, corev1.Container{Name: id})
+		p.Status.ContainerStatuses = append(p.Status.ContainerStatuses, corev1.ContainerStatus{
+			Name: id, ContainerID: "containerd://" + id,
+			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		})
+	}
+	return corev1.PodList{Items: []corev1.Pod{p}}
+}
+
+func containerSourceForTest(items []corev1.Pod) *containerSource {
+	return &containerSource{
+		fetch: func(context.Context) (corev1.PodList, error) { return corev1.PodList{Items: items}, nil },
+		resolve: func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*podmodel.Pod, error) {
+			return containerPodForTest(id), nil
+		},
+	}
+}
+
+func TestContainerSourceScope(t *testing.T) {
+	useContainerdForTest(t)
+	first, waiting, sidecar, initID := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)
+	list := runningPodListForTest(first, waiting)
+	list.Items[0].Status.ContainerStatuses[1].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}
+	always := corev1.ContainerRestartPolicyAlways
+	list.Items[0].Spec.InitContainers = []corev1.Container{{Name: sidecar, RestartPolicy: &always}, {Name: initID}}
+	list.Items[0].Status.InitContainerStatuses = runningPodListForTest(sidecar, initID).Items[0].Status.ContainerStatuses
+	list.Items[0].Status.EphemeralContainerStatuses = runningPodListForTest(strings.Repeat("e", 64)).Items[0].Status.ContainerStatuses
+	source := containerSourceForTest(list.Items)
+	counts := make(map[string]int)
+	source.resolve = func(_ context.Context, id string, _ *corev1.Container, _ *corev1.ContainerStatus, _ *corev1.Pod) (*podmodel.Pod, error) {
+		counts[id]++
+		return containerPodForTest(id), nil
+	}
+	for range 2 {
+		discovery, err := source.Discover(t.Context())
+		if err != nil || !discovery.Complete || len(discovery.Pods) != 2 || discovery.Pods[first] == nil || discovery.Pods[sidecar] == nil {
+			t.Errorf("running scope=%+v, err=%v", discovery, err)
+		}
+	}
+	if counts[first] != 2 || counts[sidecar] != 2 {
+		t.Errorf("source did not refresh every member: %v", counts)
+	}
+}
+
+func TestContainerSourceCancellation(t *testing.T) {
+	useContainerdForTest(t)
+	for _, phase := range []string{"fetch", "resolve"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			list := runningPodListForTest(strings.Repeat("a", 64))
+			source := containerSourceForTest(list.Items)
+			if phase == "fetch" {
+				source.fetch = func(context.Context) (corev1.PodList, error) { cancel(); return corev1.PodList{}, nil }
+			} else {
+				source.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*podmodel.Pod, error) {
+					cancel()
+					return nil, nil
+				}
+			}
+			discovery, err := source.Discover(ctx)
+			if !errors.Is(err, context.Canceled) || discovery.Complete || len(discovery.Pods) != 0 {
+				t.Errorf("canceled discovery=%+v err=%v", discovery, err)
+			}
+		})
+	}
+}
+
+// TestKubeletInitializationCancellation 验证 configz 请求继承取消信号，
+// 取消后不尝试本地配置兜底，不会将正常停止误判为配置缺失并 panic。
+func TestKubeletInitializationCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := kubeletConfigCacheMustUpdate(ctx, &Kubelet{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("config initialization cancellation=%v", err)
+	}
+}
+
+func TestNewSource(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		config            *Options
+		wantErr, disabled bool
+	}{
+		{name: "missing config", wantErr: true},
+		{name: "disabled", config: &Options{}, disabled: true},
+		{name: "authorized without certificate", config: &Options{PodAuthorizedPort: 10250}, wantErr: true},
+		{name: "readonly", config: &Options{PodReadOnlyPort: 10255, DockerAPIVersion: "1.43"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			previousVersion := dockerAPIVersion
+			source, err := NewSource(test.config)
+			if (err != nil) != test.wantErr {
+				t.Errorf("constructor error=%v, want error=%t", err, test.wantErr)
+			}
+			if test.disabled && source != nil {
+				t.Error("zero kubelet ports created an enabled source")
+			}
+			if !test.wantErr && !test.disabled && (source == nil || source.Type() != podmodel.TypeContainer) {
+				t.Error("configured container source was not created")
+			}
+			if dockerAPIVersion != previousVersion {
+				t.Error("constructing a source started discovery or changed runtime settings")
+			}
+		})
+	}
+}
+
+func containerPodForTest(id string) *podmodel.Pod {
+	return &podmodel.Pod{
+		ID: id, Type: podmodel.TypeContainer, Name: id,
+		Cgroups:   podmodel.CgroupBinding{Unified: "/" + id},
+		Container: &podmodel.ContainerInfo{Type: podmodel.ContainerTypeNormal},
+		Labels:    map[string]any{podmodel.LabelHostNamespace: "default"},
+	}
+}
+
+type sourceFixture struct {
+	discover func(context.Context) (podmodel.Discovery, error)
+}
+
+func (*sourceFixture) Type() string { return podmodel.TypeContainer }
+func (s *sourceFixture) Discover(ctx context.Context) (podmodel.Discovery, error) {
+	return s.discover(ctx)
+}
+
+func startSourceForTest(t testing.TB, source podmodel.Source) {
+	t.Helper()
+	if err := podmodel.StartManager(source, podmodel.ManagerOptions{SyncInterval: time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(podmodel.ReleaseManager)
+}
+
+func waitContainerForTest(t testing.TB, id string) *podmodel.Container {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		container, err := podmodel.ContainerByID(id)
+		if err == nil && container != nil {
+			return container
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("container %q was not published", id)
+	return nil
+}
+
+func TestContainerSourceMetadataRecovery(t *testing.T) {
+	useContainerdForTest(t)
+	id := strings.Repeat("a", 64)
+	source := containerSourceForTest(runningPodListForTest(id).Items)
+	resolve := source.resolve
+	source.resolve = func(context.Context, string, *corev1.Container, *corev1.ContainerStatus, *corev1.Pod) (*podmodel.Pod, error) {
+		return nil, errors.New("runtime unavailable")
+	}
+	for range 5 {
+		result, err := source.Discover(t.Context())
+		member, exists := result.Pods[id]
+		if err == nil || !result.Complete || !exists || member != nil {
+			t.Errorf("pending member=%+v error=%v", result, err)
+		}
+	}
+	source.resolve = resolve
+	result, err := source.Discover(t.Context())
+	if err != nil || result.Pods[id] == nil {
+		t.Errorf("source did not recover: %+v, %v", result, err)
+	}
+}
+
+func TestContainerSourceIncompleteList(t *testing.T) {
+	useContainerdForTest(t)
+	id, fresh := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	for _, reason := range []string{"duplicate", "cross pod duplicate", "missing spec", "invalid ID", "query failure"} {
+		t.Run(reason, func(t *testing.T) {
+			list := runningPodListForTest(id, fresh)
+			switch reason {
+			case "duplicate":
+				list = runningPodListForTest(id, id, fresh)
+			case "cross pod duplicate":
+				list.Items = append(list.Items, runningPodListForTest(id).Items...)
+			case "missing spec":
+				list.Items[0].Spec.Containers = list.Items[0].Spec.Containers[1:]
+			case "invalid ID":
+				list.Items[0].Status.ContainerStatuses[0].ContainerID = "containerd://invalid"
+			}
+			source := containerSourceForTest(list.Items)
+			if reason == "query failure" {
+				source.fetch = func(context.Context) (corev1.PodList, error) {
+					return corev1.PodList{}, errors.New("kubelet unavailable")
+				}
+			}
+			result, err := source.Discover(t.Context())
+			if err == nil || result.Complete || result.Pods[id] != nil {
+				t.Errorf("incomplete result=%+v err=%v", result, err)
+			}
+			if reason != "query failure" && result.Pods[fresh] == nil {
+				t.Error("valid member was lost")
+			}
+		})
+	}
+}
+
+func BenchmarkContainerSourceDiscovery(b *testing.B) {
+	previous := currContainerProvider
+	currContainerProvider = containerProviderContainerd
+	b.Cleanup(func() { currContainerProvider = previous })
+	for _, size := range []int{1, 1024} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			ids := make([]string, size)
+			for i := range ids {
+				ids[i] = fmt.Sprintf("%064x", i)
+			}
+			source := containerSourceForTest(runningPodListForTest(ids...).Items)
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := source.Discover(b.Context()); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

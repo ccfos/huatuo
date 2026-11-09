@@ -24,43 +24,47 @@ import (
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
+	"github.com/ccfos/huatuo/internal/runmode"
 	"github.com/ccfos/huatuo/internal/version"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
-	cliFlagConfig         = "config"
-	cliFlagConfigDir      = "config-dir"
-	cliFlagBPFObjDir      = "bpf-dir"
-	cliFlagToolBinDir     = "tools-bin-dir"
-	cliFlagRegion         = "region"
-	cliFlagEnableCgroup   = "enable-cgroup"
-	cliFlagDisableKubelet = "disable-kubelet"
-	cliFlagDisableStorage = "disable-storage"
-	cliFlagDisableTracing = "disable-tracing"
-	cliFlagLogDebug       = "log-debug"
-	cliFlagDryRun         = "dry-run"
-	cliFlagProcfsPrefix   = "procfs-prefix"
+	cliFlagConfig                   = "config"
+	cliFlagConfigDir                = "config-dir"
+	cliFlagBPFObjDir                = "bpf-dir"
+	cliFlagToolBinDir               = "tools-bin-dir"
+	cliFlagRegion                   = "region"
+	cliFlagEnableCgroup             = "enable-cgroup"
+	cliFlagDisableWorkloadDiscovery = "disable-workload-discovery"
+	cliFlagDisableKubelet           = "disable-kubelet"
+	cliFlagDisableStorage           = "disable-storage"
+	cliFlagDisableTracing           = "disable-tracing"
+	cliFlagLogDebug                 = "log-debug"
+	cliFlagDryRun                   = "dry-run"
+	cliFlagProcfsPrefix             = "procfs-prefix"
 )
 
 // Options holds all CLI-derived configuration. Populated by FromContext
 // during app.Before so downstream code reads only from Options and stays
 // decoupled from the urfave/cli framework.
 type Options struct {
-	ConfigFile     string
-	ConfigDir      string
-	BPFObjDir      string
-	ToolBinDir     string
-	Region         string
-	EnableCgroup   bool
-	DisableKubelet bool
-	DisableStorage bool
-	DisableTracing []string
-	LogDebug       bool
-	DryRun         bool
-	ProcfsPrefix   string
-	VersionInfo    version.Info
+	Mode                     runmode.Mode
+	GuestIdentity            runmode.GuestIdentity
+	ConfigFile               string
+	ConfigDir                string
+	BPFObjDir                string
+	ToolBinDir               string
+	Region                   string
+	EnableCgroup             bool
+	DisableWorkloadDiscovery bool
+	DisableStorage           bool
+	DisableTracing           []string
+	LogDebug                 bool
+	DryRun                   bool
+	ProcfsPrefix             string
+	VersionInfo              version.Info
 }
 
 func buildCommand(seed version.Seed) *cli.App {
@@ -117,9 +121,9 @@ func (o *Options) AddFlags(app *cli.App) {
 			Usage:    "the host and containers are in this region",
 		},
 		&cli.BoolFlag{
-			Name:  cliFlagDisableKubelet,
-			Value: false,
-			Usage: "disable kubelet(testing only). Not recommended for production use.",
+			Name:    cliFlagDisableWorkloadDiscovery,
+			Aliases: []string{cliFlagDisableKubelet},
+			Usage:   "disable workload discovery, including Guest local scanning; --disable-kubelet is deprecated",
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagDisableStorage,
@@ -153,7 +157,7 @@ func (o *Options) AddFlags(app *cli.App) {
 func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(cliFlagConfig)
 	o.Region = ctx.String(cliFlagRegion)
-	o.DisableKubelet = ctx.Bool(cliFlagDisableKubelet)
+	o.DisableWorkloadDiscovery = ctx.Bool(cliFlagDisableWorkloadDiscovery)
 	o.DisableStorage = ctx.Bool(cliFlagDisableStorage)
 	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)
 	o.DisableTracing = ctx.StringSlice(cliFlagDisableTracing)
@@ -208,6 +212,10 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	if config.Get().GuestBridge.Enabled && opts.DisableWorkloadDiscovery {
+		return fmt.Errorf("GuestBridge requires workload discovery: remove --disable-workload-discovery or --disable-kubelet")
+	}
+
 	nodeAPIAddress, err := localAPIAddress(config.Get().HTTPServer.ListenAddress)
 	if err != nil {
 		return err
@@ -215,6 +223,14 @@ func configureRuntime(opts *Options) error {
 
 	internalconfig.CoreAPIAddress = nodeAPIAddress
 
+	opts.Mode = config.Get().Mode
+	if opts.Mode == runmode.Sandbox {
+		identity, err := runmode.LoadGuestIdentity()
+		if err != nil {
+			return err
+		}
+		opts.GuestIdentity = identity
+	}
 	// Log level: CLI --log-debug overrides config file; config file overrides
 	// the built-in default (Info).
 	switch {
