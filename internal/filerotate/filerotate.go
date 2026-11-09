@@ -15,10 +15,15 @@
 package filerotate
 
 import (
+	"errors"
+	"fmt"
 	"io"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+// ErrInvalidRotationSize indicates a rotation size that is not positive.
+var ErrInvalidRotationSize = errors.New("invalid rotation size")
 
 type fileRotator struct {
 	// Filename is the file to write logs to.  Backup log files will be retained
@@ -65,7 +70,14 @@ type fileRotator struct {
 var _ io.WriteCloser = (*fileRotator)(nil)
 
 // NewFileRotator create a rotatable logger
-func NewFileRotator(path string, maxRotation, rotationSize int) io.WriteCloser {
+func NewFileRotator(path string, maxRotation, rotationSize int) (io.WriteCloser, error) {
+	if rotationSize <= 0 {
+		return nil, fmt.Errorf(
+			"%w: rotation size must be greater than zero, got %d",
+			ErrInvalidRotationSize,
+			rotationSize,
+		)
+	}
 	return &fileRotator{
 		&lumberjack.Logger{
 			Filename:   path,
@@ -74,7 +86,7 @@ func NewFileRotator(path string, maxRotation, rotationSize int) io.WriteCloser {
 			LocalTime:  true,
 			Compress:   false,
 		},
-	}
+	}, nil
 }
 
 func (r *fileRotator) Write(data []byte) (n int, err error) {
