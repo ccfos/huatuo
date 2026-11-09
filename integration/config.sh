@@ -421,7 +421,7 @@ write_config_bamai_continuous_profiling() {
 	write_config_blacklist \
 		"metax_gpu" "ascend_npu" "softlockup" "ethtool" "netstat_hw" \
 		"iolatency" "memory_free" "memory_reclaim" "reschedipi" "softirq" \
-		"iotracing" "dropwatch" "memory_threshold_snapshot" "sched-blame"
+		"iotracing" "dropwatch" "memory_threshold_snapshot" "sched-blame" "iocost"
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
