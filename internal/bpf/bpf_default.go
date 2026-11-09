@@ -663,8 +663,3 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 
 	return items, nil
 }
-
-// DetachOnContextDone is a hook for context-driven detach handling.
-func (b *defaultBPF) DetachOnContextDone(ctx context.Context, cancel context.CancelFunc) {
-	// TODO: implement
-}

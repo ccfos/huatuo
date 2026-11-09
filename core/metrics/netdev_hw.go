@@ -214,7 +214,7 @@ func (netdev *netdevHw) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.DetachOnContextDone(childCtx, cancel)
+	// Update triggers BPF through sysfs; keep probes attached until leases end.
 
 	<-childCtx.Done()
 	return nil

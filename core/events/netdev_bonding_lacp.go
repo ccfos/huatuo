@@ -55,7 +55,7 @@ func newLACPTracing() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
+func (lacp *lacpTracing) Start(ctx context.Context) (retErr error) {
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
@@ -71,7 +71,10 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	for {
 		select {

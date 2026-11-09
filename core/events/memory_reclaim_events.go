@@ -57,7 +57,7 @@ const cssCacheTTL = 5 * time.Second
 // Start detect work, load bpf and wait data form perfevent
 //
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
-func (c *memoryReclaimTracing) Start(ctx context.Context) error {
+func (c *memoryReclaimTracing) Start(ctx context.Context) (retErr error) {
 	cfg := configSnapshot()
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{
 		"reclaim_duration_threshold_ns": cfg.MemoryReclaim.BlockedThreshold,
@@ -76,7 +76,10 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	var (
 		cssToContainer map[uint64]*pod.Container

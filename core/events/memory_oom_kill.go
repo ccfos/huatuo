@@ -108,7 +108,7 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func (c *oomCollector) Start(ctx context.Context) error {
+func (c *oomCollector) Start(ctx context.Context) (retErr error) {
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
@@ -124,7 +124,10 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	for {
 		select {
