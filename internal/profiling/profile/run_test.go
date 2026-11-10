@@ -157,6 +157,7 @@ func TestRunPropagatesFailures(t *testing.T) {
 type runOutput struct {
 	commits atomic.Int64
 	records atomic.Int64
+	windows atomic.Int64
 }
 
 // Observe completion through the public output boundary, including empty runs.
@@ -188,6 +189,7 @@ func newRunOutput(t *testing.T) (RunConfig, *runOutput) {
 			received.commits.Add(1)
 		}
 		if request.Data != nil {
+			received.windows.Add(1)
 			for _, sample := range request.Data.Aggregated.Samples {
 				received.records.Add(sample.Value)
 			}
@@ -206,6 +208,47 @@ func newRunOutput(t *testing.T) (RunConfig, *runOutput) {
 		OutputFormat:      output.FormatRemoteStore,
 		OutputDestination: path,
 	}, received
+}
+
+func TestRunPublishesEmptyRetainedCaptureOnlyOnSuccess(t *testing.T) {
+	incomplete := errors.New("incomplete Memray capture before trailer")
+	for _, test := range []struct {
+		name   string
+		values []int64
+		err    error
+	}{
+		{name: "no allocations"},
+		{name: "all allocations freed", values: []int64{4096, -4096}},
+		{name: "missing trailer", err: incomplete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, received := newRunOutput(t)
+			collector := &loopProfiler{read: func(_ context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+				for _, value := range test.values {
+					if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: value}}}); err != nil {
+						return err
+					}
+				}
+				return test.err
+			}}
+			err := Run(t.Context(), cfg, &ProfilerMeta{
+				Impl:              collector,
+				AggregationMode:   pipeline.AggregationModeOneShot,
+				AggregationConfig: pipeline.AggregationConfig{ProfileType: profiling.ProfileTypeInUseSpace},
+			})
+			if !errors.Is(err, test.err) {
+				t.Fatalf("Run() = %v, want %v", err, test.err)
+			}
+			want := int64(1)
+			if test.err != nil {
+				want = 0
+			}
+			if received.windows.Load() != want || received.commits.Load() != want || received.records.Load() != 0 {
+				t.Fatalf("windows=%d, commits=%d, bytes=%d; want %d windows/commits and zero bytes",
+					received.windows.Load(), received.commits.Load(), received.records.Load(), want)
+			}
+		})
+	}
 }
 
 func TestRunPropagatesOutputFailure(t *testing.T) {
@@ -556,14 +599,32 @@ func TestRunNormalStopPreservesCollectorErrors(t *testing.T) {
 		{name: "complete"}, {
 			name:      "failed",
 			readError: errors.Join(context.Canceled, failure),
+		}, {
+			name:      "truncated record",
+			readError: fmt.Errorf("decode memray stream: %w", io.ErrUnexpectedEOF),
+		}, {
+			name:      "decoder EOF is not completion",
+			readError: fmt.Errorf("decode memray stream: %w", io.EOF),
+		}, {
+			name:      "watchdog closed socket before trailer",
+			readError: fmt.Errorf("incomplete Memray capture before trailer: %w", net.ErrClosed),
+		}, {
+			name:      "watchdog closed pipe before trailer",
+			readError: fmt.Errorf("incomplete Memray capture before trailer: %w", io.ErrClosedPipe),
+		}, {
+			name:      "startup canceled before capture",
+			readError: fmt.Errorf("collect Memray session: %w", context.Canceled),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, received := newRunOutput(t)
 			collector := &loopProfiler{read: func(
 				ctx context.Context,
-				_ func(*pipeline.SampleBatch) error,
+				enqueue func(*pipeline.SampleBatch) error,
 			) error {
+				if err := enqueue(&pipeline.SampleBatch{Samples: []aggregation.Sample{{Value: 64}}}); err != nil {
+					return err
+				}
 				<-ctx.Done()
 				if !IsNormalStop(ctx) {
 					return context.Cause(ctx)
@@ -585,7 +646,7 @@ func TestRunNormalStopPreservesCollectorErrors(t *testing.T) {
 				if err != nil || received.commits.Load() != 1 {
 					t.Fatalf("error=%v completions=%d", err, received.commits.Load())
 				}
-			} else if !errors.Is(err, failure) || !errors.Is(err, context.Canceled) || received.commits.Load() != 0 {
+			} else if !errors.Is(err, tc.readError) || received.commits.Load() != 0 {
 				t.Fatalf("error=%v completions=%d", err, received.commits.Load())
 			}
 		})

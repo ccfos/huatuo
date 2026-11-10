@@ -131,6 +131,9 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 		return nil
 
 	case profiling.LanguageJava, profiling.LanguagePython:
+		if lang == profiling.LanguagePython && typ == profiling.TypeMemory && ctx.String("tool-path") == "" {
+			return validateExactlyOneTarget(ctx)
+		}
 		toolDir := ctx.String("tool-path")
 		if toolDir == "" {
 			return fmt.Errorf("language=%s requires --tool-path", lang)
@@ -154,6 +157,9 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 
 func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, duration, interval int) error {
 	if lang != profiling.LanguagePython {
+		return nil
+	}
+	if typ == profiling.TypeMemory {
 		return nil
 	}
 	if typ != profiling.TypeCPU {
@@ -258,6 +264,17 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	native := implementation == profiling.ImplementationNative
 	nativeCPU := native && typ == profiling.TypeCPU
 	nativeMemory := native && typ == profiling.TypeMemory
+	pythonMemory := lang == profiling.LanguagePython && typ == profiling.TypeMemory
+	if !pythonMemory && (ctx.IsSet("python-memory-stack") || ctx.IsSet("python-memory-merge-threads")) {
+		return fmt.Errorf("--python-memory-stack and --python-memory-merge-threads require Python memory profiling")
+	}
+	if pythonMemory {
+		switch ctx.String("python-memory-stack") {
+		case "", "python", "native", "hybrid":
+		default:
+			return fmt.Errorf("--python-memory-stack must be python, native, or hybrid")
+		}
+	}
 	cpuMode := profiling.Mode(ctx.String("cpu-mode"))
 	if cpuMode != profiling.ModeOnCPU && cpuMode != profiling.ModeOffCPU {
 		return fmt.Errorf("unsupported CPU mode %q", cpuMode)
@@ -337,6 +354,9 @@ func validateMemoryMode(lang profiling.Language, typ profiling.Type, value strin
 		return nil
 	}
 	if value == "" {
+		if lang == profiling.LanguagePython {
+			return nil
+		}
 		return fmt.Errorf("--memory-mode is required when --type=memory")
 	}
 	mode := profiling.Mode(value)

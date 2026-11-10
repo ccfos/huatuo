@@ -30,6 +30,8 @@ import (
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/factory"
+	"github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -259,6 +261,60 @@ func TestPipelineOneShotDrainsBatchAndWritesOneWindow(t *testing.T) {
 
 	if got.Profile.Sample[0].Value[0] != 9 {
 		t.Fatal(got.Profile)
+	}
+}
+
+func TestPipelineRetainedMemoryTypeAndClamping(t *testing.T) {
+	for _, test := range []struct {
+		profileType string
+		sampleType  string
+	}{
+		{profiling.ProfileTypeInUseSpace, "inuse_space"},
+		{profiling.ProfileTypeMemSample, "alloc_space"},
+	} {
+		t.Run(test.sampleType, func(t *testing.T) {
+			f := &captureOutput{}
+			cfg := pipelineConfig(f)
+			cfg.ProfileType = test.profileType
+			p := NewPipeline(cfg)
+			for _, delta := range []struct {
+				name  string
+				bytes int64
+			}{
+				{"retained", 10}, {"gone", 5}, {"retained", -4}, {"gone", -5}, {"orphan", -3},
+			} {
+				if err := p.Enqueue(t.Context(), &SampleBatch{Samples: []aggregation.Sample{{
+					UserFrames: []types.ProfileFrame{{Name: delta.name}}, Value: delta.bytes,
+				}}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p.Close()
+			if err := p.Run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.windows) != 1 || f.windows[0].ProfileType != test.profileType {
+				t.Fatalf("retained output windows = %v", f.windows)
+			}
+			var retainedBytes int64
+			for _, sample := range f.windows[0].Aggregated.Samples {
+				if sample.Value < 0 {
+					t.Fatal("negative retained bytes reached the formatter")
+				}
+				retainedBytes += sample.Value
+			}
+			if retainedBytes != 6 {
+				t.Fatalf("retained bytes = %d, want 6", retainedBytes)
+			}
+			profile, err := window.BuildProfile(t.Context(), f.windows[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(profile.SampleType) != 1 || profile.StringTable[profile.SampleType[0].Type] != test.sampleType ||
+				profile.StringTable[profile.SampleType[0].Unit] != "bytes" {
+				t.Fatalf("retained pprof sample type = %v, strings = %v", profile.SampleType, profile.StringTable)
+			}
+		})
 	}
 }
 
@@ -610,20 +666,84 @@ func TestPipelineSnapshotRetainsPhysicalUsage(t *testing.T) {
 }
 
 func TestPipelineSnapshotEmitsInitialZeroAndRejectsLoss(t *testing.T) {
-	f := &captureOutput{name: output.FormatRemoteStore}
-	cfg := pipelineConfig(f)
-	cfg.ProfileType = "memory:physical_usage:bytes:space:bytes"
-	p := NewPipeline(cfg)
-	if err := p.snapshot(t.Context(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	for _, profileType := range []string{profiling.ProfileTypePhysicalUsage, profiling.ProfileTypeInUseSpace} {
+		t.Run(profileType, func(t *testing.T) {
+			f := &captureOutput{name: output.FormatRemoteStore}
+			cfg := pipelineConfig(f)
+			cfg.ProfileType = profileType
+			p := NewPipeline(cfg)
+			end := time.Unix(100, 0)
+			if err := p.snapshot(t.Context(), end); err != nil {
+				t.Fatal(err)
+			}
 
-	if len(f.windows) != 1 || len(f.windows[0].Aggregated.Samples) != 0 {
-		t.Fatal("initial zero state missing")
-	}
+			if len(f.windows) != 1 || len(f.windows[0].Aggregated.Samples) != 0 {
+				t.Fatal("initial zero state missing")
+			}
+			if f.windows[0].Aggregated.TimeNanos != end.UnixNano() || f.windows[0].Aggregated.DurationNanos != 0 {
+				t.Fatal("zero snapshot is not timestamped at observation")
+			}
 
-	p.droppedSamples = map[string]uint64{types.DropReasonCollection: 1}
-	if err := p.snapshot(t.Context(), time.Now()); err == nil || len(f.windows) != 1 {
-		t.Fatal("collection loss published a live result")
+			p.droppedSamples = map[string]uint64{types.DropReasonCollection: 1}
+			if err := p.snapshot(t.Context(), end); err == nil || len(f.windows) != 1 {
+				t.Fatal("collection loss published a live result")
+			}
+		})
+	}
+}
+
+func TestPipelineInUseFinalSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		values []int64
+		cancel bool
+	}{
+		{name: "idle"},
+		{name: "all allocations freed", values: []int64{4096, -4096}},
+		{name: "canceled empty capture", cancel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := &captureOutput{name: output.FormatRemoteStore}
+			cfg := pipelineConfig(f)
+			cfg.ProfileType = profiling.ProfileTypeInUseSpace
+			p := NewPipeline(cfg)
+			for _, value := range test.values {
+				if err := p.Enqueue(t.Context(), testBatch(value)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if test.cancel {
+				cancel()
+			}
+			start := time.Now()
+			err := p.Run(ctx)
+			if test.cancel {
+				if !errors.Is(err, context.Canceled) || len(f.windows) != 0 {
+					t.Fatalf("canceled capture: windows=%d, error=%v", len(f.windows), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(f.windows) != 1 {
+				t.Fatalf("final snapshots=%d, want one", len(f.windows))
+			}
+			result := f.windows[0]
+			if err := window.Validate(result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Aggregated.TimeNanos < start.UnixNano() || result.Aggregated.TimeNanos > time.Now().UnixNano() || result.Aggregated.DurationNanos != 0 {
+				t.Fatal("final snapshot is not timestamped at completion")
+			}
+			for _, sample := range result.Aggregated.Samples {
+				if sample.Value != 0 {
+					t.Fatalf("retained bytes=%d, want zero", sample.Value)
+				}
+			}
+		})
 	}
 }

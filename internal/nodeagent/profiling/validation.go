@@ -18,8 +18,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	pythonruntime "github.com/ccfos/huatuo/internal/profiler/runtime/python"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
@@ -88,10 +91,35 @@ func validateEnvironment(request *StartRequest, config *Config) error {
 		}
 	}
 
+	if request.Spec.Language == profilingdomain.LanguagePython && request.Spec.Type == profilingdomain.TypeMemory {
+		if _, err := exec.LookPath("gdb"); err != nil {
+			return fmt.Errorf("%w: Python memory profiling requires gdb in PATH: %w", ErrEnvironmentUnsupported, err)
+		}
+		bundlePath, err := memrayBundlePath(config)
+		if err != nil {
+			return fmt.Errorf("%w: resolve Memray bundle: %w", ErrEnvironmentUnsupported, err)
+		}
+		if err := pythonruntime.ValidateMemrayBundle(bundlePath); err != nil {
+			return fmt.Errorf("%w: Memray bundle %q is unavailable: %w", ErrEnvironmentUnsupported, bundlePath, err)
+		}
+		return nil
+	}
 	if err := toolpath.Validate(request.Spec.Language, config.ToolDir); err != nil {
 		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
 	}
 	return nil
+}
+
+func memrayBundlePath(config *Config) (string, error) {
+	if config.ToolDir != "" {
+		return filepath.Abs(filepath.Join(config.ToolDir, "memray"))
+	}
+	// Match os.Executable in the profiler, including configured symlink paths.
+	executable, err := filepath.EvalSymlinks(config.ProfilerPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(filepath.Join(filepath.Dir(executable), "..", "tools", "memray"))
 }
 
 func validateExecutable(path string) error {

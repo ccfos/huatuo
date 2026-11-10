@@ -19,6 +19,17 @@
 
 - Think before coding.
 - Update existing unit tests only; do not create new unit test files. Add integration tests for components with external dependencies.
+- Exception approved for Memray PR #698: retain and extend these four files
+  for the new packages and provider-specific lifecycle checks:
+
+  - `cmd/profiler/provider/python_mem_profiler_test.go`
+  - `internal/profiler/memray/stream_decoder_test.go`
+  - `internal/profiler/runtime/python/memray_test.go`
+  - `internal/profiler/target/session_test.go`
+
+  This exception does not authorize additional unit-test files for Memray
+  or other features.
+
 - Update docs when changing storage schemas, config options, features, or APIs.
 - Surgical changes: touch what the task needs, match local style, don't refactor unrelated code.
 - Define verifiable success criteria for non-trivial work; iterate until checks pass or blockers are explicit.

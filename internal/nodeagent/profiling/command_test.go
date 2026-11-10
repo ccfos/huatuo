@@ -16,6 +16,7 @@ package profiling
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -140,5 +141,54 @@ func TestBuildCommandPassesSharedToolDir(t *testing.T) {
 				t.Fatalf("command args = %q, want shared root as one --tool-path argument", command.Args)
 			}
 		})
+	}
+}
+
+func TestBuildPythonMemoryCommandSelectsRuntimePath(t *testing.T) {
+	config := testProfilingConfig(t)
+	config.ToolDir = ""
+	request := testProfilingRequest()
+	request.Scope = observation.ScopeContainer
+	request.ContainerID = strings.Repeat("a", 64)
+	request.Spec = profilingdomain.Spec{
+		Type:     profilingdomain.TypeMemory,
+		Language: profilingdomain.LanguagePython,
+		Mode:     profilingdomain.ModeObjectUsage,
+	}
+	if err := validateRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	command, err := buildCommand(request, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(command.Args, "--tool-path") {
+		t.Fatalf("Memray command overrides the bundled runtime: %q", command.Args)
+	}
+	joined := strings.Join(command.Args, " ")
+	for _, want := range []string{
+		"--container-id " + request.ContainerID,
+		"--memory-mode object_usage",
+		"--output-format remote-store",
+		"--aggr-interval 10",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command %q does not contain %q", command.Args, want)
+		}
+	}
+	for _, toolDir := range []string{"/opt/separate profiling tools", "relative tools"} {
+		config.ToolDir = toolDir
+		command, err := buildCommand(request, config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := filepath.Abs(filepath.Join(toolDir, "memray"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		index := slices.Index(command.Args, "--tool-path")
+		if index == -1 || index+1 >= len(command.Args) || command.Args[index+1] != want {
+			t.Fatalf("Memray command args = %q, want bundle %q", command.Args, want)
+		}
 	}
 }

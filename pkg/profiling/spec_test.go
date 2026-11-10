@@ -64,9 +64,9 @@ func TestSpecValidateRejectsInvalidCombination(t *testing.T) {
 			wantErr: `unsupported profiling mode "wall_clock"`,
 		},
 		{
-			name:    "unsupported type",
+			name:    "Python rejects allocation-throughput mode",
 			spec:    Spec{Type: TypeMemory, Language: LanguagePython, Mode: ModeObjectAlloc},
-			wantErr: `profiling type "memory" is not supported for language "python"`,
+			wantErr: `profiling mode "object_alloc" is not supported for type "memory" and language "python"`,
 		},
 		{
 			name:    "CPU with memory mode",

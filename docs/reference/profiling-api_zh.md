@@ -82,6 +82,29 @@ curl -sS \
 | `c`、`c++`、`go` | `physical_usage` | 本次采样跟踪的物理页存活字节数 |
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
+| `python` | `object_usage` | Memray 附加后分配、采集结束时仍存活的字节数，不等同于 RSS |
+
+Python 内存任务使用节点上安装的 Memray 运行时，需要 `gdb` 和 ptrace
+权限，并在结束时上传一次存活分配结果。API 默认使用纯 Python 栈。可将
+下方 Java 内存请求改为 `"language": "python"`，保留
+`"mode": "object_usage"` 和 `"scope": "container"`。选中的 Python 进程数
+超过节点配置的正数 `Profiling.MaxConcurrentProcesses` 上限时，任务会在
+附加前失败。同一个 Python 进程的并发内存任务会被拒绝，不会中断已有采集。
+
+Python 内存结果的 `profile_type` 为 `memory:inuse_space:bytes:space:bytes`，
+pprof 样本类型为 `inuse_space`，单位为字节。查询存活内存结果时应使用此类型，
+而不是表示累计分配的 `alloc_space`；结果仍仅包含附加后观察到的分配。
+请求中的 `"type": "memory"` 不变，已有 Java 和原生内存结果类型也不变。
+
+成功的 Python 内存任务保存一条以采集完成时间为时间戳、持续时间为零的快照。
+没有样本时仍保存空 Profile 表示零字节，而不是缺失结果。未收到有效 Memray
+trailer 的采集会失败，不会发布完整结果。
+
+Python 内存任务使用节点的 `Profiling.ToolDir` 作为共享工具根目录，Memray 包应
+安装在 `<ToolDir>/memray`。未设置时，使用 profiler 实际可执行文件旁的
+`../tools/memray`。节点在启动任务前检查 GDB 和所选包的运行时文件，子进程再
+按目标 Python 版本选择运行时。已配置但缺失的包会使校验失败，不会回退到默认
+路径。CLI 的 `--tool-path` 则直接指向 Memray 包根目录，不是共享工具根目录。
 
 ## 创建任务
 
@@ -296,6 +319,14 @@ Grafana 使用 `/v1/profiling/flamegraph/` 下的 Pyroscope 兼容 Protobuf 接�
 
 统一面板 UID 为 `continuous-profiling`，变量顺序为 Region、节点、范围、容器、指标、任务。
 趋势图与火焰图使用相同任务过滤。容器选择 All 时，任务仍限定到一个目标；
-`physical_usage` 始终要求单个任务并只取最新快照。
+`physical_usage` 和 Python 存活内存（`memory:inuse_space:bytes:space:bytes`）均要求
+单个任务 `id`。即使指定了主机或容器，缺失、为空、`*` 或 `all` 的任务 ID 也会
+被拒绝。火焰图只取该任务、该时间范围内 Profile 时间戳最新的一条，包括值为零
+的结果；不累计快照，也不回退到更早的非零结果。时间过滤和排序使用
+`started_timestamp`，而不是上传时间。CPU 和累计分配画像仍按原方式累加。
+
+每次 Python 存活结果仅包含本次附加后分配、结束时仍存活的内存，不是进程全部
+内存的完整快照。不能累加多个任务来推算当前存活内存。火焰图只取最新结果的
+规则不改变按任务列出原始 Profile 的行为。
 任务摘要使用 `pyroscope.yaml` 的 Infinity 数据源，需与 Pyroscope 数据源配置相同的 API token。
 `result_url` 包含从已存储窗口取得的 Region 和实际指标；没有窗口的结果不返回该链接。

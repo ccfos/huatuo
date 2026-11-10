@@ -16,9 +16,12 @@ package provider
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/profiler/memray"
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -140,6 +143,55 @@ func decodeFoldedLine(line string) ([]string, string, error) {
 	}
 
 	return frames, line[index+1:], nil
+}
+
+// Memray weights are signed byte deltas. Preserve them until the one-shot
+// pipeline has combined allocations and frees from every delivery interval.
+func enqueueMemrayDeltas(
+	deltas []memray.StackDelta,
+	labels []types.ProfileLabel,
+	enqueue func(*pipeline.SampleBatch) error,
+) error {
+	var builder pipeline.BatchBuilder
+	// These totals describe delivered net deltas, not gross allocator traffic.
+	var allocatedBytes, freedBytes uint64
+	for _, delta := range deltas {
+		value := delta.Value
+		magnitude := uint64(value)
+		total := &allocatedBytes
+		if value < 0 {
+			magnitude = uint64(-(value + 1)) + 1
+			total = &freedBytes
+		}
+		// Diagnostic totals must not wrap even for extreme signed deltas.
+		if magnitude > math.MaxUint64-*total {
+			*total = math.MaxUint64
+		} else {
+			*total += magnitude
+		}
+		sample := aggregation.Sample{
+			Labels: append([]types.ProfileLabel(nil), labels...),
+			Value:  value,
+		}
+		for _, name := range delta.Frames {
+			sample.UserFrames = append(sample.UserFrames, types.ProfileFrame{Name: strings.Clone(name)})
+		}
+		if err := builder.Append(&sample, enqueue); err != nil {
+			return err
+		}
+	}
+	if err := builder.Flush(enqueue); err != nil {
+		return err
+	}
+	var pid string
+	for _, label := range labels {
+		if label.Name == "pid" {
+			pid = label.StringValue
+			break
+		}
+	}
+	log.Debugf("memray deltas delivered pid=%s allocated_bytes=%d freed_bytes=%d", pid, allocatedBytes, freedBytes)
+	return nil
 }
 
 func pythonProcessHeader(name string) (int, string, bool) {

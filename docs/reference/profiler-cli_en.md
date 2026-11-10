@@ -24,7 +24,7 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--output-path` | Required | All | Local file, directory, or `stdout`; Unix socket for `remote-store`. End new directory paths with `/` |
 | `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `json`, or `remote-store`; must be explicit together with `--output-path` |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
-| `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
+| `--tool-path` | None | Java, Python | Required shared tool root for Java/Python CPU; Python memory defaults to `../tools/memray` beside the executable and accepts a bundle-root override (relative paths resolve against the profiler's working directory, not the target's) |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address for resolving container metadata |
 | `--task-id` | Empty; generated internally for local output | All; required for `remote-store` | Stable collection task ID shared by toolstream and remote storage |
@@ -42,7 +42,9 @@ Native on-CPU and memory collection require Linux `MEMBARRIER_CMD_GLOBAL` suppor
 
 | Parameter | Default | Applies To | Description |
 | --- | --- | --- | --- |
-| `--memory-mode` | None | Native and Java memory | Memory measurement; required with `--type memory` |
+| `--memory-mode` | `object_usage` for Python | Memory | Required for native/Java memory; Python supports only retained `object_usage` |
+| `--python-memory-stack` | `python` | Python memory | Stack view: `python`, `native`, or `hybrid` |
+| `--python-memory-merge-threads` | `false` | Python memory | Merge allocations from different threads |
 | `--cpuid` | All CPUs | Native CPU | CPU list or ranges; off-CPU filtering uses the CPU where the task switches out |
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` samples by frequency; `offcpu` attributes blocked and runnable scheduling delays |
 | `--require-hardware-pmu` | `false` | Native on-CPU | Require hardware PMU sampling; fail if unavailable without falling back to software CPU clock |
@@ -52,6 +54,18 @@ Native on-CPU and memory collection require Linux `MEMBARRIER_CMD_GLOBAL` suppor
 | `--thread-group` | `false` | Native | Also collect other threads in the target PID's thread group |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical-memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for routine collection |
+
+Python `object_usage` results carry the type
+`memory:inuse_space:bytes:space:bytes` (`inuse_space` samples, in bytes).
+This is final retained memory observed since attachment, not cumulative
+`alloc_space`. Existing Java/native profile types are unchanged.
+
+For Python memory, `python` and `hybrid` render Python frames by function name
+only, not file or allocation line. Identical rendered call chains can combine
+same-named functions from different files and allocations at different lines.
+Structured profiles (`json` and `remote-store`) and SVG preserve frame names,
+including semicolons and surrounding whitespace. `collapsed` is a lossy text
+format: it replaces semicolons and line breaks for folded-stack consumers.
 
 When the hardware PMU event or sampling is unsupported, the command exits with code `1` and identifies the error on stderr with `Error: hardware_pmu_unavailable:`. Permission and other startup errors do not use this marker.
 
