@@ -167,7 +167,9 @@ write_config_bamai_netdev() {
 
 # The case supplies its port and device selection before startup.
 write_config_bamai_netdev_hw() {
-	write_config_bamai_netdev "${NETDEV_HW_PORT}"
+	write_config_blacklist_except netdev_hw
+	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_http "127.0.0.1:${NETDEV_HW_PORT}"
 	cat << EOF
 [MetricCollector.NetdevHW]
     DeviceList = ["${netdev_hw_pattern}"]
@@ -553,7 +555,8 @@ EOF
 
 # The Elasticsearch config test supplies the credential fields.
 write_config_bamai_elasticsearch_validation() {
-	write_config_bamai_default
+	write_config_blacklist_except
+	write_config_bamai_auth "integration-node-token"
 	write_config_bamai_http
 	write_config_bamai_elasticsearch "${storage_address:-}" "${storage_username:-}" "${storage_password:-}"
 	write_config_storage_local ""
@@ -563,7 +566,8 @@ write_config_bamai_elasticsearch_validation() {
 write_config_bamai_runtime_limits() {
 	local startup_cpu=$1 cpu=$2 memory_mib=$3
 
-	write_config_bamai_default
+	write_config_blacklist_except xfs
+	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
 [Runtime]
