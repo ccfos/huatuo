@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/parseutil"
 )
 
@@ -56,7 +57,7 @@ type schedBlameSuperMonitorFiles struct {
 
 type schedBlameSuperMonitorBaseline struct {
 	cgroupPath string
-	cgid       uint64
+	cssRef     pod.CgroupCSSRef
 	files      schedBlameSuperMonitorFiles
 	counters   schedBlameSuperMonitorCounters
 }
@@ -200,10 +201,10 @@ func calculateSchedBlameSuperMonitorSample(
 
 func (sampler *schedBlameSuperMonitorSampler) sample(
 	containerID, cgroupPath string,
-	cgid uint64,
+	cssRef pod.CgroupCSSRef,
 ) schedBlameSuperMonitorSample {
 	baseline, exists := sampler.baselines[containerID]
-	if !exists || baseline.cgroupPath != cgroupPath || baseline.cgid != cgid {
+	if !exists || baseline.cgroupPath != cgroupPath || baseline.cssRef != cssRef {
 		files, err := sampler.resolveFiles(cgroupPath)
 		if err != nil {
 			delete(sampler.baselines, containerID)
@@ -220,7 +221,7 @@ func (sampler *schedBlameSuperMonitorSampler) sample(
 		}
 		sampler.baselines[containerID] = schedBlameSuperMonitorBaseline{
 			cgroupPath: cgroupPath,
-			cgid:       cgid,
+			cssRef:     cssRef,
 			files:      files,
 			counters:   current,
 		}

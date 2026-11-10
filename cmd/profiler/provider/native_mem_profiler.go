@@ -121,7 +121,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
-	cgroupCSSRef, err := resolveContainerCgroupCSSRef(ctx, cfg, subsystem.SubsystemMemory)
+	cgroupCSSRef, err := resolveContainerCgroupCSSRef(cfg, subsystem.SubsystemMemory)
 	if err != nil {
 		return err
 	}

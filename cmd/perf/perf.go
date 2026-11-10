@@ -15,25 +15,20 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
-	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
-	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -57,9 +52,9 @@ func mainAction(ctx *cli.Context) error {
 	var cgroupCSSRef pod.CgroupCSSRef
 	if containerID := ctx.String("container-id"); containerID != "" {
 		var err error
-		cgroupCSSRef, err = resolvePerfContainerCSSRef(ctx.Context, ctx.String("huatuo-api-address"), containerID)
+		cgroupCSSRef, err = pod.ContainerCSSBySubsys(containerID, "cpu")
 		if err != nil {
-			return err
+			return fmt.Errorf("resolve container %q CPU CSS identity locally: %w", containerID, err)
 		}
 	}
 
@@ -120,54 +115,6 @@ func mainAction(ctx *cli.Context) error {
 	return nil
 }
 
-func resolvePerfContainerCSSRef(ctx context.Context, serverAddress, containerID string) (pod.CgroupCSSRef, error) {
-	nodeClient, err := client.NewNode(&client.NodeConfig{})
-	if err != nil {
-		return pod.CgroupCSSRef{}, fmt.Errorf("initialize node client: %w", err)
-	}
-	container, err := nodeClient.FetchContainer(ctx, client.NodeAddress{HostPort: serverAddress}, containerID)
-	if err != nil {
-		if !perfLocalNodeAddress(serverAddress) {
-			return pod.CgroupCSSRef{}, fmt.Errorf("fetch container %q metadata: %w", containerID, err)
-		}
-		return pod.ContainerCSSBySubsys(containerID, "cpu")
-	}
-	if container.CgroupCSSRefs != nil {
-		if remoteRef, found := (*container.CgroupCSSRefs)["cpu"]; found {
-			cssAddr, cssOK := kernaddr.Parse(remoteRef.CSSAddr)
-			cgroupID, idOK := kernaddr.Parse(remoteRef.CgroupID)
-			if !cssOK || !idOK || cssAddr == 0 || cgroupID == 0 {
-				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has invalid CPU CSS identity in node API", containerID)
-			}
-			if legacyAddr, ok := kernaddr.Parse(container.CgroupCSS["cpu"]); ok && legacyAddr != cssAddr {
-				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has conflicting CPU CSS addresses in node API", containerID)
-			}
-			return pod.CgroupCSSRef{CSSAddr: cssAddr, CgroupID: cgroupID}, nil
-		}
-	}
-	if !perfLocalNodeAddress(serverAddress) {
-		return pod.CgroupCSSRef{}, fmt.Errorf("container %q has no CPU kernfs ID in remote node API", containerID)
-	}
-	local, err := pod.ContainerCSSBySubsys(containerID, "cpu")
-	if err != nil {
-		return pod.CgroupCSSRef{}, fmt.Errorf("resolve container %q CPU CSS identity locally: %w", containerID, err)
-	}
-	legacyAddr, ok := kernaddr.Parse(container.CgroupCSS["cpu"])
-	if !ok || legacyAddr != local.CSSAddr {
-		return pod.CgroupCSSRef{}, fmt.Errorf("container %q CPU CSS address differs between local cache and node API", containerID)
-	}
-	return local, nil
-}
-
-func perfLocalNodeAddress(address string) bool {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(host, "localhost") ||
-		(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
-}
-
 func main() {
 	app := cli.NewApp()
 	app.Name = perfToolName
@@ -192,11 +139,6 @@ func main() {
 			Name:  "duration",
 			Value: 5,
 			Usage: "Tool duration(s)",
-		},
-		&cli.StringFlag{
-			Name:  "huatuo-api-address",
-			Value: "127.0.0.1:19704",
-			Usage: "HuaTuo API address used to resolve container metadata",
 		},
 		&cli.BoolFlag{
 			Name:  "tui",

@@ -58,8 +58,8 @@ func TestNewNativeBPFConstantsReturnsIndependentMaps(t *testing.T) {
 	}
 }
 
-func TestResolveNativeCgroupTargetWithoutContainer(t *testing.T) {
-	target, err := resolveContainerCgroupCSSRef(t.Context(), &Config{}, "cpu")
+func TestResolveContainerCgroupCSSRefWithoutContainer(t *testing.T) {
+	target, err := resolveContainerCgroupCSSRef(&Config{}, "cpu")
 	if err != nil || target != (pod.CgroupCSSRef{}) {
 		t.Fatalf("resolveContainerCgroupCSSRef() = %+v, %v; want zero target, nil", target, err)
 	}

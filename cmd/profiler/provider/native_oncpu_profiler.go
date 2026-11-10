@@ -102,7 +102,7 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 
 	log.Infof("starting native CPU profiler: mode=%s", cfg.Mode)
 
-	cgroupCSSRef, err := resolveContainerCgroupCSSRef(ctx, cfg, subsystem.SubsystemCPU)
+	cgroupCSSRef, err := resolveContainerCgroupCSSRef(cfg, subsystem.SubsystemCPU)
 	if err != nil {
 		return err
 	}

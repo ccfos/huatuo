@@ -124,8 +124,8 @@ io_container_css_ready() {
 	for index in "$@"; do
 		if ! io_container_metadata_ready "${index}"; then
 			io_container_missing+=("container=${index}:not_discovered")
-		elif ! jq -e '(.data.cgroup_css.blkio // "") | if type == "string"
-			then test("^0x[0-9a-f]*[1-9a-f][0-9a-f]*$") else false end' \
+		elif ! jq -e '(.data.cgroup_css_refs.blkio // {}) | .css_addr as $addr | .cgroup_id as $id |
+			[$addr, $id] | all(.[]; type == "string" and test("^0x[0-9a-f]*[1-9a-f][0-9a-f]*$"))' \
 			"${CONTAINER_WORK}/metadata-${index}.json" > /dev/null; then
 			io_container_missing+=("container=${index}:blkio_css_missing")
 		fi
@@ -143,7 +143,7 @@ assert_container_io_ready() {
 		|| fatal "IO container phase=${phase} startup deadline: ${io_container_missing[*]}"
 	io_container_stage=metrics
 	for index in "$@"; do
-		log_info "IO container phase=${phase} ready: $(jq -c '{id: .data.id, blkio_css: .data.cgroup_css.blkio}' "${CONTAINER_WORK}/metadata-${index}.json")"
+		log_info "IO container phase=${phase} ready: $(jq -c '{id: .data.id, blkio_css_ref: .data.cgroup_css_refs.blkio}' "${CONTAINER_WORK}/metadata-${index}.json")"
 	done
 }
 
@@ -163,7 +163,7 @@ io_container_report_failure() {
 		if [[ ${io_container_stage:-} != metadata ]]; then io_container_metadata_ready "${index}" || true; fi
 		log_error "container=${id} HTTP=$(cat "${CONTAINER_WORK}/metadata-${index}.http" 2> /dev/null || echo unknown)"
 		cat "${CONTAINER_WORK}/metadata-${index}.err" >&2 2> /dev/null || true
-		jq -c '{id: .data.id, cgroup_css: .data.cgroup_css}' "${CONTAINER_WORK}/metadata-${index}.json" >&2 || true
+		jq -c '{id: .data.id, cgroup_css_refs: .data.cgroup_css_refs}' "${CONTAINER_WORK}/metadata-${index}.json" >&2 || true
 		pid=${container_pids[index]:-}
 		log_error "container=${id} task_pid=${pid:-unknown}"
 		if [[ ${pid} =~ ^[1-9][0-9]*$ ]]; then cat "/proc/${pid}/cgroup" >&2; fi

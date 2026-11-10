@@ -218,12 +218,9 @@ type CgroupCSSRef struct {
 
 // ContainerMetadata defines model for ContainerMetadata.
 type ContainerMetadata struct {
-	// CgroupCSS Legacy subsystem-to-CSS-address snapshot. An address alone does not identify a cgroup instance.
-	CgroupCSS map[string]string `json:"cgroup_css"`
-
-	// CgroupCSSRefs Subsystem-to-CSS-reference snapshot. Each entry pairs values from one discovery event. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Consumers must verify the pair against current kernel state before use.
-	CgroupCSSRefs *map[string]CgroupCSSRef `json:"cgroup_css_refs,omitempty"`
-	ID            string                   `json:"id"`
+	// CgroupCSSRefs Subsystem-to-CSS-reference snapshot from this node. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Kernel addresses are meaningful only on this node; consumers must verify each pair against current kernel state before use.
+	CgroupCSSRefs map[string]CgroupCSSRef `json:"cgroup_css_refs"`
+	ID            string                  `json:"id"`
 }
 
 // ContainerResponse defines model for ContainerResponse.

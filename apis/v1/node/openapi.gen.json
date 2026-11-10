@@ -176,19 +176,11 @@
       "ContainerMetadata": {
         "additionalProperties": false,
         "properties": {
-          "cgroup_css": {
-            "additionalProperties": {
-              "pattern": "^0x[0-9a-f]{16}$",
-              "type": "string"
-            },
-            "description": "Legacy subsystem-to-CSS-address snapshot. An address alone does not identify a cgroup instance.",
-            "type": "object"
-          },
           "cgroup_css_refs": {
             "additionalProperties": {
               "$ref": "#/components/schemas/CgroupCSSRef"
             },
-            "description": "Subsystem-to-CSS-reference snapshot. Each entry pairs values from one discovery event. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Consumers must verify the pair against current kernel state before use.",
+            "description": "Subsystem-to-CSS-reference snapshot from this node. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Kernel addresses are meaningful only on this node; consumers must verify each pair against current kernel state before use.",
             "type": "object"
           },
           "id": {
@@ -198,7 +190,7 @@
         },
         "required": [
           "id",
-          "cgroup_css"
+          "cgroup_css_refs"
         ],
         "type": "object"
       },

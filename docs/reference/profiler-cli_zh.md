@@ -26,7 +26,6 @@ weight: 6
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
-| `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--task-id` | 空；本地输出时内部生成 | 全部；`remote-store` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
 | `--enable-pprof` | `false` | 工具自身 | 在 `127.0.0.1:6000` 暴露工具自身的 Go runtime profile |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |

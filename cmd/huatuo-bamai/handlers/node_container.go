@@ -40,14 +40,12 @@ func (h *NodeAPIHandler) GetContainer(
 		)
 	}
 
-	cgroupCSS := make(map[string]string, len(container.CgroupCss))
-	cgroupCSSRefs := make(map[string]nodeapi.CgroupCSSRef)
+	cgroupCSSRefs := make(map[string]nodeapi.CgroupCSSRef, len(container.CgroupCss))
 	for subsystem, address := range container.CgroupCss {
 		encoded := kernaddr.Format(address)
 		if encoded == "" {
 			continue
 		}
-		cgroupCSS[subsystem] = encoded
 		resolve := h.containerCSSBySubsys
 		if resolve == nil {
 			resolve = pod.ContainerCSSBySubsys
@@ -55,19 +53,15 @@ func (h *NodeAPIHandler) GetContainer(
 		ref, err := resolve(container.ID, subsystem)
 		if err == nil && ref.CSSAddr == address && ref.CgroupID != 0 {
 			cgroupCSSRefs[subsystem] = nodeapi.CgroupCSSRef{
-				CSSAddr: encoded, CgroupID: kernaddr.Format(ref.CgroupID),
+				CSSAddr:  encoded,
+				CgroupID: kernaddr.Format(ref.CgroupID),
 			}
 		}
-	}
-	var refs *map[string]nodeapi.CgroupCSSRef
-	if len(cgroupCSSRefs) != 0 {
-		refs = &cgroupCSSRefs
 	}
 	return nodeapi.GetContainer200JSONResponse{
 		Data: nodeapi.ContainerMetadata{
 			ID:            container.ID,
-			CgroupCSS:     cgroupCSS,
-			CgroupCSSRefs: refs,
+			CgroupCSSRefs: cgroupCSSRefs,
 		},
 	}, nil
 }

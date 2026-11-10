@@ -1668,7 +1668,7 @@ func (runner *schedBlameRunner) sampleHighlightedSuperMonitor() map[uint64]sched
 	samples[target.cssAddr] = runner.superMonitorSampler.sample(
 		target.containerID,
 		target.cgroupPath,
-		target.cssAddr,
+		pod.CgroupCSSRef{CSSAddr: target.cssAddr, CgroupID: target.cgroupID},
 	)
 	runner.superMonitorSampler.retain(activeContainerIDs)
 	return samples

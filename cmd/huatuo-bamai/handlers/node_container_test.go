@@ -60,14 +60,11 @@ func TestGetContainer(t *testing.T) {
 	if response.Data.ID != testContainerID {
 		t.Errorf("GetContainer() ID = %q, want %q", response.Data.ID, testContainerID)
 	}
-	if got := response.Data.CgroupCSS["cpu"]; got != "0xffff888012345678" {
-		t.Errorf("GetContainer() cpu CSS = %q, want %q", got, "0xffff888012345678")
+	if _, ok := response.Data.CgroupCSSRefs["memory"]; ok {
+		t.Error("GetContainer() returned a zero memory CSS reference")
 	}
-	if _, ok := response.Data.CgroupCSS["memory"]; ok {
-		t.Error("GetContainer() returned a zero memory CSS address")
-	}
-	if response.Data.CgroupCSSRefs == nil ||
-		(*response.Data.CgroupCSSRefs)["cpu"].CgroupID != "0x000000000000002a" {
+	if response.Data.CgroupCSSRefs["cpu"].CSSAddr != "0xffff888012345678" ||
+		response.Data.CgroupCSSRefs["cpu"].CgroupID != "0x000000000000002a" {
 		t.Errorf("GetContainer() CPU CSS instance = %v, want cgroup ID 42", response.Data.CgroupCSSRefs)
 	}
 }
@@ -122,11 +119,8 @@ func TestGetContainerOmitsUnverifiedCSSRef(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := result.(nodeapi.GetContainer200JSONResponse)
-			if response.Data.CgroupCSSRefs != nil {
+			if len(response.Data.CgroupCSSRefs) != 0 {
 				t.Fatalf("unverified CSS ref published: %+v", response.Data.CgroupCSSRefs)
-			}
-			if response.Data.CgroupCSS["cpu"] != "0x0000000000000100" {
-				t.Fatalf("legacy CSS address missing: %+v", response.Data.CgroupCSS)
 			}
 		})
 	}
