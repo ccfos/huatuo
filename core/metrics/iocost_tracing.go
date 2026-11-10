@@ -296,6 +296,9 @@ func (c *iocostTracing) startWithProfile(
 	if err := retryIOControlAttach(childCtx, ioControlAttachRetryInterval, func() error {
 		return attachIOCostPrograms(object)
 	}); err != nil {
+		if err == childCtx.Err() { //nolint:errorlint // Wrapped cleanup failures must remain visible.
+			return nil
+		}
 		if errors.Is(err, types.ErrNotSupported) {
 			log.Warnf("iocost: required hooks unavailable: %v", err)
 		}

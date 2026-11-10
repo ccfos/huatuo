@@ -90,7 +90,7 @@ func (history *schedBlameExternalContentionRatioHistory) p99(
 }
 
 type schedBlameExternalCompetitorCharge struct {
-	cgid     uint64
+	ref      pod.CgroupCSSRef
 	chargeNs uint64
 }
 
@@ -185,7 +185,7 @@ func (state *schedBlameState) logExternalContentionRatio(
 func (state *schedBlameState) topExternalCompetitors(
 	targetIndex int,
 ) []schedBlameExternalCompetitorCharge {
-	chargeByCgid := make(map[uint64]uint64)
+	chargeByRef := make(map[pod.CgroupCSSRef]uint64)
 	for competitorCSSID := 0; competitorCSSID < schedBlameMaxCSSIDs; competitorCSSID++ {
 		if !state.cssKnown[competitorCSSID] {
 			continue
@@ -198,17 +198,17 @@ func (state *schedBlameState) topExternalCompetitors(
 		if charge == 0 {
 			continue
 		}
-		cgid := state.cssCgids[competitorCSSID]
-		if cgid == 0 {
+		ref := state.cssRefs[competitorCSSID]
+		if ref.CSSAddr == 0 || ref.CgroupID == 0 {
 			continue
 		}
-		chargeByCgid[cgid] += charge
+		chargeByRef[ref] += charge
 	}
 	competitors := make([]schedBlameExternalCompetitorCharge, 0,
-		len(chargeByCgid))
-	for cgid, charge := range chargeByCgid {
+		len(chargeByRef))
+	for ref, charge := range chargeByRef {
 		competitors = append(competitors, schedBlameExternalCompetitorCharge{
-			cgid:     cgid,
+			ref:      ref,
 			chargeNs: charge,
 		})
 	}
@@ -216,7 +216,10 @@ func (state *schedBlameState) topExternalCompetitors(
 		if competitors[i].chargeNs != competitors[j].chargeNs {
 			return competitors[i].chargeNs > competitors[j].chargeNs
 		}
-		return competitors[i].cgid < competitors[j].cgid
+		if competitors[i].ref.CSSAddr != competitors[j].ref.CSSAddr {
+			return competitors[i].ref.CSSAddr < competitors[j].ref.CSSAddr
+		}
+		return competitors[i].ref.CgroupID < competitors[j].ref.CgroupID
 	})
 	if len(competitors) > schedBlameTopExternalCompetitors {
 		competitors = competitors[:schedBlameTopExternalCompetitors]
@@ -265,7 +268,7 @@ func (state *schedBlameState) evaluateExternalContentionRatiosWithDebug(
 			continue
 		}
 		target := state.targets[targetIndex]
-		superMonitorSample := superMonitorSamples[target.cgid]
+		superMonitorSample := superMonitorSamples[target.cssAddr]
 		runtime := state.runtimeNsByTarget[targetIndex]
 		internal := state.internalContentionNsByTarget[targetIndex]
 		external := state.externalContentionNsByTarget[targetIndex]
@@ -393,15 +396,22 @@ func schedBlameShortID(value string) string {
 	return value[:schedBlameContainerIDPrefixLength]
 }
 
-func schedBlameResolveCgid(
-	cgid uint64,
+func schedBlameResolveCSSAddr(
+	ref pod.CgroupCSSRef,
 	css map[uint64]string,
 	containers map[string]*pod.Container,
 ) (string, string) {
-	containerID, exists := css[cgid]
-	if !exists {
-		label := fmt.Sprintf("cgid-%016x", cgid)
+	unknown := func() (string, string) {
+		label := fmt.Sprintf("css-%016x-%016x", ref.CSSAddr, ref.CgroupID)
 		return label, label
+	}
+	containerID, exists := css[ref.CSSAddr]
+	if !exists || ref.CSSAddr == 0 || ref.CgroupID == 0 {
+		return unknown()
+	}
+	liveRef, err := schedBlameContainerCSSRef(containerID, "cpu")
+	if err != nil || liveRef != ref {
+		return unknown()
 	}
 	name := containerID
 	if container, exists := containers[containerID]; exists {
@@ -414,17 +424,12 @@ func schedBlameLiveContainers() (
 	map[uint64]string,
 	map[string]*pod.Container,
 ) {
-	css, err := pod.GetCSSToContainerID("cpu")
-	if err != nil {
-		log.Warnf("sched-blame: GetCSSToContainerID: %v", err)
-		css = make(map[uint64]string)
-	}
 	containers, err := pod.Containers()
 	if err != nil {
 		log.Warnf("sched-blame: Containers: %v", err)
 		containers = make(map[string]*pod.Container)
 	}
-	return css, containers
+	return pod.BuildCssContainersID(containers, "cpu"), containers
 }
 
 type schedBlameUpload struct {
@@ -523,8 +528,8 @@ func (state *schedBlameState) enqueueExternalEvent(
 	items := make([]schedBlameExternalCompetitorItem, 0,
 		len(externalEvent.externalCompetitors))
 	for _, competitor := range externalEvent.externalCompetitors {
-		id, name := schedBlameResolveCgid(
-			competitor.cgid,
+		id, name := schedBlameResolveCSSAddr(
+			competitor.ref,
 			css,
 			containers,
 		)

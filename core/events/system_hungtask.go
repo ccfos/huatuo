@@ -104,7 +104,7 @@ func (c *hungTaskTracing) Update() ([]*metric.Data, error) {
 	return data, nil
 }
 
-func (c *hungTaskTracing) Start(ctx context.Context) error {
+func (c *hungTaskTracing) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -119,7 +119,10 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	for {
 		select {

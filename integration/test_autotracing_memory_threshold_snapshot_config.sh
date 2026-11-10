@@ -23,7 +23,8 @@ readonly SNAPSHOT_CONFIG_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
 trap huatuo_bamai_stop EXIT
 
 write_config_bamai_snapshot_validation() {
-	write_config_bamai_default
+	write_config_blacklist_except
+	write_config_bamai_auth "integration-node-token"
 	write_config_bamai_http
 	cat << CONFIG
 [AutoTracing.MemoryThresholdSnapshot]

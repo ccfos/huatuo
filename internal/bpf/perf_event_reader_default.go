@@ -88,19 +88,18 @@ func (r *perfEventReader) Close() error {
 
 const (
 	readIntoPollTimeout = 100 * time.Millisecond
-
-	// readBatchDeadline bounds how long ReadBatch waits for the first event of a
-	// round. Once events start arriving, subsequent reads return quickly until the
-	// rings are drained and the deadline fires again, ending the batch.
-	readBatchDeadline = 500 * time.Millisecond
+	readBatchDeadline   = 500 * time.Millisecond
 )
 
-// ReadBatch drains all per-CPU ring buffers currently available and returns the
-// parsed events and sample loss. It returns partial results with read or decode
-// errors so callers can preserve progress.
-func (r *perfEventReader) ReadBatch(newEvent func() any) (PerfEventBatch, error) {
-	deadline := time.Now().Add(readBatchDeadline)
-
+// ReadBatch drains records until the per-call deadline, preserving partial results.
+func (r *perfEventReader) ReadBatch(newEvent func() any, opts ...ReadBatchOption) (PerfEventBatch, error) {
+	options := readBatchOptions{deadline: time.Now().Add(readBatchDeadline)}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	// Even an expired deadline scans every CPU ring, including records below
+	// the notification watermark. A deadline does not synchronize BPF writers.
+	deadline := options.deadline
 	var batch PerfEventBatch
 	var rec perf.Record
 

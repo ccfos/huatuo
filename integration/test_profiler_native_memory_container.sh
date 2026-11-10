@@ -57,12 +57,6 @@ assert_container_cgroup_hierarchy() {
 	log_info "container memory regression: ${mode}"
 }
 
-assert_local_memory_css_fallback() {
-	local profiler_log=$1
-	grep -qF 'falling back to local method' "${profiler_log}" \
-		|| fatal "expected local memory CSS fallback; actual profiler output: $(tail -n 20 "${profiler_log}")"
-}
-
 assert_container_memory_profile() {
 	local folded_file=$1 expected_pid=$2 fixture_stderr=$3
 	local unexpected_sample expected_symbol=test_alloc_free_loop expected_bytes actual_bytes
@@ -75,7 +69,7 @@ assert_container_memory_profile() {
 	actual_bytes=$(awk -v symbol="${expected_symbol}" 'index($0, symbol) {sum += $NF} END {print sum+0}' "${folded_file}")
 	[[ ${expected_bytes} =~ ^[1-9][0-9]*$ && ${actual_bytes} == "${expected_bytes}" ]] \
 		|| fatal "container memory bytes for ${expected_symbol}: expected ${expected_bytes}, actual ${actual_bytes}"
-	log_info "container memory CSS fallback captured ${actual_bytes} bytes for PID ${expected_pid}"
+	log_info "container memory CSS identity captured ${actual_bytes} bytes for PID ${expected_pid}"
 }
 
 require_commands docker mkfifo setsid timeout awk
@@ -101,17 +95,15 @@ container_log_fd=${PROCESS_OUTPUT_FD}
 exec {PROCESS_INPUT_FD}>&-
 assert_process_message "${container_log_fd}" "${TOOL_WORK_DIR}/container.log" ready
 
-# Port zero is rejected by the Node client, forcing local lookup without a server.
-# This new process has no cached CSS; container ID is its only target filter.
+# This new process resolves the container CSS locally; container ID is its only target filter.
 start_piped_process "${TOOL_WORK_DIR}/profiler" "${TOOL_BIN}" \
 	--type memory --language c --memory-mode virtual_alloc --container-id "${container_id}" \
-	--huatuo-api-address 127.0.0.1:0 --duration 30 --aggr-interval 30 \
+	--duration 30 --aggr-interval 30 \
 	--output-format collapsed --output-path "${TOOL_WORK_DIR}/result.folded" --verbose
 profiler_pid=${PROCESS_PID}
 profiler_output_fd=${PROCESS_OUTPUT_FD}
 exec {PROCESS_INPUT_FD}>&-
 assert_process_message "${profiler_output_fd}" "${TOOL_OUT}" 'data reading loop started'
-assert_local_memory_css_fallback "${TOOL_OUT}"
 
 timeout --kill-after=2 10 docker kill --signal=USR1 "${container_id}" > "${TOOL_WORK_DIR}/signal.log"
 assert_process_message "${container_log_fd}" "${TOOL_WORK_DIR}/container.log" 'final allocation complete'

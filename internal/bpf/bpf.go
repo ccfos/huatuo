@@ -47,6 +47,13 @@ type BPF interface {
 	// Detach all programs.
 	Detach() error
 
+	// DetachOnContextDone starts a watcher that detaches on cancellation.
+	// Call once after attaching, only if consumers permit stopping production.
+	// The returned cleanup triggers detachment, waits, and returns its result;
+	// callers must invoke it before closing the object. Cleanup is safe to repeat
+	// or call concurrently. Context cancellation alone does not imply completion.
+	DetachOnContextDone(ctx context.Context) func() error
+
 	// IsLoaded reports whether the BPF object is still loaded.
 	IsLoaded() (bool, error)
 
@@ -83,7 +90,4 @@ type BPF interface {
 
 	// DumpMapByName dump all the context of the map.
 	DumpMapByName(mapName string) ([]MapItem, error)
-
-	// DetachOnContextDone is a hook for context-driven detach handling.
-	DetachOnContextDone(ctx context.Context, cancel context.CancelFunc)
 }

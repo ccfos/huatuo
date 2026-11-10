@@ -5,6 +5,53 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 
+struct kernfs_node___css_legacy {
+	union {
+		u64 id;
+	} id;
+} __attribute__((preserve_access_index));
+
+struct kernfs_node___css_modern {
+	u64 id;
+} __attribute__((preserve_access_index));
+
+static __always_inline u64 cgroup_id(struct cgroup *cgrp)
+{
+	struct kernfs_node *kn;
+
+	if (!cgrp)
+		return 0;
+	kn = BPF_CORE_READ(cgrp, kn);
+	if (!kn)
+		return 0;
+	/* Older kernels keep the full ID, including generation, in a union. */
+	if (bpf_core_field_exists(((struct kernfs_node___css_legacy *)kn)->id.id))
+		return BPF_CORE_READ((struct kernfs_node___css_legacy *)kn, id.id);
+	if (bpf_core_field_exists(((struct kernfs_node___css_modern *)kn)->id))
+		return BPF_CORE_READ((struct kernfs_node___css_modern *)kn, id);
+	return 0;
+}
+
+static __always_inline u64 cgroup_id_from_css(u64 css_addr)
+{
+	struct cgroup_subsys_state *css = (void *)css_addr;
+	struct cgroup *cgrp;
+
+	if (!css)
+		return 0;
+	cgrp = BPF_CORE_READ(css, cgroup);
+	return cgroup_id(cgrp);
+}
+
+static __always_inline bool cgroup_css_matches_ref(u64 observed_css_addr,
+						   u64 ref_css_addr,
+						   u64 ref_cgroup_id)
+{
+	return observed_css_addr != 0 && ref_css_addr != 0 &&
+	       ref_cgroup_id != 0 && observed_css_addr == ref_css_addr &&
+	       cgroup_id_from_css(observed_css_addr) == ref_cgroup_id;
+}
+
 static __always_inline u64 current_task_cpu_css_addr(void)
 {
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();

@@ -54,7 +54,8 @@ func encodeSchedBlameIdentityForTest(identity schedBlameIdentity) []byte {
 	raw := make([]byte, schedBlamePerfRawSampleSize(schedBlameIdentitySize))
 	binary.LittleEndian.PutUint16(raw[:2], identity.Magic)
 	binary.LittleEndian.PutUint16(raw[2:4], identity.CSSID)
-	binary.LittleEndian.PutUint64(raw[8:16], identity.Cgid)
+	binary.LittleEndian.PutUint64(raw[8:16], identity.CSSAddr)
+	binary.LittleEndian.PutUint64(raw[16:24], identity.CgroupID)
 	return raw
 }
 
@@ -94,12 +95,13 @@ func encodeSchedBlameBatchForTest(
 
 func newSchedBlameStateForTest(
 	sliceDropPercent uint32,
-	targetCgid uint64,
+	targetCSSAddr uint64,
 ) *schedBlameState {
 	state := newSchedBlameState(sliceDropPercent)
 	targets := [schedBlameMaxTargets]schedBlameTarget{}
 	targets[schedBlameHighlightIndex] = schedBlameTarget{
-		cgid:        targetCgid,
+		cssAddr:     targetCSSAddr,
+		cgroupID:    1,
 		containerID: "target-container",
 		name:        "target",
 		cgroupPath:  "/target",
@@ -118,20 +120,21 @@ func TestSchedBlameWireLayout(t *testing.T) {
 	assert.Equal(t, 8, schedBlameBatchHeaderSize)
 	assert.Equal(t, 8+schedBlameMaxBatchSlices*schedBlameSliceSize,
 		schedBlameBatchValueSize)
-	assert.Equal(t, 16, binary.Size(schedBlameIdentity{}))
+	assert.Equal(t, 24, binary.Size(schedBlameIdentity{}))
 	assert.Equal(t, 8, binary.Size(schedBlameThrottle{}))
 	assert.Equal(t, 4096, schedBlameMaxCSSIDs)
 	assert.Equal(t, schedBlameBaseBitmapBits+
 		64*schedBlameExtraBitmapU64Count, schedBlameMaxTargets)
 	assert.Equal(t, 12, schedBlamePerfRawSampleSize(8))
-	assert.Equal(t, 20, schedBlamePerfRawSampleSize(16))
+	assert.Equal(t, 28, schedBlamePerfRawSampleSize(24))
 }
 
 func TestDecodeSchedBlameIdentity(t *testing.T) {
 	want := schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: 1057,
-		Cgid:  0xff00112233445566,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    1057,
+		CSSAddr:  0xff00112233445566,
+		CgroupID: 1,
 	}
 	raw := encodeSchedBlameIdentityForTest(want)
 	record := new(schedBlameRecord)
@@ -143,9 +146,10 @@ func TestDecodeSchedBlameIdentity(t *testing.T) {
 
 func TestDecodeSchedBlameIdentityRejectsUnexpectedSize(t *testing.T) {
 	want := schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: 1057,
-		Cgid:  0xff00112233445566,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    1057,
+		CSSAddr:  0xff00112233445566,
+		CgroupID: 1,
 	}
 	raw := append(encodeSchedBlameIdentityForTest(want), 0)
 	record := new(schedBlameRecord)
@@ -387,16 +391,17 @@ func TestDecodeSchedBlameRejectsUnexpectedSize(t *testing.T) {
 
 func TestSchedBlameExternalAttributionAndScaling(t *testing.T) {
 	const (
-		targetCgid      = 0x100
-		competitorCgid  = 0x200
-		targetCSSID     = 65
-		competitorCSSID = 1057
+		targetCSSAddr     = 0x100
+		competitorCSSAddr = 0x200
+		targetCSSID       = 65
+		competitorCSSID   = 1057
 	)
-	state := newSchedBlameStateForTest(90, targetCgid)
+	state := newSchedBlameStateForTest(90, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	})
 	first := packSchedBlameSliceForTest(
 		1_000,
@@ -419,9 +424,10 @@ func TestSchedBlameExternalAttributionAndScaling(t *testing.T) {
 	assert.Zero(t, state.externalChargeNsMatrix[chargeIndex])
 
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: competitorCSSID,
-		Cgid:  competitorCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    competitorCSSID,
+		CSSAddr:  competitorCSSAddr,
+		CgroupID: 1,
 	})
 	state.handlePackedSlice(&first)
 	state.handlePackedSlice(&second)
@@ -433,12 +439,13 @@ func TestSchedBlameExternalAttributionAndScaling(t *testing.T) {
 func TestSchedBlameAttributesOneSliceToMultipleTargets(t *testing.T) {
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[0] = schedBlameTarget{cgid: 100, containerID: "target-a"}
-	targets[7] = schedBlameTarget{cgid: 200, containerID: "target-b"}
+	targets[0] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "target-a"}
+	targets[7] = schedBlameTarget{cssAddr: 200, cgroupID: 1, containerID: "target-b"}
 	state.setTargets(&targets)
 	state.handleIdentity(&schedBlameIdentity{
-		CSSID: 33,
-		Cgid:  300,
+		CSSID:    33,
+		CSSAddr:  300,
+		CgroupID: 1,
 	})
 
 	packedSlice := packSchedBlameSliceForTest(
@@ -482,13 +489,15 @@ func TestSchedBlameAttributesExtendedWaitingTarget(t *testing.T) {
 	state := newSchedBlameState(0)
 	const competitorCSSID = 33
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: competitorCSSID,
-		Cgid:  300,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    competitorCSSID,
+		CSSAddr:  300,
+		CgroupID: 1,
 	})
 	targetIndex := schedBlameMaxTargets - 1
 	state.targets[targetIndex] = schedBlameTarget{
-		cgid:        400,
+		cssAddr:     400,
+		cgroupID:    1,
 		containerID: "extended-target",
 	}
 	state.activeTargetBitmap.set(targetIndex)
@@ -511,7 +520,7 @@ func TestSchedBlameAttributesExtendedWaitingTarget(t *testing.T) {
 func TestSchedBlameReusedTargetSlotClearsAccumulatedState(t *testing.T) {
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[4] = schedBlameTarget{cgid: 100, containerID: "old"}
+	targets[4] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "old"}
 	state.setTargets(&targets)
 	state.runtimeNsByTarget[4] = 10
 	state.internalContentionNsByTarget[4] = 20
@@ -520,7 +529,7 @@ func TestSchedBlameReusedTargetSlotClearsAccumulatedState(t *testing.T) {
 	state.externalContentionRatioHistory[4].add(0.5)
 	state.externalChargeNsMatrix[schedBlameExternalChargeIndex(7, 4)] = 50
 
-	targets[4] = schedBlameTarget{cgid: 200, containerID: "new"}
+	targets[4] = schedBlameTarget{cssAddr: 200, cgroupID: 1, containerID: "new"}
 	state.setTargets(&targets)
 
 	assert.Zero(t, state.runtimeNsByTarget[4])
@@ -534,14 +543,15 @@ func TestSchedBlameReusedTargetSlotClearsAccumulatedState(t *testing.T) {
 
 func TestSchedBlameAccountsInternalContention(t *testing.T) {
 	const (
-		targetCgid  = 0x100
-		targetCSSID = 65
+		targetCSSAddr = 0x100
+		targetCSSID   = 65
 	)
-	state := newSchedBlameStateForTest(0, targetCgid)
+	state := newSchedBlameStateForTest(0, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	})
 	packedSlice := packSchedBlameSliceForTest(
 		1_000,
@@ -563,14 +573,15 @@ func TestSchedBlameAccountsInternalContention(t *testing.T) {
 
 func TestSchedBlameAccountsRuntimeWithoutWaitingTarget(t *testing.T) {
 	const (
-		targetCgid  = 0x100
-		targetCSSID = 65
+		targetCSSAddr = 0x100
+		targetCSSID   = 65
 	)
-	state := newSchedBlameStateForTest(0, targetCgid)
+	state := newSchedBlameStateForTest(0, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	})
 	packedSlice := packSchedBlameSliceForTest(
 		2_000,
@@ -588,7 +599,7 @@ func TestSchedBlameAccountsRuntimeWithoutWaitingTarget(t *testing.T) {
 func TestSchedBlameAccountsThrottleByDenseTarget(t *testing.T) {
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[7] = schedBlameTarget{cgid: 100, containerID: "target"}
+	targets[7] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "target"}
 	state.setTargets(&targets)
 
 	state.handleThrottle(&schedBlameThrottle{
@@ -617,21 +628,23 @@ func TestSchedBlameEvaluatesExternalRatioAgainstPreviousHistory(t *testing.T) {
 	Set(config)
 
 	const (
-		targetCgid      = 0x100
-		competitorCgid  = 0x200
-		targetCSSID     = 65
-		competitorCSSID = 1057
+		targetCSSAddr     = 0x100
+		competitorCSSAddr = 0x200
+		targetCSSID       = 65
+		competitorCSSID   = 1057
 	)
-	state := newSchedBlameStateForTest(0, targetCgid)
+	state := newSchedBlameStateForTest(0, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	})
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: competitorCSSID,
-		Cgid:  competitorCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    competitorCSSID,
+		CSSAddr:  competitorCSSAddr,
+		CgroupID: 1,
 	})
 
 	for range schedBlameExternalMinimumSamples {
@@ -662,8 +675,8 @@ func TestSchedBlameEvaluatesExternalRatioAgainstPreviousHistory(t *testing.T) {
 	assert.Equal(t, uint64(1_000), externalEvents[0].externalContentionNs)
 	assert.Zero(t, externalEvents[0].throttledTimeNs)
 	require.Len(t, externalEvents[0].externalCompetitors, 1)
-	assert.Equal(t, uint64(competitorCgid),
-		externalEvents[0].externalCompetitors[0].cgid)
+	assert.Equal(t, uint64(competitorCSSAddr),
+		externalEvents[0].externalCompetitors[0].ref.CSSAddr)
 	assert.Equal(t, uint64(1_000),
 		externalEvents[0].externalCompetitors[0].chargeNs)
 	assert.Zero(t, state.runtimeNsByTarget[schedBlameHighlightIndex])
@@ -727,14 +740,15 @@ func TestSchedBlameExternalRatioCanBeValidWithoutRuntime(t *testing.T) {
 
 func TestSchedBlameSkipsExternalEventWhenP99IsZero(t *testing.T) {
 	const (
-		targetCgid  = 0x100
-		targetCSSID = 65
+		targetCSSAddr = 0x100
+		targetCSSID   = 65
 	)
-	state := newSchedBlameStateForTest(0, targetCgid)
+	state := newSchedBlameStateForTest(0, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	})
 	history := &state.externalContentionRatioHistory[schedBlameHighlightIndex]
 	for range schedBlameExternalMinimumSamples {
@@ -751,8 +765,8 @@ func TestSchedBlameSkipsExternalEventWhenP99IsZero(t *testing.T) {
 func TestSchedBlameEvaluatesEveryActiveTarget(t *testing.T) {
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[0] = schedBlameTarget{cgid: 100, containerID: "target-a"}
-	targets[7] = schedBlameTarget{cgid: 200, containerID: "target-b"}
+	targets[0] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "target-a"}
+	targets[7] = schedBlameTarget{cssAddr: 200, cgroupID: 1, containerID: "target-b"}
 	state.setTargets(&targets)
 
 	for _, targetIndex := range []int{0, 7} {
@@ -773,14 +787,15 @@ func TestSchedBlameEvaluatesEveryActiveTarget(t *testing.T) {
 
 func TestSchedBlameDoesNotRecordInactiveRatio(t *testing.T) {
 	const (
-		targetCgid  = 0x100
-		targetCSSID = 65
+		targetCSSAddr = 0x100
+		targetCSSID   = 65
 	)
-	state := newSchedBlameStateForTest(0, targetCgid)
+	state := newSchedBlameStateForTest(0, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	})
 
 	assert.Empty(t, state.evaluateExternalContentionRatios())
@@ -815,7 +830,8 @@ func TestSchedBlameExternalDataUsesPercentages(t *testing.T) {
 	state := newSchedBlameState(0)
 	targets := [schedBlameMaxTargets]schedBlameTarget{}
 	targets[schedBlameHighlightIndex] = schedBlameTarget{
-		cgid:        0x100,
+		cssAddr:     0x100,
+		cgroupID:    1,
 		containerID: "0123456789abcdef",
 		name:        "workload-a",
 		cgroupPath:  "/target",
@@ -906,9 +922,9 @@ func TestSchedBlameTopExternalCompetitorsAggregateAndSort(t *testing.T) {
 	state.cssKnown[1] = true
 	state.cssKnown[2] = true
 	state.cssKnown[3] = true
-	state.cssCgids[1] = 0x300
-	state.cssCgids[2] = 0x200
-	state.cssCgids[3] = 0x300
+	state.cssRefs[1] = pod.CgroupCSSRef{CSSAddr: 0x300, CgroupID: 1}
+	state.cssRefs[2] = pod.CgroupCSSRef{CSSAddr: 0x200, CgroupID: 1}
+	state.cssRefs[3] = pod.CgroupCSSRef{CSSAddr: 0x300, CgroupID: 1}
 	state.externalChargeNsMatrix[schedBlameExternalChargeIndex(1, 0)] = 30
 	state.externalChargeNsMatrix[schedBlameExternalChargeIndex(2, 0)] = 50
 	state.externalChargeNsMatrix[schedBlameExternalChargeIndex(3, 0)] = 20
@@ -916,10 +932,48 @@ func TestSchedBlameTopExternalCompetitorsAggregateAndSort(t *testing.T) {
 	competitors := state.topExternalCompetitors(0)
 
 	require.Len(t, competitors, 2)
-	assert.Equal(t, uint64(0x200), competitors[0].cgid)
+	assert.Equal(t, uint64(0x200), competitors[0].ref.CSSAddr)
 	assert.Equal(t, uint64(50), competitors[0].chargeNs)
-	assert.Equal(t, uint64(0x300), competitors[1].cgid)
+	assert.Equal(t, uint64(0x300), competitors[1].ref.CSSAddr)
 	assert.Equal(t, uint64(50), competitors[1].chargeNs)
+}
+
+func TestSchedBlameRejectsReusedCSSAddress(t *testing.T) {
+	state := newSchedBlameStateForTest(0, 0x100)
+	state.handleIdentity(&schedBlameIdentity{
+		CSSID: 7, CSSAddr: 0x100, CgroupID: 1,
+	})
+	if state.targetDenseByCSSID[7] != schedBlameHighlightIndex {
+		t.Fatal("target identity was not assigned")
+	}
+	state.handleIdentity(&schedBlameIdentity{
+		CSSID: 7, CSSAddr: 0x100, CgroupID: 2,
+	})
+	if state.targetDenseByCSSID[7] != schedBlameNonTarget ||
+		state.targets[schedBlameHighlightIndex].cssKnown {
+		t.Fatal("reused CSS address retained old target attribution")
+	}
+	state.rebuildTargetDenseByCSSID()
+	if state.targetDenseByCSSID[7] != schedBlameNonTarget {
+		t.Fatal("reused CSS address was assigned after rebuild")
+	}
+}
+
+func TestSchedBlameReportRejectsReusedCSSAddress(t *testing.T) {
+	const containerID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	previous := schedBlameContainerCSSRef
+	schedBlameContainerCSSRef = func(string, string) (pod.CgroupCSSRef, error) {
+		return pod.CgroupCSSRef{CSSAddr: 0x100, CgroupID: 2}, nil
+	}
+	t.Cleanup(func() { schedBlameContainerCSSRef = previous })
+	candidates := map[uint64]string{0x100: containerID}
+	containers := map[string]*pod.Container{containerID: {Hostname: "new-owner"}}
+	id, name := schedBlameResolveCSSAddr(
+		pod.CgroupCSSRef{CSSAddr: 0x100, CgroupID: 1}, candidates, containers,
+	)
+	if id == schedBlameShortID(containerID) || name == "new-owner" {
+		t.Fatalf("stale CSS reference attributed to replacement: %q, %q", id, name)
+	}
 }
 
 func TestSchedBlameHighlightContainerMatches(t *testing.T) {
@@ -949,6 +1003,19 @@ func TestSchedBlameShortIDMatchesCrictl(t *testing.T) {
 	assert.Equal(t, "short-id", schedBlameShortID("short-id"))
 }
 
+func useSchedBlameCSSRefsForTest(t *testing.T, containers map[string]*pod.Container) {
+	t.Helper()
+	previous := schedBlameContainerCSSRef
+	schedBlameContainerCSSRef = func(containerID, subsys string) (pod.CgroupCSSRef, error) {
+		container := containers[containerID]
+		if container == nil {
+			return pod.CgroupCSSRef{}, nil
+		}
+		return pod.CgroupCSSRef{CSSAddr: container.CgroupCss[subsys], CgroupID: 1}, nil
+	}
+	t.Cleanup(func() { schedBlameContainerCSSRef = previous })
+}
+
 func TestSchedBlameFindHighlightTarget(t *testing.T) {
 	containers := map[string]*pod.Container{
 		"0123456789abcdef": {
@@ -963,6 +1030,7 @@ func TestSchedBlameFindHighlightTarget(t *testing.T) {
 		},
 	}
 
+	useSchedBlameCSSRefsForTest(t, containers)
 	target, exists, err := schedBlameFindHighlightTarget(containers, "", true)
 	require.NoError(t, err)
 	assert.False(t, exists)
@@ -983,7 +1051,7 @@ func TestSchedBlameFindHighlightTarget(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.True(t, exists)
-	assert.Equal(t, uint64(101), target.cgid)
+	assert.Equal(t, uint64(101), target.cssAddr)
 	assert.Equal(t, "0123456789abcdef", target.containerID)
 	assert.Equal(t, "workload-a", target.name)
 	assert.Equal(t, "/workload-a", target.cgroupPath)
@@ -1007,6 +1075,7 @@ func TestSchedBlameSelectTargetsUsesSlotZeroWithoutHighlight(t *testing.T) {
 			CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 102},
 		},
 	}
+	useSchedBlameCSSRefsForTest(t, containers)
 	var oldTargets [schedBlameMaxTargets]schedBlameTarget
 	oldTargets[0], _ = schedBlameTargetFromContainer(
 		"survivor-id",
@@ -1028,6 +1097,11 @@ func TestSchedBlameSelectTargetsUsesSlotZeroWithoutHighlight(t *testing.T) {
 }
 
 func TestSchedBlameSelectTargetsReservesMissingHighlightSlot(t *testing.T) {
+	previous := schedBlameContainerCSSRef
+	schedBlameContainerCSSRef = func(_, _ string) (pod.CgroupCSSRef, error) {
+		return pod.CgroupCSSRef{CSSAddr: 101, CgroupID: 1}, nil
+	}
+	t.Cleanup(func() { schedBlameContainerCSSRef = previous })
 	oldConfig := configSnapshot()
 	t.Cleanup(func() { Set(oldConfig) })
 	config := &Config{}
@@ -1084,6 +1158,7 @@ func TestSchedBlameSelectTargetsPreservesSurvivingSlots(t *testing.T) {
 			CgroupCss: map[string]uint64{subsystem.SubsystemCPU: 103},
 		},
 	}
+	useSchedBlameCSSRefsForTest(t, containers)
 	var oldTargets [schedBlameMaxTargets]schedBlameTarget
 	oldTargets[3], _ = schedBlameTargetFromContainer(
 		"survivor-id",
@@ -1108,6 +1183,11 @@ func TestSchedBlameSelectTargetsPreservesSurvivingSlots(t *testing.T) {
 }
 
 func TestSchedBlameSelectTargetsRejectsInvalidScope(t *testing.T) {
+	previous := schedBlameContainerCSSRef
+	schedBlameContainerCSSRef = func(_, _ string) (pod.CgroupCSSRef, error) {
+		return pod.CgroupCSSRef{CSSAddr: 100, CgroupID: 1}, nil
+	}
+	t.Cleanup(func() { schedBlameContainerCSSRef = previous })
 	oldConfig := configSnapshot()
 	t.Cleanup(func() { Set(oldConfig) })
 	config := &Config{}
@@ -1153,6 +1233,7 @@ func TestSchedBlameSelectTargetsCapsTargetCount(t *testing.T) {
 		}
 	}
 
+	useSchedBlameCSSRefsForTest(t, containers)
 	targets, err := schedBlameSelectTargets(
 		containers,
 		&[schedBlameMaxTargets]schedBlameTarget{},
@@ -1183,19 +1264,21 @@ func TestPublishSchedBlameTargets(t *testing.T) {
 	}
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[0] = schedBlameTarget{cgid: 100, containerID: "highlight"}
-	targets[5] = schedBlameTarget{cgid: 200, containerID: "random"}
+	targets[0] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "highlight"}
+	targets[5] = schedBlameTarget{cssAddr: 200, cgroupID: 1, containerID: "random"}
 
 	require.NoError(t, publishSchedBlameTargets(bpf, state, &targets))
-	assert.Equal(t, uint32(1), state.targetCSSIDEpoch)
+	assert.Equal(t, uint32(2), state.targetCSSIDEpoch)
 	assert.True(t, state.activeTargetBitmap.contains(0))
 	assert.True(t, state.activeTargetBitmap.contains(5))
 	assert.Equal(t, 2, state.activeTargetBitmap.count())
 	require.Len(t, bpf.deleted, 1)
 	require.Len(t, bpf.writes[targetMapID], 2)
-	assert.Equal(t, []byte{0}, bpf.writes[targetMapID][0].Value)
-	assert.Equal(t, []byte{5}, bpf.writes[targetMapID][1].Value)
-	require.Len(t, bpf.writes[dataMapID], 1)
+	assert.Equal(t, uint64(1), binary.LittleEndian.Uint64(bpf.writes[targetMapID][0].Value[:8]))
+	assert.Equal(t, byte(0), bpf.writes[targetMapID][0].Value[8])
+	assert.Equal(t, uint64(1), binary.LittleEndian.Uint64(bpf.writes[targetMapID][1].Value[:8]))
+	assert.Equal(t, byte(5), bpf.writes[targetMapID][1].Value[8])
+	require.Len(t, bpf.writes[dataMapID], 2)
 	assert.Equal(t, uint32(1), binary.LittleEndian.Uint32(
 		bpf.writes[dataMapID][0].Value,
 	))
@@ -1217,11 +1300,11 @@ func TestSchedBlamePublicationFailureInvalidatesAttribution(t *testing.T) {
 	state := newSchedBlameState(0)
 	runner := &schedBlameRunner{bpf: bpf, state: state}
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[0] = schedBlameTarget{cgid: 100, containerID: "target"}
+	targets[0] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "target"}
 
 	require.ErrorIs(t, runner.publishTargets(&targets), publishErr)
 	assert.True(t, runner.attributionInvalid)
-	assert.Equal(t, "target", runner.state.targets[0].containerID)
+	assert.Empty(t, runner.state.targets[0].containerID)
 	assert.Zero(t, runner.state.targetCSSIDEpoch)
 }
 
@@ -1325,7 +1408,7 @@ func TestSchedBlameRatioDebugWriteFailureStopsEvaluation(t *testing.T) {
 
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
-	targets[0] = schedBlameTarget{cgid: 100, containerID: "target"}
+	targets[0] = schedBlameTarget{cssAddr: 100, cgroupID: 1, containerID: "target"}
 	state.setTargets(&targets)
 	runner := &schedBlameRunner{
 		config:              schedBlameRuntimeConfig{externalAnomalyK: 1},
@@ -1584,24 +1667,26 @@ func TestSchedBlamePerfReaderFinalDrainPreservesQueuedRecords(t *testing.T) {
 		records: make(chan []byte, 3),
 	}
 	rawReader.records <- encodeSchedBlameIdentityForTest(schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: 1,
-		Cgid:  100,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    1,
+		CSSAddr:  100,
+		CgroupID: 1,
 	})
 	rawReader.records <- encodeSchedBlameIdentityForTest(schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: 2,
-		Cgid:  200,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    2,
+		CSSAddr:  200,
+		CgroupID: 1,
 	})
 	reader := newSchedBlamePerfReader(context.Background(), rawReader, 3)
 	require.NoError(t, reader.Flush())
 
-	var cgids []uint64
+	var cssAddrs []uint64
 	require.NoError(t, reader.FinalDrain(func(record *schedBlameRecord) {
-		cgids = append(cgids, record.identity.Cgid)
+		cssAddrs = append(cssAddrs, record.identity.CSSAddr)
 	}))
 	require.NoError(t, reader.Close())
-	assert.Equal(t, []uint64{100, 200}, cgids)
+	assert.Equal(t, []uint64{100, 200}, cssAddrs)
 }
 
 func TestSchedBlamePerfReaderCloseThenFinalDrain(t *testing.T) {
@@ -1619,9 +1704,10 @@ func TestSchedBlameFinalDrainDiscardsInvalidAttribution(t *testing.T) {
 		records: make(chan []byte, 2),
 	}
 	rawReader.records <- encodeSchedBlameIdentityForTest(schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: 1,
-		Cgid:  100,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    1,
+		CSSAddr:  100,
+		CgroupID: 1,
 	})
 	state := newSchedBlameState(0)
 	runner := &schedBlameRunner{
@@ -1639,7 +1725,8 @@ func TestSchedBlameFinalEvaluationBypassesPeriodicGate(t *testing.T) {
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
 	targets[1] = schedBlameTarget{
-		cgid:        100,
+		cssAddr:     100,
+		cgroupID:    1,
 		containerID: "target",
 	}
 	state.setTargets(&targets)
@@ -1681,7 +1768,7 @@ func TestSchedBlameTargetSyncRetainsTargetsWhileViewUnavailable(t *testing.T) {
 	}
 	now := time.Now()
 	require.NoError(t, runner.processTargetSync(now, true))
-	assert.Equal(t, uint64(0x100), state.targets[schedBlameHighlightIndex].cgid)
+	assert.Equal(t, uint64(0x100), state.targets[schedBlameHighlightIndex].cssAddr)
 	assert.Equal(t, uint64(100), state.runtimeNsByTarget[schedBlameHighlightIndex])
 	assert.Equal(t, 1, state.externalContentionRatioHistory[schedBlameHighlightIndex].count)
 	assert.Equal(t, now.Add(schedBlameTargetSyncRetry), runner.nextTargetSync)
@@ -1771,7 +1858,7 @@ type schedBlamePublishBPFForTest struct {
 }
 
 func (bpf *schedBlamePublishBPFForTest) MapIDByName(name string) uint32 {
-	if name == "target_cgid_to_dense" {
+	if name == "target_css_to_dense" {
 		return bpf.targetMapID
 	}
 	return 0
@@ -1934,13 +2021,21 @@ func waitForSchedBlameQueueDepth(
 
 func TestSchedBlamePipeline(t *testing.T) {
 	const (
-		targetCgid            = 0x100
-		competitorCgid        = 0x200
+		targetCSSAddr         = 0x100
+		competitorCSSAddr     = 0x200
 		targetCSSID           = 65
 		competitorCSSID       = 1057
 		competitorContainerID = "fedcba9876543210"
 		competitorName        = "competitor-workload"
 	)
+	previous := schedBlameContainerCSSRef
+	schedBlameContainerCSSRef = func(containerID, _ string) (pod.CgroupCSSRef, error) {
+		if containerID != competitorContainerID {
+			return pod.CgroupCSSRef{}, nil
+		}
+		return pod.CgroupCSSRef{CSSAddr: competitorCSSAddr, CgroupID: 1}, nil
+	}
+	t.Cleanup(func() { schedBlameContainerCSSRef = previous })
 
 	rawReader := newSchedBlamePipelineRawReader()
 	reader := newSchedBlamePerfReader(context.Background(), rawReader, 16)
@@ -1956,7 +2051,8 @@ func TestSchedBlamePipeline(t *testing.T) {
 	state := newSchedBlameState(0)
 	var targets [schedBlameMaxTargets]schedBlameTarget
 	targets[schedBlameHighlightIndex] = schedBlameTarget{
-		cgid:        targetCgid,
+		cssAddr:     targetCSSAddr,
+		cgroupID:    1,
 		containerID: "0123456789abcdef",
 		name:        "target-workload",
 		cgroupPath:  "/target",
@@ -1995,7 +2091,7 @@ func TestSchedBlamePipeline(t *testing.T) {
 			map[string]*pod.Container,
 		) {
 			return map[uint64]string{
-					competitorCgid: competitorContainerID,
+					competitorCSSAddr: competitorContainerID,
 				}, map[string]*pod.Container{
 					competitorContainerID: {
 						ID:       competitorContainerID,
@@ -2006,14 +2102,16 @@ func TestSchedBlamePipeline(t *testing.T) {
 	}
 
 	rawReader.pushSample(encodeSchedBlameIdentityForTest(schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		CgroupID: 1,
 	}))
 	rawReader.pushSample(encodeSchedBlameIdentityForTest(schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: competitorCSSID,
-		Cgid:  competitorCgid,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    competitorCSSID,
+		CSSAddr:  competitorCSSAddr,
+		CgroupID: 1,
 	}))
 	waitForSchedBlameQueueDepth(t, reader, 2)
 	require.NoError(t, runner.drain())
@@ -2157,9 +2255,10 @@ func TestSchedBlamePipeline(t *testing.T) {
 
 	const finalCSSID = 2048
 	rawReader.pushSample(encodeSchedBlameIdentityForTest(schedBlameIdentity{
-		Magic: schedBlameIdentityMagic,
-		CSSID: finalCSSID,
-		Cgid:  0x300,
+		Magic:    schedBlameIdentityMagic,
+		CSSID:    finalCSSID,
+		CSSAddr:  0x300,
+		CgroupID: 1,
 	}))
 	require.NoError(t, reader.Flush())
 	require.NoError(t, reader.FinalDrain(state.handleRecord))

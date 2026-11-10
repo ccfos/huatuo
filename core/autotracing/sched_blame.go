@@ -93,7 +93,7 @@ const (
 	schedBlameBatchHeaderSize = 8
 	schedBlameMaxBatchSlices  = 128
 	schedBlameBatchValueSize  = schedBlameBatchHeaderSize + schedBlameMaxBatchSlices*schedBlameSliceSize
-	schedBlameIdentitySize    = 16
+	schedBlameIdentitySize    = 24
 	schedBlameThrottleSize    = 8
 	schedBlameIdentityMagic   = 0x1111
 	schedBlameThrottleMagic   = 0x2222
@@ -117,10 +117,11 @@ const (
 )
 
 type schedBlameIdentity struct {
-	Magic uint16
-	CSSID uint16
-	_     uint32
-	Cgid  uint64
+	Magic    uint16
+	CSSID    uint16
+	_        uint32
+	CSSAddr  uint64
+	CgroupID uint64
 }
 
 var (
@@ -205,11 +206,13 @@ func decodeSchedBlameIdentity(
 		return fmt.Errorf("unexpected sched-blame record size: %d", len(raw))
 	}
 	decoded := schedBlameIdentity{
-		Magic: binary.LittleEndian.Uint16(raw[:2]),
-		CSSID: binary.LittleEndian.Uint16(raw[2:4]),
-		Cgid:  binary.LittleEndian.Uint64(raw[8:16]),
+		Magic:    binary.LittleEndian.Uint16(raw[:2]),
+		CSSID:    binary.LittleEndian.Uint16(raw[2:4]),
+		CSSAddr:  binary.LittleEndian.Uint64(raw[8:16]),
+		CgroupID: binary.LittleEndian.Uint64(raw[16:24]),
 	}
-	if decoded.CSSID >= schedBlameMaxCSSIDs || decoded.Cgid == 0 {
+	if decoded.CSSID >= schedBlameMaxCSSIDs ||
+		decoded.CSSAddr == 0 || decoded.CgroupID == 0 {
 		return errors.New("invalid sched-blame identity record")
 	}
 	*identity = decoded
@@ -330,7 +333,8 @@ func decodeSchedBlameRecord(raw []byte, record *schedBlameRecord) error {
 type schedBlameExternalChargeMatrix [schedBlameMaxPairs]uint64
 
 type schedBlameTarget struct {
-	cgid        uint64
+	cssAddr     uint64
+	cgroupID    uint64
 	containerID string
 	name        string
 	cgroupPath  string
@@ -339,7 +343,7 @@ type schedBlameTarget struct {
 }
 
 func (target schedBlameTarget) active() bool {
-	return target.cgid != 0 && target.containerID != ""
+	return target.cssAddr != 0 && target.cgroupID != 0 && target.containerID != ""
 }
 
 func (bitmap *schedBlameTargetBitmap) set(targetIndex int) {
@@ -374,7 +378,7 @@ func (bitmap *schedBlameTargetBitmap) count() int {
 }
 
 type schedBlameState struct {
-	cssCgids                       [schedBlameMaxCSSIDs]uint64
+	cssRefs                        [schedBlameMaxCSSIDs]pod.CgroupCSSRef
 	cssKnown                       [schedBlameMaxCSSIDs]bool
 	targetDenseByCSSID             [schedBlameMaxCSSIDs]uint8
 	targets                        [schedBlameMaxTargets]schedBlameTarget
@@ -416,7 +420,8 @@ func schedBlameSameTargetOwner(left, right schedBlameTarget) bool {
 	if !left.active() || !right.active() {
 		return !left.active() && !right.active()
 	}
-	return left.containerID == right.containerID && left.cgid == right.cgid
+	return left.containerID == right.containerID &&
+		left.cssAddr == right.cssAddr && left.cgroupID == right.cgroupID
 }
 
 func schedBlameSameTargetAssignments(
@@ -460,18 +465,22 @@ func (state *schedBlameState) rebuildTargetDenseByCSSID() {
 	for cssID := range state.targetDenseByCSSID {
 		state.targetDenseByCSSID[cssID] = schedBlameNonTarget
 	}
-	denseIDByCgid := make(map[uint64]uint8, state.activeTargetCount())
+	denseIDByRef := make(map[pod.CgroupCSSRef]uint8, state.activeTargetCount())
 	for targetIndex := range state.targets {
 		state.targets[targetIndex].cssKnown = false
 		if state.targets[targetIndex].active() {
-			denseIDByCgid[state.targets[targetIndex].cgid] = uint8(targetIndex)
+			target := state.targets[targetIndex]
+			denseIDByRef[pod.CgroupCSSRef{
+				CSSAddr:  target.cssAddr,
+				CgroupID: target.cgroupID,
+			}] = uint8(targetIndex)
 		}
 	}
 	for cssID, known := range &state.cssKnown {
 		if !known {
 			continue
 		}
-		targetIndex, exists := denseIDByCgid[state.cssCgids[cssID]]
+		targetIndex, exists := denseIDByRef[state.cssRefs[cssID]]
 		if !exists {
 			continue
 		}
@@ -501,10 +510,13 @@ func (state *schedBlameState) setTargets(
 func (state *schedBlameState) handleIdentity(
 	identity *schedBlameIdentity,
 ) {
-	if identity.CSSID >= schedBlameMaxCSSIDs || identity.Cgid == 0 {
+	if identity.CSSID >= schedBlameMaxCSSIDs ||
+		identity.CSSAddr == 0 || identity.CgroupID == 0 {
 		return
 	}
-	state.cssCgids[identity.CSSID] = identity.Cgid
+	state.cssRefs[identity.CSSID] = pod.CgroupCSSRef{
+		CSSAddr: identity.CSSAddr, CgroupID: identity.CgroupID,
+	}
 	state.cssKnown[identity.CSSID] = true
 	oldTargetIndex := state.targetDenseByCSSID[identity.CSSID]
 	if oldTargetIndex != schedBlameNonTarget &&
@@ -517,7 +529,8 @@ func (state *schedBlameState) handleIdentity(
 	state.targetDenseByCSSID[identity.CSSID] = schedBlameNonTarget
 	for targetIndex := range state.targets {
 		target := &state.targets[targetIndex]
-		if !target.active() || identity.Cgid != target.cgid {
+		if !target.active() || identity.CSSAddr != target.cssAddr ||
+			identity.CgroupID != target.cgroupID {
 			continue
 		}
 		state.targetDenseByCSSID[identity.CSSID] = uint8(targetIndex)
@@ -671,17 +684,24 @@ func schedBlameTargetFromContainer(
 	if container == nil {
 		return schedBlameTarget{}, false
 	}
-	cgid, exists := container.CgroupCss[subsystem.SubsystemCPU]
-	if !exists || cgid == 0 {
+	cssAddr, exists := container.CgroupCss[subsystem.SubsystemCPU]
+	if !exists || cssAddr == 0 {
+		return schedBlameTarget{}, false
+	}
+	ref, err := schedBlameContainerCSSRef(containerID, subsystem.SubsystemCPU)
+	if err != nil || ref.CSSAddr != cssAddr || ref.CgroupID == 0 {
 		return schedBlameTarget{}, false
 	}
 	return schedBlameTarget{
-		cgid:        cgid,
+		cssAddr:     cssAddr,
+		cgroupID:    ref.CgroupID,
 		containerID: containerID,
 		name:        container.Hostname,
 		cgroupPath:  container.CgroupPath,
 	}, true
 }
+
+var schedBlameContainerCSSRef = pod.ContainerCSSBySubsys
 
 func schedBlameFindHighlightTarget(
 	containers map[string]*pod.Container,
@@ -985,12 +1005,15 @@ func publishSchedBlameTargets(
 	state *schedBlameState,
 	targets *[schedBlameMaxTargets]schedBlameTarget,
 ) error {
-	if state.targetCSSIDEpoch == math.MaxUint32 {
+	if state.targetCSSIDEpoch >= math.MaxUint32-2 {
 		return errors.New("sched-blame: target CSS-ID epoch exhausted")
 	}
-	nextEpoch := state.targetCSSIDEpoch + 1
+	nextEpoch := state.targetCSSIDEpoch + 2
+	if err := writeSchedBlameTargetEpoch(b, nextEpoch-1); err != nil {
+		return err
+	}
 
-	mapID, err := schedBlameMapID(b, "target_cgid_to_dense")
+	mapID, err := schedBlameMapID(b, "target_css_to_dense")
 	if err != nil {
 		return err
 	}
@@ -1021,10 +1044,13 @@ func publishSchedBlameTargets(
 			continue
 		}
 		key := make([]byte, 8)
-		binary.LittleEndian.PutUint64(key, target.cgid)
+		binary.LittleEndian.PutUint64(key, target.cssAddr)
+		value := make([]byte, abi.SchedBlameTargetRefSize)
+		binary.LittleEndian.PutUint64(value, target.cgroupID)
+		value[8] = byte(targetIndex)
 		items = append(items, ibpf.MapItem{
 			Key:   key,
-			Value: []byte{byte(targetIndex)},
+			Value: value,
 		})
 	}
 	if len(items) != 0 {
@@ -1639,10 +1665,10 @@ func (runner *schedBlameRunner) sampleHighlightedSuperMonitor() map[uint64]sched
 		return samples
 	}
 	activeContainerIDs[target.containerID] = struct{}{}
-	samples[target.cgid] = runner.superMonitorSampler.sample(
+	samples[target.cssAddr] = runner.superMonitorSampler.sample(
 		target.containerID,
 		target.cgroupPath,
-		target.cgid,
+		pod.CgroupCSSRef{CSSAddr: target.cssAddr, CgroupID: target.cgroupID},
 	)
 	runner.superMonitorSampler.retain(activeContainerIDs)
 	return samples

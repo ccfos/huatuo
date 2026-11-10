@@ -17,6 +17,7 @@ package bpf
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // DefaultPerfEventBufferBytes is the requested per-CPU capacity in bytes.
@@ -84,12 +85,25 @@ type PerfEventReader interface {
 	ReadInto(dst any) error
 
 	// ReadBatch drains all per-CPU ring buffers currently available within a
-	// bounded deadline. newEvent must return a new event destination per call.
+	// bounded deadline (500 ms by default). Options apply only to this call. newEvent must return a new event destination per call.
 	// The returned batch may contain events and sample loss when err is non-nil.
-	ReadBatch(newEvent func() any) (PerfEventBatch, error)
+	ReadBatch(newEvent func() any, opts ...ReadBatchOption) (PerfEventBatch, error)
 
 	// Close is idempotent and unblocks active reads before returning.
 	Close() error
+}
+
+// ReadBatchOption configures one batch read without changing subsequent reads.
+type ReadBatchOption func(*readBatchOptions)
+
+type readBatchOptions struct {
+	deadline time.Time
+}
+
+// WithReadBatchDeadline sets an absolute deadline for this call. An expired
+// deadline drains available records without waiting. Zero disables the deadline.
+func WithReadBatchDeadline(deadline time.Time) ReadBatchOption {
+	return func(opts *readBatchOptions) { opts.deadline = deadline }
 }
 
 // PerfEventRawReader reads variable-size records without decoding them.

@@ -102,7 +102,7 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 
 	log.Infof("starting native CPU profiler: mode=%s", cfg.Mode)
 
-	cssAddr, err := resolveContainerCgroupCss(ctx, cfg, subsystem.SubsystemCPU)
+	cgroupCSSRef, err := resolveContainerCgroupCSSRef(cfg, subsystem.SubsystemCPU)
 	if err != nil {
 		return err
 	}
@@ -111,10 +111,10 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 	var constants map[string]any
 	if offCPU {
 		objectName = "native_offcpu_profiler.o"
-		constants = newNativeOffCPUBPFConstants(cfg, cssAddr)
+		constants = newNativeOffCPUBPFConstants(cfg, cgroupCSSRef)
 	} else {
 		objectName = "native_oncpu_profiler.o"
-		constants = newNativeBPFConstants(cfg.PID(), cssAddr, cfg.ThreadGroup)
+		constants = newNativeBPFConstants(cfg.PID(), cgroupCSSRef, cfg.ThreadGroup)
 	}
 
 	dbg := bpf.NewDbg(cfg.LogBpfDebug)
@@ -150,7 +150,7 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 			b,
 			ctx,
 			4096*257,
-			false,
+			cfg.Mode,
 		)
 	}
 
@@ -275,7 +275,7 @@ func (p *cpuNativeProfiler) readOnCPUDataLoop(
 		case <-ticker.C:
 		}
 
-		err := ringCtx.drainFrozenRingBuffer(func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue)
+		err := ringCtx.swapAndDrainRingBuffer(func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil

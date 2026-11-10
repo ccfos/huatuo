@@ -38,6 +38,9 @@ io_health_evidence_init() {
 	evidence_target=""
 	evidence_case_dir=""
 	evidence_real_command=""
+	if [[ ${evidence_protocol} == nvme ]]; then
+		source "${ROOT_DIR}/integration/lib_io_health_nvme.sh"
+	fi
 }
 
 io_health_evidence_prepare() {
@@ -46,7 +49,6 @@ io_health_evidence_prepare() {
 	printf 'store=%s\nsource=%s\nbacking=%s\n' \
 		"${EVIDENCE_STORE}" "${evidence_store_source}" "${evidence_loop_backing}" >> "${EVIDENCE_WORK}/resources.txt"
 	if [[ ${evidence_protocol} == nvme ]]; then
-		source "${ROOT_DIR}/integration/lib_io_health_nvme.sh"
 		nvme_fixture_prepare
 		evidence_real_command=${nvme_real_command}
 		evidence_target_disk=${nvme_namespace}

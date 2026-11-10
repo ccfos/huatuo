@@ -180,6 +180,14 @@ supervisor_finalize() {
 		trap '' INT TERM
 		report_summary || code=1
 	fi
+	if [[ ${TEST_SUITE} == integration && ${code} == 0 ]] \
+		&& jq -e '.status == "completed" and .execution_counts.total == .execution_counts.passed' \
+			"${RUNNER_OUTPUT_DIR}/test_run_results.json" > /dev/null; then
+		rm -rf -- "${RUNNER_OUTPUT_DIR}" || {
+			log_error "cannot remove successful integration test directory: ${RUNNER_OUTPUT_DIR}"
+			code=1
+		}
+	fi
 	exit "${code}"
 }
 supervisor_cancel() {

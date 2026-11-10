@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -652,11 +654,162 @@ func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 	}
 }
 
+type detachTestLink struct {
+	link.Link
+	close func() error
+}
+
+func (l detachTestLink) Close() error {
+	return l.close()
+}
+
 func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
-	b := &defaultBPF{}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	b.DetachOnContextDone(ctx, cancel)
+	failure := errors.New("detach failed")
+	for _, tc := range []struct {
+		name         string
+		cancelParent bool
+		detachErr    error
+	}{
+		{name: "parent cancellation", cancelParent: true},
+		{name: "early cleanup"},
+		{name: "detach error", cancelParent: true, detachErr: failure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			detached := make(chan struct{})
+			b := &defaultBPF{
+				programsByID: map[uint32]*loadedProgram{
+					1: {
+						links: map[string]link.Link{
+							"test": detachTestLink{close: func() error {
+								calls.Add(1)
+								close(detached)
+								return tc.detachErr
+							}},
+						},
+					},
+				},
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			cleanup := b.DetachOnContextDone(ctx)
+			t.Cleanup(func() { _ = cleanup() })
+			if tc.cancelParent {
+				cancel()
+				select {
+				case <-detached:
+				case <-time.After(time.Second):
+					t.Fatal("context cancellation did not detach the link")
+				}
+			}
+
+			var wait sync.WaitGroup
+			for range 8 {
+				wait.Add(1)
+				go func() {
+					defer wait.Done()
+					if err := cleanup(); !errors.Is(err, tc.detachErr) {
+						t.Errorf("cleanup error = %v, want %v", err, tc.detachErr)
+					}
+				}()
+			}
+			wait.Wait()
+			require.Equal(t, int32(1), calls.Load())
+			require.NoError(t, b.Close())
+			require.ErrorIs(t, cleanup(), tc.detachErr)
+		})
+	}
+
+	t.Run("cleanup waits for detachment", func(t *testing.T) {
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		b := &defaultBPF{
+			programsByID: map[uint32]*loadedProgram{
+				1: {
+					links: map[string]link.Link{
+						"test": detachTestLink{close: func() error {
+							close(entered)
+							<-release
+							return nil
+						}},
+					},
+				},
+			},
+		}
+		cleanup := b.DetachOnContextDone(t.Context())
+		joined := make(chan error, 1)
+		go func() { joined <- cleanup() }()
+		t.Cleanup(func() {
+			close(release)
+			require.NoError(t, cleanup())
+		})
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("cleanup did not start detachment")
+		}
+		select {
+		case err := <-joined:
+			t.Fatalf("cleanup returned before detachment completed: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
+
+	t.Run("close races cancellation", func(t *testing.T) {
+		var calls atomic.Int32
+		b := &defaultBPF{
+			programsByID: map[uint32]*loadedProgram{
+				1: {
+					links: map[string]link.Link{
+						"test": detachTestLink{close: func() error {
+							calls.Add(1)
+							return nil
+						}},
+					},
+				},
+			},
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		cleanup := b.DetachOnContextDone(ctx)
+		t.Cleanup(func() { require.NoError(t, cleanup()) })
+		closed := make(chan error, 1)
+		go func() { closed <- b.Close() }()
+		cancel()
+		require.NoError(t, cleanup())
+		require.NoError(t, <-closed)
+		require.Equal(t, int32(1), calls.Load())
+	})
+
+	t.Run("closed object", func(t *testing.T) {
+		b := &defaultBPF{}
+		require.NoError(t, b.Close())
+		require.NoError(t, b.DetachOnContextDone(t.Context())())
+	})
+
+	t.Run("maps survive detachment", func(t *testing.T) {
+		b := loadMinimalBpfFromBytes(t)
+		err := b.AttachWithOptions([]AttachOption{{
+			ProgramName: "test_kprobe",
+			Symbol:      "sys_openat",
+		}})
+		if err != nil && (isPerfEventUnavailable(err) || errors.Is(err, link.ErrNotSupported)) {
+			t.Skipf("kprobe attachment is unavailable: %v", err)
+		}
+		require.NoError(t, err)
+		mapID := b.MapIDByName("counter_map")
+		cleanup := b.DetachOnContextDone(t.Context())
+		t.Cleanup(func() { require.NoError(t, cleanup()) })
+		require.NoError(t, cleanup())
+		for _, program := range b.programsByID {
+			require.Empty(t, program.links)
+		}
+		_, err = b.DumpMap(mapID)
+		require.NoError(t, err)
+		require.NoError(t, b.Close())
+		_, err = b.DumpMap(mapID)
+		require.ErrorIs(t, err, ErrClosed)
+	})
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {

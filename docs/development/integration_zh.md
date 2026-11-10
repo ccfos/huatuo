@@ -86,28 +86,26 @@ sudo env INTEGRATION_JOBS=2 make integration
 
 失败后停止启动新用例；未启动项和被取消的执行记为 SKIP。INT/TERM 中断返回 130/143。仅有跳过项时可能返回成功，因此应同时检查计数和跳过原因。
 
-每次有效调用创建 `/tmp/huatuo-test.XXXXXX/`。成功、失败和跳过的日志及工作文件均保留，可整体归档或删除。运行目录包含 `test_run_results.json`；每次执行的工作目录包含 `stdout.log`、`stderr.log` 及服务日志、配置和响应数据。
+每次有效调用创建 `/tmp/huatuo-test.XXXXXX/`。集成测试的所有执行均通过且终端摘要输出成功后，会删除该目录；存在跳过、失败或中断时保留，以便排查。E2E 测试无论结果如何都保留目录。运行目录包含 `test_run_results.json`；每次执行的工作目录包含 `stdout.log`、`stderr.log` 及服务日志、配置和响应数据。集成测试全部通过时，终端摘要中的 `output_dir` 和 `results_path` 指向运行结束后已删除的目录。
 
 ### 终端摘要
 
-终端显示各用例结果，最后输出 JSON 摘要：
+终端显示各用例结果、JSON 摘要，然后输出失败测试的日志：
 
 | 字段 | 含义 |
 | --- | --- |
-| `status` | `completed`、`aborted` 或 `interrupted` |
+| `status` | `passed`、`failed` 或 `interrupted` |
 | `output_dir`、`results_path` | 运行目录和完整报告路径 |
 | `runs_per_test` | 每个测试计划执行的次数 |
 | `started_at`、`finished_at`、`duration_seconds` | 开始、结束时间和耗时 |
 | `execution_counts` | `total`、`passed`、`failed`、`skipped`，包含重复执行和未启动项 |
 | `skipped_tests` | 跳过的测试名称 |
 | `failed_tests` | 失败测试的名称、执行序号、原因和日志 |
-| `reason` | 提前结束原因；正常结束时省略 |
+`failed_tests` 每项包含 `name`、`run_index`、`reason` 和 `logs`。`logs` 数组包含相对于 `output_dir` 的路径。
 
-`failed_tests` 每项包含 `name`、`run_index`、`reason` 和 `logs`。每个日志项包含相对于 `output_dir` 的 `path`、`content` 和截断标记 `truncated`。
+日志覆盖该次失败工作目录中的非空 `.log`、`.err`、`.out`、`.json`、`.conf` 文本文件，排除二进制、`test_run_results.json` 和 `reason.*.log`。JSON 摘要后，每次失败执行先输出 `Failed: ... (run N/M)`，再输出文件标题和内容。超过 64 KiB 的文件标题带有 `(64KB)`，仅展示末尾 64 KiB；完整内容仍保留在原文件中。排查失败时先读 `reason` 和 `stderr.log`，再查看相关服务日志及响应数据。
 
-日志覆盖该次失败工作目录中的非空 `.log`、`.err`、`.out`、`.json`、`.conf` 文本文件，排除二进制、`test_run_results.json` 和 `reason.*.log`。每个文件最多展示末尾 64 KiB；完整内容仍保留在原文件中。排查失败时先读 `reason` 和 `stderr.log`，再查看相关服务日志及响应数据。
-
-完整、合法的 `.json` 文件以 JSON 值嵌入 `content`；无效或截断的 JSON 保留为文本。失败原因优先使用显式诊断；未捕获的命令失败记录脚本、行号、命令和退出码。无法记录原因时保留退出码兜底，已捕获的子进程错误不会作为测试失败原因。
+日志内容以文本形式输出，包括 JSON 文件。失败原因优先使用显式诊断；未捕获的命令失败记录脚本、行号、命令和退出码。无法记录原因时保留退出码兜底，已捕获的子进程错误不会作为测试失败原因。
 
 ### 完整报告
 
@@ -206,7 +204,7 @@ sudo bash integration/run.sh test_metrics_io_wait.sh
 sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
 ```
 
-`TEST_IO_DISK` 默认 `/dev/disk/by-id/virtio-huatuo-ci-io`，必须是专用测试盘，内容可被覆盖；不存在、已挂载或有分区时直接失败。MD、loop 和 NVMe-loop 的后端文件也使用该盘。需要 SCSI 驱动控制的用例单独创建 `scsi_debug` 设备。容器用例使用本机 Kubernetes 节点和已有 kubelet 凭证。
+`TEST_IO_DISK` 默认 `/dev/disk/by-id/virtio-huatuo-ci-io`，必须是专用测试盘，内容可被覆盖。默认设备不存在时跳过依赖该盘的测试；指定其他不存在的设备，或设备不是块设备、已挂载、有分区时直接失败。MD、loop 和 NVMe-loop 的后端文件也使用该盘。需要 SCSI 驱动控制的用例单独创建 `scsi_debug` 设备。容器用例使用本机 Kubernetes 节点和已有 kubelet 凭证。
 
 `make unit` 验证 Go 配置解析、兼容选择、数据解码和指标转换。宿主机及容器指标用例验证真实 IOLatency 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
 

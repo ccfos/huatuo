@@ -86,6 +86,7 @@ var (
 
 type containerCssMetaData struct {
 	CSS         uint64
+	CgroupID    uint64
 	SubSys      string
 	Cgroup      uint64
 	CgroupRoot  int32
@@ -119,6 +120,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 		if sysName, ok := cgroupCssID2SubSysNameMap[index]; ok {
 			m := &containerCssMetaData{
 				CSS:         css,
+				CgroupID:    data.CgroupID,
 				Cgroup:      data.Cgroup,
 				CgroupRoot:  data.CgroupRoot,
 				CgroupLevel: data.CgroupLevel,
@@ -144,8 +146,10 @@ func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error 
 		}
 
 		if _, ok := cgroupCssID2SubSysNameMap[index]; ok {
-			m, loaded := cgroupCssMetaDataMap.LoadAndDelete(css)
-			if loaded {
+			m, loaded := cgroupCssMetaDataMap.Load(css)
+			if loaded && m.(*containerCssMetaData).CgroupID == data.CgroupID &&
+				m.(*containerCssMetaData).ContainerID == containerID &&
+				cgroupCssMetaDataMap.CompareAndDelete(css, m) {
 				log.Debugf("delete container css data: %+v", m)
 			}
 		}
@@ -337,42 +341,49 @@ func cgroupCssExistedSync() error {
 	return nil
 }
 
-// ContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
-// container and subsystem. It first checks the local cache, and if not found, triggers
-// a one-time BPF-based collection for that specific container.
+// ContainerCSSBySubsys returns a paired CSS address and cgroup ID for one
+// container subsystem. A missing cache entry triggers one BPF sync.
 // This function is compatible with the shared cgroup lifecycle initialization.
-func ContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
+func ContainerCSSBySubsys(containerID, subsysName string) (CgroupCSSRef, error) {
 	if containerID == "" {
-		return 0, nil
+		return CgroupCSSRef{}, nil
 	}
 
 	// Ensure subsystem IDs are initialized
 	if err := cgroupInitSubSysIDs(); err != nil {
-		return 0, fmt.Errorf("init subsystem IDs: %w", err)
+		return CgroupCSSRef{}, fmt.Errorf("init subsystem IDs: %w", err)
 	}
 
 	// Check if CSS data already exists in cache
 	cssList := cgroupListCssDataByKnode(containerID)
 	for _, css := range cssList {
 		if css.SubSys == subsysName {
-			return css.CSS, nil
+			return containerCSSRef(css, containerID)
 		}
 	}
 
 	// CSS not found in cache, trigger one-time collection
 	if err := syncContainerCSS(containerID, subsysName); err != nil {
-		return 0, fmt.Errorf("sync container CSS: %w", err)
+		return CgroupCSSRef{}, fmt.Errorf("sync container CSS: %w", err)
 	}
 
 	// Retry lookup after sync
 	cssList = cgroupListCssDataByKnode(containerID)
 	for _, css := range cssList {
 		if css.SubSys == subsysName {
-			return css.CSS, nil
+			return containerCSSRef(css, containerID)
 		}
 	}
 
-	return 0, fmt.Errorf("container %q CSS for subsystem %q not found", containerID, subsysName)
+	return CgroupCSSRef{}, fmt.Errorf("container %q CSS for subsystem %q not found", containerID, subsysName)
+}
+
+func containerCSSRef(css *containerCssMetaData, containerID string) (CgroupCSSRef, error) {
+	if css.CSS == 0 || css.CgroupID == 0 {
+		return CgroupCSSRef{}, fmt.Errorf("container %q %s CSS identity is incomplete: address=%#x cgroup_id=%#x",
+			containerID, css.SubSys, css.CSS, css.CgroupID)
+	}
+	return CgroupCSSRef{CSSAddr: css.CSS, CgroupID: css.CgroupID}, nil
 }
 
 // syncContainerCSS triggers a one-time BPF-based CSS collection for a specific container.

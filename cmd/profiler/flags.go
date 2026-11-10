@@ -142,11 +142,6 @@ var appFlags = []cli.Flag{
 		Usage: "Binary path used to match target processes",
 	},
 	&cli.StringFlag{
-		Name:  "huatuo-api-address",
-		Usage: "HuaTuo API address used to resolve container metadata",
-		Value: "127.0.0.1:19704",
-	},
-	&cli.StringFlag{
 		Name:  "task-id",
 		Usage: "Profiling task ID; required for remote output, generated when empty for local output",
 	},

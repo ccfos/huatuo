@@ -26,7 +26,6 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
 | `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
-| `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address for resolving container metadata |
 | `--task-id` | Empty; generated internally for local output | All; required for `remote-store` | Stable collection task ID shared by toolstream and remote storage |
 | `--enable-pprof` | `false` | The tool itself | Serve this process's Go runtime profiles on `127.0.0.1:6000` |
 | `--version-format` | `text` | Version queries | Format for `--version`: `text`, `json`, or `short` |
@@ -36,6 +35,9 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 These pprof endpoints describe the profiler process's own Go runtime, not the `--pid` target or Java/Python collector subprocesses. The listener is now restricted to loopback rather than all interfaces; an occupied port fails startup.
 
 ## Collection
+
+Native on-CPU and memory collection require Linux `MEMBARRIER_CMD_GLOBAL` support (`CONFIG_MEMBARRIER` enabled and `NO_HZ_FULL` inactive). Ring swaps depend on this command providing a sched-RCU grace period on Linux 4.18 and a unified RCU grace period on Linux 5.0 and later; expedited membarrier commands cannot replace it. An RCU stall can delay a swap and collection shutdown.
+
 
 | Parameter | Default | Applies To | Description |
 | --- | --- | --- | --- |

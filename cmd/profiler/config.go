@@ -95,7 +95,6 @@ func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
 			CPUIDs:               cpuIDs,
 			RequireHardwarePMU:   cliCtx.Bool("require-hardware-pmu"),
 
-			ServerAddress:             cliCtx.String("huatuo-api-address"),
 			Type:                      typ,
 			ContainerID:               cliCtx.String("container-id"),
 			ExecPath:                  cliCtx.String("binary-match-path"),

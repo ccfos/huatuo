@@ -196,7 +196,10 @@ sudo _output/bin/profiler \
 
 `--type` 和 `--language` 为必填参数。Java、Python 和原生内存采集必须在 `--pid` 与 `--container-id` 中指定且仅指定一个目标；原生 CPU 采集未指定目标时可进行宿主机级采样。
 
-容器目标还需要可访问的 huatuo-bamai 节点接口，用于解析容器元数据；地址由 `--huatuo-api-address` 指定。
+容器目标采集必须在容器所在节点运行。原生 profiler 直接从本机内核解析 CSS 引用，
+无需节点接口。引用包含 CSS 地址与 cgroup ID；采样前，BPF 过滤器会用当前 cgroup
+核对两者。节点接口通过 `cgroup_css_refs` 向本机消费者提供完整引用；其中的内核地址
+在其他节点没有意义。
 
 ### C、C++ 和 Go
 

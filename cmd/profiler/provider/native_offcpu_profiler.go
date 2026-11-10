@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 
@@ -67,8 +68,8 @@ func nativeOffCPUAttachOptions() []bpf.AttachOption {
 	}
 }
 
-func newNativeOffCPUBPFConstants(cfg *Config, cssAddr uint64) map[string]any {
-	constants := newNativeBPFConstants(cfg.PID(), cssAddr, cfg.ThreadGroup)
+func newNativeOffCPUBPFConstants(cfg *Config, cgroupCSSRef pod.CgroupCSSRef) map[string]any {
+	constants := newNativeBPFConstants(cfg.PID(), cgroupCSSRef, cfg.ThreadGroup)
 	constants["profiler_offcpu_phase"] = offCPUPhaseCode(cfg.OffCPUPhase)
 	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(cfg.OffCPUMinDurationUS)
 	constants["profiler_offcpu_cpu_set_enabled"] = uint32(0)
@@ -213,6 +214,11 @@ func (r *ringBufferContext) readOffCPUBatch(enqueue func(*pipeline.SampleBatch) 
 }
 
 func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipeline.SampleBatch) error) error {
+	stacks := nativeStackResolver{
+		bpf:        r.bpf,
+		usym:       r.usym,
+		stackMapID: r.stackMapAID,
+	}
 	// Reuse immutable frames within this batch; later batches resolve anew.
 	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
 	kernelCache := make(map[int32][]types.ProfileFrame)
@@ -225,7 +231,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 
 		pid := uint32(event.Base.PIDTGID >> 32)
 		labels := append(
-			nativeLabels(pid, taskCommString(event.Base.Comm)),
+			nativeProcessLabels(pid, taskCommString(event.Base.Comm)),
 			types.ProfileStringLabel("offcpu_category", offCPUCategory(event.Kind)),
 		)
 		labels, err := types.NormalizeLabels(labels)
@@ -240,7 +246,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 		}
 		user := userCache[userKey]
 		if user == nil {
-			user, err = r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid)
+			user, err = stacks.resolveUserFrames(event.Base.Userstack, pid)
 			if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
 				return err
 			}
@@ -252,7 +258,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 
 		kernel := kernelCache[event.Base.Kernstack]
 		if kernel == nil {
-			kernel, err = r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack)
+			kernel, err = stacks.resolveKernelFrames(event.Base.Kernstack)
 			if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
 				return err
 			}

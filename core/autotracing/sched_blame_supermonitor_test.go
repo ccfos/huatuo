@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func writeSchedBlameSuperMonitorCounters(
@@ -67,7 +69,8 @@ func TestSchedBlameSuperMonitorSampler(t *testing.T) {
 		throttleWait:  10,
 		cpuUsage:      1_000,
 	})
-	baseline := sampler.sample(containerID, cgroupPath, 1)
+	ref := pod.CgroupCSSRef{CSSAddr: 1, CgroupID: 10}
+	baseline := sampler.sample(containerID, cgroupPath, ref)
 	assert.False(t, baseline.valid)
 	assert.Equal(t, "baseline", baseline.invalidReason)
 
@@ -77,7 +80,7 @@ func TestSchedBlameSuperMonitorSampler(t *testing.T) {
 		throttleWait:  20,
 		cpuUsage:      1_060,
 	})
-	sample := sampler.sample(containerID, cgroupPath, 1)
+	sample := sampler.sample(containerID, cgroupPath, ref)
 	require.True(t, sample.valid)
 	assert.Equal(t, uint64(100), sample.hierarchyWaitDelta)
 	assert.Equal(t, uint64(20), sample.innerWaitDelta)
@@ -105,12 +108,13 @@ func TestSchedBlameSuperMonitorSamplerResetsAfterCounterDecrease(t *testing.T) {
 		hierarchyWait: 100,
 		cpuUsage:      100,
 	})
-	_ = sampler.sample(containerID, cgroupPath, 1)
+	ref := pod.CgroupCSSRef{CSSAddr: 1, CgroupID: 10}
+	_ = sampler.sample(containerID, cgroupPath, ref)
 	writeSchedBlameSuperMonitorCounters(t, path, schedBlameSuperMonitorCounters{
 		hierarchyWait: 90,
 		cpuUsage:      110,
 	})
-	sample := sampler.sample(containerID, cgroupPath, 1)
+	sample := sampler.sample(containerID, cgroupPath, ref)
 	assert.False(t, sample.valid)
 	assert.Equal(t, "hierarchy_wait_decreased", sample.invalidReason)
 
@@ -118,12 +122,12 @@ func TestSchedBlameSuperMonitorSamplerResetsAfterCounterDecrease(t *testing.T) {
 		hierarchyWait: 100,
 		cpuUsage:      120,
 	})
-	sample = sampler.sample(containerID, cgroupPath, 1)
+	sample = sampler.sample(containerID, cgroupPath, ref)
 	require.True(t, sample.valid)
 	assert.InDelta(t, 0.5, sample.waitrate, 1e-9)
 }
 
-func TestSchedBlameSuperMonitorSamplerResetsAfterCgidChange(t *testing.T) {
+func TestSchedBlameSuperMonitorSamplerResetsAfterCSSRefChange(t *testing.T) {
 	const (
 		containerID = "0123456789abcdef"
 		cgroupPath  = "/kubepods/container"
@@ -140,13 +144,17 @@ func TestSchedBlameSuperMonitorSamplerResetsAfterCgidChange(t *testing.T) {
 		hierarchyWait: 100,
 		cpuUsage:      100,
 	})
-	_ = sampler.sample(containerID, cgroupPath, 1)
+	_ = sampler.sample(containerID, cgroupPath, pod.CgroupCSSRef{CSSAddr: 1, CgroupID: 10})
 	writeSchedBlameSuperMonitorCounters(t, path, schedBlameSuperMonitorCounters{
 		hierarchyWait: 200,
 		cpuUsage:      200,
 	})
 
-	sample := sampler.sample(containerID, cgroupPath, 2)
+	sample := sampler.sample(containerID, cgroupPath, pod.CgroupCSSRef{CSSAddr: 1, CgroupID: 11})
+	assert.False(t, sample.valid)
+	assert.Equal(t, "baseline", sample.invalidReason)
+
+	sample = sampler.sample(containerID, cgroupPath, pod.CgroupCSSRef{CSSAddr: 2, CgroupID: 11})
 	assert.False(t, sample.valid)
 	assert.Equal(t, "baseline", sample.invalidReason)
 }

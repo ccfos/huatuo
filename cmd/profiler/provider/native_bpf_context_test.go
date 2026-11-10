@@ -115,7 +115,7 @@ func (*frozenRingReaderStub) ReadInto(any) error {
 	return nil
 }
 
-func (r *frozenRingReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+func (r *frozenRingReaderStub) ReadBatch(func() any, ...bpf.ReadBatchOption) (bpf.PerfEventBatch, error) {
 	if r.reads >= len(r.batches) {
 		return bpf.PerfEventBatch{}, nil
 	}
@@ -238,7 +238,7 @@ func TestDrainFrozenRingBufferContinuesAfterSamplesLost(t *testing.T) {
 	}
 
 	var total int64
-	err := ringCtx.drainFrozenRingBuffer(
+	err := ringCtx.swapAndDrainRingBuffer(
 		func() any { return &abi.ProfilerEventBase{} },
 		func(batch *pipeline.SampleBatch) error {
 			for _, s := range batch.Samples {
@@ -250,7 +250,7 @@ func TestDrainFrozenRingBufferContinuesAfterSamplesLost(t *testing.T) {
 		func(value int64) (int64, error) { return value, nil },
 	)
 	if err != nil {
-		t.Fatalf("drainFrozenRingBuffer() error = %v", err)
+		t.Fatalf("swapAndDrainRingBuffer() error = %v", err)
 	}
 
 	if reader.reads != 2 {
@@ -378,19 +378,19 @@ func TestResolveStackWithFallback(t *testing.T) {
 					}
 					return make([]byte, bpfmap.StackTraceLen*8), tt.fallbackErr
 				}}
-				r := &ringBufferContext{
-					bpf:  obj,
-					usym: symbol.NewUsymResolver(),
+				r := nativeStackResolver{
+					bpf:        obj,
+					usym:       symbol.NewUsymResolver(),
+					stackMapID: 2,
 				}
-				ring := frozenRingBuffer{stackMapID: 2}
 				if tt.fallback {
-					ring.fallbackStackMapID = 3
+					r.fallbackStackMapID = 3
 				}
 				var err error
 				if user {
-					_, err = r.resolveUserStackWithFallback(ring, tt.id, 1)
+					_, err = r.resolveUserFrames(tt.id, 1)
 				} else {
-					_, err = r.resolveKernelStackWithFallback(ring, tt.id)
+					_, err = r.resolveKernelFrames(tt.id)
 				}
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("error = %v, want %v", err, tt.wantErr)
@@ -456,7 +456,7 @@ func TestNativeBatchesHandleStackErrors(t *testing.T) {
 						err = r.enqueueOffCPUBatch([]any{&abi.ProfilerOffCPUEvent{Base: base}}, enqueue)
 					} else {
 						r.readerA = &frozenRingReaderStub{batches: []bpf.PerfEventBatch{{Events: []any{&base}}}}
-						err = r.drainFrozenRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, func(value int64) (int64, error) { return value, nil })
+						err = r.swapAndDrainRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, func(value int64) (int64, error) { return value, nil })
 					}
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("error = %v, want %v", err, tt.wantErr)
@@ -767,7 +767,7 @@ type taskReaderStub struct {
 
 func (*taskReaderStub) ReadInto(any) error { return nil }
 func (*taskReaderStub) Close() error       { return nil }
-func (r *taskReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+func (r *taskReaderStub) ReadBatch(func() any, ...bpf.ReadBatchOption) (bpf.PerfEventBatch, error) {
 	close(r.reading)
 	<-r.ctx.Done()
 	return bpf.PerfEventBatch{}, types.ErrExitByCancelCtx
@@ -785,11 +785,12 @@ func TestNativeReadersFollowTaskLifetime(t *testing.T) {
 			if single {
 				_, err = newSingleRingBufferContext(obj, taskCtx, 4096)
 			} else {
-				_, err = newRingBufferContext(
+				_, err = newRingBufferContextWithSynchronization(
 					obj,
 					taskCtx,
 					4096,
-					false,
+					profiling.ModeOnCPU,
+					func() error { return nil },
 				)
 			}
 
@@ -855,7 +856,7 @@ func BenchmarkDrainFrozenRingBuffer(b *testing.B) {
 	for b.Loop() {
 		a.reads, c.reads = 0, 0
 		obj.values[bpfmap.SampleCountAIdx], obj.values[bpfmap.SampleCountBIdx] = 1, 1
-		if err := r.drainFrozenRingBuffer(newEvent, enqueue, convert); err != nil {
+		if err := r.swapAndDrainRingBuffer(newEvent, enqueue, convert); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -880,7 +881,7 @@ func TestNativeFinalizationAccountsAcrossWindows(t *testing.T) {
 		dropped += batch.DroppedSamples[types.DropReasonCollection]
 		return nil
 	}
-	if err := r.drainFrozenRingBuffer(func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue); err != nil {
+	if err := r.swapAndDrainRingBuffer(func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue); err != nil {
 		t.Fatal(err)
 	}
 	// Three failures from the previous window are reported only when a later
@@ -970,8 +971,111 @@ func TestNativeReaderCreationPreservesCleanupFailure(t *testing.T) {
 		reader: first,
 		err:    createErr,
 	}
-	_, err := newRingBufferContext(obj, t.Context(), 4096, false)
+	_, err := newRingBufferContextWithSynchronization(obj, t.Context(), 4096, profiling.ModeOnCPU, func() error { return nil })
 	if !errors.Is(err, createErr) || !errors.Is(err, closeErr) || !first.closed {
 		t.Fatalf("creation error=%v cleanup attempted=%t", err, first.closed)
+	}
+}
+
+type batchOptionsReader struct {
+	bpf.PerfEventReader
+	options int
+}
+
+func (r *batchOptionsReader) ReadBatch(_ func() any, opts ...bpf.ReadBatchOption) (bpf.PerfEventBatch, error) {
+	r.options = len(opts)
+	return bpf.PerfEventBatch{}, errors.New("read sentinel")
+}
+
+func TestNativeRingReadStrategy(t *testing.T) {
+	for _, synchronize := range []bool{false, true} {
+		rd := &batchOptionsReader{}
+		obj := &frozenRingBPFStub{values: map[uint32]uint64{}}
+		r := &ringBufferContext{
+			bpf:                obj,
+			readerA:            rd,
+			transferStateMapID: 1,
+		}
+		if synchronize {
+			r.synchronizeWriters = func() error { return nil }
+		}
+		err := r.swapAndDrainRingBuffer(func() any { return nil }, nil, nil)
+		want := 0
+		if synchronize {
+			want = 1
+		}
+		if err == nil || rd.options != want {
+			t.Fatalf("synchronize=%t options=%d want=%d err=%v", synchronize, rd.options, want, err)
+		}
+	}
+}
+
+func TestFrozenDrainWaitsForWriterBeforeCounting(t *testing.T) {
+	reader := &frozenRingReaderStub{}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{}}
+	r := &ringBufferContext{
+		bpf:                obj,
+		readerA:            reader,
+		transferStateMapID: 1,
+	}
+	synchronized := false
+	r.synchronizeWriters = func() error {
+		if obj.values[bpfmap.TransferCountIdx] != 1 {
+			t.Fatal("writers synchronized before parity changed")
+		}
+		reader.batches = []bpf.PerfEventBatch{{
+			Events: []any{&abi.ProfilerEventBase{
+				Value:     7,
+				Kernstack: -1,
+				Userstack: -1,
+			}},
+		}}
+		obj.values[bpfmap.SampleCountAIdx] = 1
+		synchronized = true
+		return nil
+	}
+	var total int64
+	err := r.swapAndDrainRingBuffer(func() any { return &abi.ProfilerEventBase{} }, func(b *pipeline.SampleBatch) error {
+		for _, sample := range b.Samples {
+			total += sample.Value
+		}
+		return nil
+	}, func(v int64) (int64, error) { return v, nil })
+	if err != nil || !synchronized || total != 7 || obj.values[bpfmap.SampleCountAIdx] != 0 {
+		t.Fatalf("err=%v synchronized=%v total=%d count=%d", err, synchronized, total, obj.values[bpfmap.SampleCountAIdx])
+	}
+}
+
+func TestFrozenDrainSynchronizationFailurePreservesUnreadRing(t *testing.T) {
+	reader := &frozenRingReaderStub{}
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{bpfmap.SampleCountAIdx: 7}}
+	failure := errors.New("synchronize failed")
+	r := &ringBufferContext{
+		bpf:                obj,
+		readerA:            reader,
+		transferStateMapID: 1,
+		synchronizeWriters: func() error { return failure },
+	}
+	err := r.swapAndDrainRingBuffer(func() any { return nil }, nil, nil)
+	if !errors.Is(err, failure) || reader.reads != 0 || obj.values[bpfmap.SampleCountAIdx] != 7 {
+		t.Fatalf("err=%v reads=%d count=%d", err, reader.reads, obj.values[bpfmap.SampleCountAIdx])
+	}
+}
+
+func TestExtractNativeEvent(t *testing.T) {
+	base := &abi.ProfilerEventBase{Value: 7}
+	got, cpu, err := extractNativeEvent(base)
+	if err != nil || got != base || cpu != nil {
+		t.Fatalf("base=%p cpu=%v err=%v", got, cpu, err)
+	}
+	onCPU := &abi.ProfilerOnCPUEvent{CPU: 0}
+	got, cpu, err = extractNativeEvent(onCPU)
+	if err != nil || got != &onCPU.Base || cpu == nil || *cpu != 0 {
+		t.Fatalf("on-CPU source=%p cpu=%v err=%v", got, cpu, err)
+	}
+	for _, record := range []any{nil, 42, (*abi.ProfilerEventBase)(nil), (*abi.ProfilerOnCPUEvent)(nil)} {
+		if _, _, err := extractNativeEvent(record); err == nil {
+			t.Fatalf("accepted invalid event %T", record)
+		}
 	}
 }

@@ -18,6 +18,9 @@
 export TEST_IO_DISK=${TEST_IO_DISK-/dev/disk/by-id/virtio-huatuo-ci-io}
 
 io_test_require_disk() {
+	if [[ ${TEST_IO_DISK} == /dev/disk/by-id/virtio-huatuo-ci-io && ! -e ${TEST_IO_DISK} ]]; then
+		skip "default IO test disk is missing: ${TEST_IO_DISK}; configure TEST_IO_DISK with a dedicated scratch block device"
+	fi
 	[[ -b ${TEST_IO_DISK} ]] || fatal "test disk is missing: TEST_IO_DISK=${TEST_IO_DISK}; configure a dedicated scratch block device"
 }
 

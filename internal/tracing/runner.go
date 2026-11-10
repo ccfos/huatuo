@@ -79,15 +79,10 @@ func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
 	for {
 		err := r.starter.Start(ctx)
 		r.incrementRunCount()
-		if ctx.Err() != nil || errors.Is(err, types.ErrNotSupported) {
-			return
-		}
-		if err != nil &&
-			!errors.Is(err, types.ErrExitByCancelCtx) &&
-			!errors.Is(err, types.ErrDisconnectedHuatuo) {
+		if !expectedTracerExit(err) {
 			log.WithError(err).WithField("tracer", r.name).Error("tracer failed")
 		}
-		if errors.Is(err, types.ErrTracingStopped) {
+		if ctx.Err() != nil || errors.Is(err, types.ErrNotSupported) || errors.Is(err, types.ErrTracingStopped) {
 			return
 		}
 		timer := time.NewTimer(r.restartInterval)
@@ -97,6 +92,32 @@ func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
 			return
 		case <-timer.C:
 		}
+	}
+}
+
+// Inspect every joined cause so a cancellation cannot hide a cleanup failure.
+func expectedTracerExit(err error) bool {
+	if err == nil {
+		return true
+	}
+
+	switch wrapped := err.(type) { //nolint:errorlint // Traverse each node; errors.As could skip a joined sibling.
+	case interface{ Unwrap() []error }:
+		for _, cause := range wrapped.Unwrap() {
+			if !expectedTracerExit(cause) {
+				return false
+			}
+		}
+
+		return true
+	case interface{ Unwrap() error }:
+		return expectedTracerExit(wrapped.Unwrap())
+	default:
+		return errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) ||
+			errors.Is(err, types.ErrExitByCancelCtx) ||
+			errors.Is(err, types.ErrDisconnectedHuatuo) ||
+			errors.Is(err, types.ErrNotSupported)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -120,7 +121,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
-	cssAddr, err := resolveContainerCgroupCss(ctx, cfg, subsystem.SubsystemMemory)
+	cgroupCSSRef, err := resolveContainerCgroupCSSRef(cfg, subsystem.SubsystemMemory)
 	if err != nil {
 		return err
 	}
@@ -128,7 +129,7 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 	loadConfig, err := newNativeMemoryBPFLoadConfig(
 		p.internalMode,
 		cfg.PID(),
-		cssAddr,
+		cgroupCSSRef,
 		cfg.ThreadGroup,
 		p.probability,
 	)
@@ -143,12 +144,11 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
-	needsFallback := p.internalMode == profiling.ModePhysicalUsage
 	ringCtx, err := newRingBufferContext(
 		b,
 		ctx,
 		4096*257,
-		needsFallback,
+		p.internalMode,
 	)
 	if err != nil {
 		readerErr := fmt.Errorf("create native memory event readers: %w", err)
@@ -192,11 +192,11 @@ type nativeMemoryBPFLoadConfig struct {
 func newNativeMemoryBPFLoadConfig(
 	internalMode profiling.Mode,
 	pid int,
-	cssAddr uint64,
+	cgroupCSSRef pod.CgroupCSSRef,
 	threadGroup bool,
 	probability uint,
 ) (*nativeMemoryBPFLoadConfig, error) {
-	constants := newNativeBPFConstants(pid, cssAddr, threadGroup)
+	constants := newNativeBPFConstants(pid, cgroupCSSRef, threadGroup)
 
 	switch internalMode {
 	case profiling.ModeVirtualAlloc:
@@ -336,7 +336,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 		case <-ticker.C:
 		}
 
-		err := ringCtx.drainFrozenRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, p.convertValueToBytes)
+		err := ringCtx.swapAndDrainRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, p.convertValueToBytes)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil

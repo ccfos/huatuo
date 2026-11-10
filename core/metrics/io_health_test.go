@@ -1089,7 +1089,7 @@ func (r *fakeIOHealthPerfReader) ReadInto(value any) error {
 	}
 }
 
-func (r *fakeIOHealthPerfReader) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+func (r *fakeIOHealthPerfReader) ReadBatch(func() any, ...bpf.ReadBatchOption) (bpf.PerfEventBatch, error) {
 	return bpf.PerfEventBatch{}, errors.New("unexpected batch read")
 }
 
