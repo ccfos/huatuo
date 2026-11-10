@@ -19,19 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
-
-	"golang.org/x/sys/unix"
-
-	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -39,18 +34,6 @@ import (
 // or B chosen by transferCnt parity; userspace flips parity each tick, then
 // drains the just-frozen ring. ~100ms balances responsiveness and overhead.
 const drainInterval = 100 * time.Millisecond
-
-// Linux UAPI include/uapi/linux/membarrier.h; x/sys/unix omits these constants.
-const (
-	membarrierCmdQuery  = 0
-	membarrierCmdGlobal = 1
-)
-
-// validateStackID reports whether an ID returned by bpf_get_stackid can index a stack map.
-// Zero is a valid key; only negative values indicate lookup errors.
-func validateStackID(stackID int32) bool {
-	return stackID >= 0
-}
 
 // ringBufferContext holds the shared ring buffer state for A/B buffer management.
 // It encapsulates all the common infrastructure needed for dual-buffer profiling
@@ -62,7 +45,7 @@ type ringBufferContext struct {
 	transferStateMapID uint32
 	stackMapAID        uint32
 	stackMapBID        uint32
-	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
+	mode               profiling.Mode
 	usym               *symbol.UsymResolver
 	synchronizeWriters func() error
 
@@ -74,33 +57,20 @@ type ringBufferContext struct {
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
 // It creates perf event readers for both A/B outputs and resolves map IDs for state and stack maps.
 // The returned context can be used throughout the profiler's lifetime without passing individual components.
-// needsFallback: true for memory retained mode (requires dual-stack-map fallback), false for others.
+// The mode determines whether retained allocation stacks need fallback lookup.
 func newRingBufferContext(
 	b bpf.BPF,
 	ctx context.Context,
 	bufferSize int,
-	needsFallback bool,
+	mode profiling.Mode,
 ) (*ringBufferContext, error) {
-	return newRingBufferContextWithQuery(b, ctx, bufferSize, needsFallback, queryMembarrier)
+	return newRingBufferContextWithSynchronization(b, ctx, bufferSize, mode, detectNativeWriterSynchronization())
 }
 
-func queryMembarrier() (uintptr, unix.Errno) {
-	supported, _, errno := unix.Syscall(unix.SYS_MEMBARRIER, membarrierCmdQuery, 0, 0)
-	return supported, errno
-}
-
-func newRingBufferContextWithQuery(
-	b bpf.BPF, ctx context.Context, bufferSize int, needsFallback bool,
-	query func() (uintptr, unix.Errno),
+func newRingBufferContextWithSynchronization(
+	b bpf.BPF, ctx context.Context, bufferSize int, mode profiling.Mode,
+	synchronize func() error,
 ) (*ringBufferContext, error) {
-	// GLOBAL is disabled by kernels with NO_HZ_FULL; fail before opening readers.
-	supported, errno := query()
-	if errno != 0 {
-		return nil, fmt.Errorf("query native profiler writer synchronization: %w", errno)
-	}
-	if supported&membarrierCmdGlobal == 0 {
-		return nil, errors.New("native A/B profiling requires Linux MEMBARRIER_CMD_GLOBAL support")
-	}
 	// Start supplies the task context, so failure and timeout interrupt reads.
 	readerA, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
@@ -122,8 +92,8 @@ func newRingBufferContextWithQuery(
 		transferStateMapID: b.MapIDByName("profiler_state_map"),
 		stackMapAID:        b.MapIDByName("stack_map_a"),
 		stackMapBID:        b.MapIDByName("stack_map_b"),
-		needsFallback:      needsFallback,
-		synchronizeWriters: synchronizeNativeWriters,
+		mode:               mode,
+		synchronizeWriters: synchronize,
 		usym:               symbol.NewUsymResolver(),
 	}, nil
 }
@@ -174,10 +144,11 @@ func (r *ringBufferContext) Close() error {
 	return errors.Join(readerAErr, readerBErr)
 }
 
-// frozenRingBuffer represents a frozen ring buffer that is ready to be drained.
+// nativeRingBuffer identifies one output and its associated maps.
 // It contains the reader for the ring buffer and the index to track sample counts.
 // For retained mode memory profiling, fallbackStackMapID provides fallback lookup path.
-type frozenRingBuffer struct {
+type nativeRingBuffer struct {
+	readOptions        []bpf.ReadBatchOption // Set only after writer synchronization or detach.
 	reader             bpf.PerfEventReader
 	stackMapID         uint32
 	sampleCountIdx     uint32
@@ -185,38 +156,38 @@ type frozenRingBuffer struct {
 }
 
 // advanceSwapParity increments the BPF write-parity counter so the kernel
-// switches to the other buffer pair, then returns the now-frozen (drainable)
-// ring along with the sample-count index used to track how many events the
+// switches new writers to the other buffer pair, then returns the previous
+// ring. Existing writers may still use it until synchronized. The index tracks events the
 // BPF side wrote. The caller reads and resets that count while draining.
 //
 // This method uses the pre-initialized ring buffer context, eliminating the need
 // to pass readerA/readerB/transferStateMapID/map names on every call.
-// For retained mode (needsFallback=true), it automatically sets fallbackStackMapID.
-func (r *ringBufferContext) advanceSwapParity() (frozenRingBuffer, error) {
+// Physical usage retains allocation stacks across both maps.
+func (r *ringBufferContext) advanceSwapParity() (nativeRingBuffer, error) {
 	transferCount, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
-		return frozenRingBuffer{}, fmt.Errorf("read transferCnt: %w", err)
+		return nativeRingBuffer{}, fmt.Errorf("read transferCnt: %w", err)
 	}
 
-	var ring frozenRingBuffer
+	var ring nativeRingBuffer
 	if transferCount%2 == 0 {
-		ring = frozenRingBuffer{
+		ring = nativeRingBuffer{
 			reader:         r.readerA,
 			stackMapID:     r.stackMapAID,
 			sampleCountIdx: bpfmap.SampleCountAIdx,
 		}
 		// Set fallback to stack_map_b for retained mode
-		if r.needsFallback {
+		if r.mode == profiling.ModePhysicalUsage {
 			ring.fallbackStackMapID = r.stackMapBID
 		}
 	} else {
-		ring = frozenRingBuffer{
+		ring = nativeRingBuffer{
 			reader:         r.readerB,
 			stackMapID:     r.stackMapBID,
 			sampleCountIdx: bpfmap.SampleCountBIdx,
 		}
 		// Set fallback to stack_map_a for retained mode
-		if r.needsFallback {
+		if r.mode == profiling.ModePhysicalUsage {
 			ring.fallbackStackMapID = r.stackMapAID
 		}
 	}
@@ -227,28 +198,15 @@ func (r *ringBufferContext) advanceSwapParity() (frozenRingBuffer, error) {
 		bpfmap.TransferCountIdx,
 		transferCount+1,
 	); err != nil {
-		return frozenRingBuffer{}, fmt.Errorf("write transferCnt: %w", err)
+		return nativeRingBuffer{}, fmt.Errorf("write transferCnt: %w", err)
 	}
 
 	return ring, nil
 }
 
-// synchronizeNativeWriters relies on Linux GLOBAL membarrier using a sched-RCU
-// grace period (4.18) or unified RCU (5.0+). Non-sleepable tracing BPF runs with
-// preemption disabled, so all writers that selected the old parity have exited
-// before this returns. EXPEDITED commands only issue IPIs and are not substitutes.
-// An RCU stall can delay this syscall; an arbitrary timeout cannot prove quiescence.
-func synchronizeNativeWriters() error {
-	_, _, errno := unix.Syscall(unix.SYS_MEMBARRIER, membarrierCmdGlobal, 0, 0)
-	if errno != 0 {
-		return errno
-	}
-	return nil
-}
-
-// drainFrozenRingBuffer preserves the A/B transfer boundary while delivering
-// bounded symbolized batches. Stack caches belong only to this frozen map.
-func (r *ringBufferContext) drainFrozenRingBuffer(
+// swapAndDrainRingBuffer preserves the A/B transfer boundary while delivering
+// bounded symbolized batches. Unsupported synchronization uses legacy blocking reads.
+func (r *ringBufferContext) swapAndDrainRingBuffer(
 	newEvent func() any,
 	enqueue func(*pipeline.SampleBatch) error,
 	convert func(int64) (int64, error),
@@ -262,6 +220,7 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 		if err := r.synchronizeWriters(); err != nil {
 			return fmt.Errorf("synchronize frozen native ring: %w", err)
 		}
+		ring.readOptions = []bpf.ReadBatchOption{bpf.WithReadBatchDeadline(time.Now())}
 	}
 
 	accounted, expected, err := r.drainRingBuffer(
@@ -287,109 +246,31 @@ func (r *ringBufferContext) drainFrozenRingBuffer(
 }
 
 func (r *ringBufferContext) drainRingBuffer(
-	ring frozenRingBuffer,
+	ring nativeRingBuffer,
 	newEvent func() any,
 	enqueue func(*pipeline.SampleBatch) error,
 	convert func(int64) (int64, error),
 ) (accounted, expected uint64, returnErr error) {
-	kernelCache := make(map[int32][]types.ProfileFrame)
-	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
+	processor := nativeSampleProcessor{
+		mode: r.mode,
+		stacks: nativeStackResolver{
+			bpf:                r.bpf,
+			usym:               r.usym,
+			stackMapID:         ring.stackMapID,
+			fallbackStackMapID: ring.fallbackStackMapID,
+		},
+		kernelCache: make(map[int32][]types.ProfileFrame),
+		userCache:   make(map[userStackCacheKey][]types.ProfileFrame),
+	}
 	for {
-		var batch bpf.PerfEventBatch
-		var readErr error
-		if drainer, ok := ring.reader.(bpf.PerfEventBatchDrainer); ok {
-			batch, readErr = drainer.ReadBatchAvailable(newEvent)
-		} else {
-			batch, readErr = ring.reader.ReadBatch(newEvent)
-		}
+		batch, readErr := ring.reader.ReadBatch(newEvent, ring.readOptions...)
 		if batch.LostSamples > math.MaxUint64-uint64(len(batch.Events)) ||
 			uint64(len(batch.Events))+batch.LostSamples > math.MaxUint64-accounted {
 			return accounted, expected, fmt.Errorf("BPF transfer event count overflows uint64")
 		}
 
 		accounted += uint64(len(batch.Events)) + batch.LostSamples
-		valuesConverted := false
-		if r.needsFallback {
-			events, compactErr := compactRetainedEvents(batch.Events, convert)
-			if compactErr != nil {
-				return accounted, expected, compactErr
-			}
-			batch.Events = events
-			valuesConverted = true
-		}
-		var builder pipeline.BatchBuilder
-		for _, record := range batch.Events {
-			var base *abi.ProfilerEventBase
-			var cpu *uint32
-			switch event := record.(type) {
-			case *abi.ProfilerEventBase:
-				base = event
-			case *abi.ProfilerOnCPUEvent:
-				base = &event.Base
-				cpu = &event.CPU
-			default:
-				return accounted, expected, fmt.Errorf("unexpected native perf event %T", record)
-			}
-
-			pid := uint32(base.PIDTGID >> 32)
-			userKey := userStackCacheKey{
-				PID:     pid,
-				StackID: base.Userstack,
-			}
-			// Missing IDs preserve the sample weight; malformed data and I/O failures abort collection.
-			user, ok := userCache[userKey]
-			if !ok {
-				var err error
-				user, err = r.resolveUserStackWithFallback(ring, base.Userstack, pid)
-				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
-					return accounted, expected, err
-				}
-
-				userCache[userKey] = user
-			}
-
-			kernel, ok := kernelCache[base.Kernstack]
-			if !ok {
-				var err error
-				kernel, err = r.resolveKernelStackWithFallback(ring, base.Kernstack)
-				if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
-					return accounted, expected, err
-				}
-
-				kernelCache[base.Kernstack] = kernel
-			}
-
-			value := base.Value
-			var err error
-			if !valuesConverted {
-				value, err = convert(base.Value)
-			}
-			if err != nil {
-				return accounted, expected, err
-			}
-
-			labels := nativeLabels(pid, taskCommString(base.Comm))
-			if cpu != nil {
-				labels = append(labels, types.ProfileCPULabel(*cpu))
-			}
-
-			labels, err = types.NormalizeLabels(labels)
-			if err != nil {
-				return accounted, expected, err
-			}
-
-			sample := aggregation.Sample{
-				UserFrames:   user,
-				KernelFrames: kernel,
-				Labels:       labels,
-				Value:        value,
-			}
-			if err := builder.Append(&sample, enqueue); err != nil {
-				return accounted, expected, err
-			}
-		}
-
-		if err := builder.Flush(enqueue); err != nil {
+		if err := processor.enqueueSamples(batch.Events, convert, enqueue); err != nil {
 			return accounted, expected, err
 		}
 
@@ -445,6 +326,8 @@ func (r *ringBufferContext) drainFinalRingBuffers(
 		if err != nil {
 			return err
 		}
+
+		ring.readOptions = []bpf.ReadBatchOption{bpf.WithReadBatchDeadline(time.Now())}
 
 		// Production has stopped: counts include failed perf output attempts
 		// whose loss record may never arrive without another kernel event.
@@ -502,78 +385,10 @@ func (r *ringBufferContext) accountSamples(expected, accounted uint64) error {
 	return nil
 }
 
-// Only missing IDs can belong to the other retained-memory stack map.
-func (r *ringBufferContext) resolveKernelStackWithFallback(
-	ring frozenRingBuffer,
-	kernelStackID int32,
-) ([]types.ProfileFrame, error) {
-	stack, err := r.resolveKernelStack(ring.stackMapID, kernelStackID)
-	if errors.Is(err, bpfmap.ErrStackNotFound) && ring.fallbackStackMapID != 0 {
-		return r.resolveKernelStack(ring.fallbackStackMapID, kernelStackID)
-	}
-
-	return stack, err
-}
-
-func (r *ringBufferContext) resolveUserStackWithFallback(
-	ring frozenRingBuffer,
-	userStackID int32,
-	pid uint32,
-) ([]types.ProfileFrame, error) {
-	stack, err := r.resolveUserStack(ring.stackMapID, userStackID, pid)
-	if errors.Is(err, bpfmap.ErrStackNotFound) && ring.fallbackStackMapID != 0 {
-		return r.resolveUserStack(ring.fallbackStackMapID, userStackID, pid)
-	}
-
-	return stack, err
-}
-
-func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) ([]types.ProfileFrame, error) {
-	if !validateStackID(stackID) {
-		return nil, nil
-	}
-
-	trace, err := bpfmap.ReadStackTrace(r.bpf, stackMapID, uint32(stackID))
-	if err != nil {
-		return nil, err
-	}
-
-	return symbolizedFrames(trace[:], symbol.KsymStackStrsReversed(trace[:], len(trace))), nil
-}
-
-func (r *ringBufferContext) resolveUserStack(stackMapID uint32, stackID int32, pid uint32) ([]types.ProfileFrame, error) {
-	if !validateStackID(stackID) {
-		return nil, nil
-	}
-
-	trace, err := bpfmap.ReadStackTrace(r.bpf, stackMapID, uint32(stackID))
-	if err != nil {
-		return nil, err
-	}
-
-	return symbolizedFrames(trace[:], r.usym.UsymStackStrsReversed(pid, trace[:], len(trace))), nil
-}
-
 func closeBPF(b bpf.BPF) error {
 	if b == nil {
 		return nil
 	}
 
 	return b.Close()
-}
-
-// The symbol resolver emits one root-first name per nonzero address. Its
-// documented failure strings must retain the address instead of merging all
-// unresolved instructions into a single stack identity.
-func symbolizedFrames(addresses []uint64, names []string) []types.ProfileFrame {
-	frames := make([]types.ProfileFrame, len(names))
-	for i, name := range names {
-		if name == "" || name == "unknown" || strings.HasPrefix(name, "unknown ") || strings.HasPrefix(name, "[unknown]/") {
-			name = fmt.Sprintf("0x%x", addresses[len(names)-1-i])
-		}
-
-		frames[i] = types.ProfileFrame{Name: name}
-	}
-
-	return frames
 }

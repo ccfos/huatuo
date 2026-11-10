@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"math"
-	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -433,11 +432,7 @@ func TestPerfEventReaderReadBatchDrainsMultipleCPUs(t *testing.T) {
 
 func readAvailableForTest(t *testing.T, reader PerfEventReader, factory func() any) (PerfEventBatch, error) {
 	t.Helper()
-	available, ok := reader.(interface {
-		ReadBatchAvailable(newEvent func() any) (PerfEventBatch, error)
-	})
-	require.True(t, ok, "reader must support nonblocking available batches")
-	return available.ReadBatchAvailable(factory)
+	return reader.ReadBatch(factory, WithReadBatchDeadline(time.Now()))
 }
 
 func TestPerfEventReaderReadBatchPreservesBlockingWait(t *testing.T) {
@@ -445,6 +440,9 @@ func TestPerfEventReaderReadBatchPreservesBlockingWait(t *testing.T) {
 	reader, err := newPerfEventReader(t.Context(), perfEventArray(t), 4096)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	// A preceding available-only call must not change the next call's default.
+	_, err = reader.ReadBatch(func() any { return new([8]byte) }, WithReadBatchDeadline(time.Now()))
+	require.NoError(t, err)
 	start := time.Now()
 	batch, err := reader.ReadBatch(func() any { return new([8]byte) })
 	require.NoError(t, err)
@@ -452,25 +450,26 @@ func TestPerfEventReaderReadBatchPreservesBlockingWait(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond, "off-CPU readers must retain an idle wait")
 }
 
-type deadlineRecordingReader struct {
-	*perf.Reader
-	deadline time.Time
-	future   bool
-}
-
-func (r *deadlineRecordingReader) SetDeadline(deadline time.Time) {
-	r.deadline = deadline
-	r.future = deadline.After(time.Now())
-}
-func (*deadlineRecordingReader) ReadInto(*perf.Record) error { return os.ErrDeadlineExceeded }
-
-func TestPerfEventReaderAvailableUsesExpiredDeadline(t *testing.T) {
-	backend := &deadlineRecordingReader{}
-	r := &perfEventReader{rd: backend}
-	before := time.Now()
-	batch, err := r.ReadBatchAvailable(func() any { return new([8]byte) })
+func TestPerfEventReaderReadBatchZeroDeadline(t *testing.T) {
+	requireBPFPermission(t)
+	reader, err := newPerfEventReader(t.Context(), perfEventArray(t), 4096)
 	require.NoError(t, err)
-	require.Empty(t, batch.Events)
-	require.False(t, backend.deadline.Before(before))
-	require.False(t, backend.future)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	done := make(chan error, 1)
+	go func() {
+		_, err := reader.ReadBatch(func() any { return new([8]byte) }, WithReadBatchDeadline(time.Time{}))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("unbounded empty read returned before close: %v", err)
+	case <-time.After(2 * readBatchDeadline):
+	}
+	require.NoError(t, reader.Close())
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not unblock ReadBatch with zero deadline")
+	}
 }

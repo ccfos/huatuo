@@ -99,7 +99,7 @@ func (*offCPUReaderStub) ReadInto(any) error {
 	return nil
 }
 
-func (r *offCPUReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+func (r *offCPUReaderStub) ReadBatch(func() any, ...bpf.ReadBatchOption) (bpf.PerfEventBatch, error) {
 	return r.readBatch()
 }
 

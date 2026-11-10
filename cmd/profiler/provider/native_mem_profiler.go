@@ -143,12 +143,11 @@ func (p *memNativeProfiler) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
-	needsFallback := p.internalMode == profiling.ModePhysicalUsage
 	ringCtx, err := newRingBufferContext(
 		b,
 		ctx,
 		4096*257,
-		needsFallback,
+		p.internalMode,
 	)
 	if err != nil {
 		readerErr := fmt.Errorf("create native memory event readers: %w", err)
@@ -336,7 +335,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 		case <-ticker.C:
 		}
 
-		err := ringCtx.drainFrozenRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, p.convertValueToBytes)
+		err := ringCtx.swapAndDrainRingBuffer(func() any { return &abi.ProfilerEventBase{} }, enqueue, p.convertValueToBytes)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil

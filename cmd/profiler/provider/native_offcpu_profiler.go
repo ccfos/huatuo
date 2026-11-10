@@ -213,6 +213,11 @@ func (r *ringBufferContext) readOffCPUBatch(enqueue func(*pipeline.SampleBatch) 
 }
 
 func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipeline.SampleBatch) error) error {
+	stacks := nativeStackResolver{
+		bpf:        r.bpf,
+		usym:       r.usym,
+		stackMapID: r.stackMapAID,
+	}
 	// Reuse immutable frames within this batch; later batches resolve anew.
 	userCache := make(map[userStackCacheKey][]types.ProfileFrame)
 	kernelCache := make(map[int32][]types.ProfileFrame)
@@ -225,7 +230,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 
 		pid := uint32(event.Base.PIDTGID >> 32)
 		labels := append(
-			nativeLabels(pid, taskCommString(event.Base.Comm)),
+			nativeProcessLabels(pid, taskCommString(event.Base.Comm)),
 			types.ProfileStringLabel("offcpu_category", offCPUCategory(event.Kind)),
 		)
 		labels, err := types.NormalizeLabels(labels)
@@ -240,7 +245,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 		}
 		user := userCache[userKey]
 		if user == nil {
-			user, err = r.resolveUserStack(r.stackMapAID, event.Base.Userstack, pid)
+			user, err = stacks.resolveUserFrames(event.Base.Userstack, pid)
 			if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
 				return err
 			}
@@ -252,7 +257,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 
 		kernel := kernelCache[event.Base.Kernstack]
 		if kernel == nil {
-			kernel, err = r.resolveKernelStack(r.stackMapAID, event.Base.Kernstack)
+			kernel, err = stacks.resolveKernelFrames(event.Base.Kernstack)
 			if err != nil && !errors.Is(err, bpfmap.ErrStackNotFound) {
 				return err
 			}

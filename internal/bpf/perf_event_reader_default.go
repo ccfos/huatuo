@@ -30,26 +30,17 @@ import (
 	"github.com/cilium/ebpf/perf"
 )
 
-type perfRecordReader interface {
-	Close() error
-	Flush() error
-	BufferSize() int
-	SetDeadline(deadline time.Time)
-	ReadInto(record *perf.Record) error
-}
-
 // perfEventReader reads the eBPF perf_event_array.
 type perfEventReader struct {
 	done   <-chan struct{}
-	rd     perfRecordReader
+	rd     *perf.Reader
 	cancel context.CancelFunc
 }
 
 // _ is a type assertion
 var (
-	_ PerfEventReader       = (*perfEventReader)(nil)
-	_ PerfEventRawReader    = (*perfEventReader)(nil)
-	_ PerfEventBatchDrainer = (*perfEventReader)(nil)
+	_ PerfEventReader    = (*perfEventReader)(nil)
+	_ PerfEventRawReader = (*perfEventReader)(nil)
 )
 
 // newPerfEventReader creates a new perfEventReader.
@@ -100,20 +91,15 @@ const (
 	readBatchDeadline   = 500 * time.Millisecond
 )
 
-// ReadBatch waits for events until its deadline and returns the available data.
-func (r *perfEventReader) ReadBatch(newEvent func() any) (PerfEventBatch, error) {
-	return r.readBatch(newEvent, time.Now().Add(readBatchDeadline))
-}
-
-// ReadBatchAvailable drains available per-CPU data without waiting for new events.
-func (r *perfEventReader) ReadBatchAvailable(newEvent func() any) (PerfEventBatch, error) {
-	// An expired deadline still scans every CPU ring, including data below the
-	// notification watermark. Frozen-buffer consumers must not wait on an empty
-	// ring while producers are filling the other output.
-	return r.readBatch(newEvent, time.Now())
-}
-
-func (r *perfEventReader) readBatch(newEvent func() any, deadline time.Time) (PerfEventBatch, error) {
+// ReadBatch drains records until the per-call deadline, preserving partial results.
+func (r *perfEventReader) ReadBatch(newEvent func() any, opts ...ReadBatchOption) (PerfEventBatch, error) {
+	options := readBatchOptions{deadline: time.Now().Add(readBatchDeadline)}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	// Even an expired deadline scans every CPU ring, including records below
+	// the notification watermark. A deadline does not synchronize BPF writers.
+	deadline := options.deadline
 	var batch PerfEventBatch
 	var rec perf.Record
 

@@ -150,7 +150,7 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 			b,
 			ctx,
 			4096*257,
-			false,
+			cfg.Mode,
 		)
 	}
 
@@ -275,7 +275,7 @@ func (p *cpuNativeProfiler) readOnCPUDataLoop(
 		case <-ticker.C:
 		}
 
-		err := ringCtx.drainFrozenRingBuffer(func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue)
+		err := ringCtx.swapAndDrainRingBuffer(func() any { return &abi.ProfilerOnCPUEvent{} }, enqueue, p.convertCPUValue)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil

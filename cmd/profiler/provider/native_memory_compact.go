@@ -16,40 +16,58 @@ package provider
 
 import (
 	"fmt"
-	"math"
+	"slices"
+
+	"github.com/ccfos/huatuo/internal/profiling/window"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
+type retainedMemorySample struct {
+	source     abi.ProfilerEventBase
+	valueBytes int64
+}
+
 // compactRetainedEvents combines only identical raw sources within one frozen
 // read. Convert each input before summing so scaling and overflow validation
 // remain per-event. Original perf accounting is performed before compaction.
-func compactRetainedEvents(events []any, convert func(int64) (int64, error)) ([]any, error) {
+func compactRetainedEvents(events []any, convert func(int64) (int64, error)) ([]retainedMemorySample, error) {
 	indices := make(map[abi.ProfilerEventBase]int)
-	result := make([]any, 0, len(events))
+	var result []retainedMemorySample
 	for _, record := range events {
 		event, ok := record.(*abi.ProfilerEventBase)
 		if !ok || event == nil {
 			return nil, fmt.Errorf("unexpected retained perf event %T", record)
 		}
+
 		value, err := convert(event.Value)
 		if err != nil {
 			return nil, err
 		}
+
 		key := *event
 		key.Value = 0
 		if index, ok := indices[key]; ok {
-			previous := result[index].(*abi.ProfilerEventBase)
-			if value > 0 && previous.Value > math.MaxInt64-value || value < 0 && previous.Value < math.MinInt64-value {
-				return nil, fmt.Errorf("retained event value overflows int64")
+			previous := &result[index]
+			sum, err := window.AddValues(previous.valueBytes, value)
+			if err != nil {
+				return nil, fmt.Errorf("compact retained events: %w", err)
 			}
-			previous.Value += value
+
+			previous.valueBytes = sum
 		} else {
-			entry := key
-			entry.Value = value
 			indices[key] = len(result)
-			result = append(result, &entry)
+			// Double capacity for unique sources without reserving the raw batch size
+			// when thousands of events collapse to only a few samples.
+			if len(result) == cap(result) {
+				result = slices.Grow(result, min(max(8, cap(result)), len(events)-len(result)))
+			}
+			result = append(result, retainedMemorySample{
+				source:     key,
+				valueBytes: value,
+			})
 		}
 	}
+
 	return result, nil
 }
