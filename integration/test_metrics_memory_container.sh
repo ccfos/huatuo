@@ -140,7 +140,13 @@ assert_real_memory_events() {
 
 kubelet_port=${KUBELET_PODS_API##*:}
 kubelet_port=${kubelet_port%%/*}
-timeout --kill-after=2 10 kubectl --request-timeout=8s get nodes > /dev/null || skip "Kubernetes node is unavailable"
+nodes_json=$(timeout --kill-after=2 10 kubectl --request-timeout=8s get nodes -o json) \
+	|| skip "Kubernetes node is unavailable"
+if jq -e '(.items | length > 0) and all(.items[];
+	any(.status.conditions[]; .type == "DiskPressure" and .status == "True"))' \
+	<<< "${nodes_json}" > /dev/null; then
+	skip "all Kubernetes nodes have DiskPressure; free node disk space before running Pod memory metrics"
+fi
 pod_created=1
 kubectl run "${pod_name}" --namespace "${BUSINESS_POD_NS}" --image="${BUSINESS_POD_IMAGE}" \
 	--image-pull-policy=Never --restart=Never -l "app=${pod_name}" --dry-run=client -o json -- sleep infinity \
