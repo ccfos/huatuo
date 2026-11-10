@@ -16,7 +16,7 @@ struct folio___compat {
 	unsigned int _nr_pages;
 } __attribute__((preserve_access_index));
 
-static volatile const bool profiler_folio_npages = false;
+volatile const bool profiler_folio_npages = false;
 
 static __always_inline s64 profiler_folio_nr_pages(struct folio___compat *folio)
 {
@@ -73,7 +73,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u64 mem_css = 0;
-	if (profiler_filter_css != 0)
+	if (profiler_filter_css_addr != 0)
 		mem_css = current_task_memory_css_addr();
 	if (!profiler_should_trace(pid_tgid, mem_css))
 		return 0;

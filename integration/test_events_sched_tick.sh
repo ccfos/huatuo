@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify sched_tick loads and attaches without forcing scheduler tick delays.
+# Verify sched_tick attaches and shuts down without forcing scheduler tick delays.
 
 set -euo pipefail
 
@@ -35,14 +35,15 @@ fi
 tracepoint_available timer tick_stop \
 	|| skip "timer/tick_stop tracepoint is not available"
 
-integration_huatuo_bamai_start write_sched_tick_config
+integration_huatuo_bamai_start write_config_bamai_sched_tick
 
 huatuo_bamai_collect_metrics
-check_metrics "sched_tick lifecycle" \
+assert_metrics "sched_tick lifecycle" \
 	'tracing_status_hitcount\{[^}]*tracing="sched_tick"[^}]*\} 0$' \
 	'tracing_status_running\{[^}]*\} 1$'
 
+assert_huatuo_bamai_shutdown
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
 
-log_info "sched_tick load and attach test passed (${RESTART_SCHED_TICK_SYMBOL})"
+log_info "sched_tick attach and shutdown test passed (${RESTART_SCHED_TICK_SYMBOL})"

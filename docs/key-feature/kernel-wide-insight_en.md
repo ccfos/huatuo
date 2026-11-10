@@ -48,9 +48,9 @@ Transmit queue backlog is not queueing latency, and aggregate error counts may a
 
 ## I/O
 
-I/O latency distributions distinguish request enqueue-to-completion time (`q2c`) from driver dispatch-to-completion time (`d2c`). Disk statistics provide request counts, throughput, and cumulative duration; XFS metrics add filesystem log and allocation state.
+`iotracing` provides disk throughput, IOPS, mean request duration, utilization, and queue length. `iolatency` measures Q2G, Q2D, and D2C latency and IO size distributions; `blk_throtl` and `iocost` report completed queue waits. `io_health` records Block, NVMe, SCSI, and MD health events and collects read-only device evidence. XFS metrics add filesystem log and allocation state.
 
-Current latency buckets include only requests for which both `q2c` and `d2c` can be calculated and are each at least 20 milliseconds. They do not represent all I/O. Exclude intervals with a zero request rate when calculating average request duration. For full measurement semantics, see [I/O Metrics](/docs/reference/metrics_en.md#io).
+Latency, size, and wait metrics describe individual collection intervals. Device changes restart collection, and transition data may be omitted. For names, units, labels, startup requirements, and measurement semantics, see [I/O Metrics](/docs/reference/metrics_en.md#io).
 
 ## System events
 

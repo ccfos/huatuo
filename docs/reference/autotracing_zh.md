@@ -35,13 +35,13 @@ CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，pro
 | `tracer_type` | 观测类型，自动追踪记录固定为 `autotracing` |
 | `tracer_data` | 特定事件私有数据（详见各事件说明） |
 
-### 宿主机系统态 CPU
+### 宿主机 CPU
 
 追踪器：`cpusys`。通过 `AutoTracing.CPUSys.Tool` 选择 `perf`（默认）或 `profiler`。
 
-周期性读取 `/proc/stat`，计算宿主机 CPU 系统态占用率及相邻两次采样的增量。占用率超过 45% 且增量超过 20 个百分点时，触发宿主机 CPU 采样，生成 CPU 火焰图。
+周期性读取 `/proc/stat`，检测宿主机 system、user（`user + nice`）和总执行 CPU（`user + nice + system + irq + softirq`）突增，包含容器工作。任一组使用率及其增量同时严格超过阈值时触发采样。默认使用率／增量阈值分别为 system 45%／20 个百分点、user 75%／45 个百分点、total 90%／55 个百分点。
 
-以上为内置默认阈值，全局默认冷却时间为 30 分钟。
+三组共用一次采集和默认 30 分钟冷却。阈值在 CPUSys 下独立配置，不与 CPUIdle 共用，见[配置参考](../configuration/huatuo-bamai-configuration_zh.md)。事件保留原 system 字段，并增加对应的 `user_percent*`、`total_percent*` 字段；零值新增字段省略。
 
 示例（省略部分公共字段）：
 
@@ -169,6 +169,8 @@ CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，pro
 追踪器：`iotracing`。
 
 每 5 秒读取 `/proc/diskstats`。触发条件需连续两个采样周期成立：非 NVMe 设备检查利用率；NVMe 设备要求利用率和读、写吞吐率之一同时超阈值；各设备也会独立检查读、写平均等待时间。采集结果包含进程及文件 I/O 速率、I/O 调度等待栈。
+
+直接运行 `iotracing` 时，可通过 `--enable-pprof`（默认关闭）在 `http://127.0.0.1:6000/debug/pprof/` 提供 profile；若地址已被占用，命令启动失败。这些 profile 仅反映 `iotracing` 进程自身的 Go runtime，不包含 `huatuo-bamai` 或执行磁盘 I/O 的业务进程。自动追踪不会开启此选项。
 
 示例（省略部分公共字段）：
 

@@ -60,7 +60,8 @@ type Cgroup interface {
 	Procs(path string) ([]int32, error)
 	// CpuUsage returns cgroups user/system and total usage.
 	CpuUsage(path string) (*stats.CpuUsage, error)
-	// CpuStatRaw returns cpu.stat raw data
+	// CpuStatRaw returns available cpu.stat fields without renaming or unit conversion.
+	// Cgroup v1 omits fields with valid negative int64 values.
 	CpuStatRaw(path string) (map[string]uint64, error)
 	// CpuQuotaAndPeriod cgroup quota and period
 	CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error)

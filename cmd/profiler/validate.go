@@ -113,6 +113,12 @@ func validateLoggingOptions(opts loggingOptions, logSizeSet bool) error {
 }
 
 func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
+	// Native CPU intersects PID and cgroup filters; other providers select one target.
+	if ctx.String("pid") != "" && ctx.String("container-id") != "" &&
+		(typ == profiling.TypeMemory || lang == profiling.LanguageJava || lang == profiling.LanguagePython) {
+		return fmt.Errorf("--pid and --container-id are mutually exclusive")
+	}
+
 	switch lang {
 	case profiling.LanguageGo, profiling.LanguageC, profiling.LanguageCPP:
 		if err := validateSinglePID(ctx, "native"); err != nil {

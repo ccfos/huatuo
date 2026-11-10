@@ -445,7 +445,7 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 - `Included` only: Monitor only matching containers.
 - Both: Monitor containers that match `Included` and do not match `Excluded`.
 
-#### 7.2 Host system CPU spikes
+#### 7.2 Host CPU bursts
 
 ```toml
 # cpusys
@@ -480,6 +480,10 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 [AutoTracing.CPUSys]
     # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
     # Tool = "perf"
+    # UserThreshold = 75
+    # DeltaUserThreshold = 45
+    # UsageThreshold = 90
+    # DeltaUsageThreshold = 55
     # SysThreshold = 45
     # DeltaSysThreshold = 20
     # Interval = 10
@@ -489,13 +493,22 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 
 | Field | Description |
 | --- | --- |
+| `UserThreshold` / `DeltaUserThreshold` | Host user-mode utilization / increase thresholds. Defaults: `75%` / `45` percentage points. |
+| `UsageThreshold` / `DeltaUsageThreshold` | Host executing-total utilization / increase thresholds. Defaults: `90%` / `55` percentage points. |
 | `SysThreshold` | Host system-mode CPU utilization threshold. Default: `45%`. |
 | `DeltaSysThreshold` | System-mode CPU utilization increase over the previous sample. Default: `20` percentage points. |
 | `Interval` | Host CPU utilization sampling interval in seconds. Default: `10`. |
 | `IntervalTracing` | Minimum interval between traces, in seconds. Default: `1800`. |
 | `RunTracingToolTimeout` | Collection duration in seconds. Default: `10`. |
 
-**Trigger conditions**: Once the tracing interval has elapsed, tracing starts when system-mode CPU utilization strictly exceeds `SysThreshold` and its increase strictly exceeds `DeltaSysThreshold`.
+**Trigger conditions**: After the shared cooldown, any system/user/total pair
+can trigger profiling when both utilization and its increase strictly exceed
+their thresholds. System uses the CPUSys thresholds above. User and total use
+CPUSys.UserThreshold/DeltaUserThreshold (75/45) and
+CPUSys.UsageThreshold/DeltaUsageThreshold (90/55), independently of CPUIdle.
+Utilization is percent and delta is percentage points. All three groups use
+strict threshold comparisons; zero is a normal threshold, not a disable switch.
+All three host conditions share the CPUSys capture cooldown.
 
 #### 7.3 Container D-state load
 
@@ -744,7 +757,54 @@ This module detects per-CPU irq+softirq utilization anomalies and invokes `irqtr
 | `MinCPUs`, `DeltaUsageThreshold`, and `RelativeIncreaseThreshold` | Control the rule for irq+softirq utilization spikes across multiple CPUs. The thresholds specify the increase in percentage points and the percentage increase relative to the previous sample. |
 | `SustainedIntervals` and `UsageThreshold` | Set the consecutive sample count and utilization threshold for sustained high irq+softirq utilization on a single CPU. |
 
-#### 7.8 Known issue labeling
+#### 7.8 SchedBlame CPU Contention Attribution
+
+SchedBlame estimates external CPU contention for selected container CPU
+cgroups and emits `sched-blame-external` events when the current one-second
+ratio exceeds the target's adaptive historical threshold.
+
+```toml
+[AutoTracing.SchedBlame]
+    # TargetContainerScope = "normal"
+    # TargetQos = []
+    # HighlightContainer = ""
+    # SliceDropPercent = 0
+    # ExternalAnomalyK = 1.0
+    # SliceBatchSize = 128
+    # PerfEventPerCPUBufferBytes = 524288
+    # PerfEventWatermarkBytes = 8192
+    # PerfEventQueueRecords = 8192
+    # PollIntervalMs = 100
+    # ExternalRatioDebugFile = ""
+```
+
+- **TargetContainerScope**: `normal` selects normal application containers;
+  `all` selects every discovered container. Default `normal`.
+- **TargetQos**: Optional candidate QoS filter. Values are case-insensitive
+  `guaranteed`, `burstable`, or `besteffort`; an empty list accepts all QoS
+  classes. Default `[]`.
+- **HighlightContainer**: Optional hostname, full container ID, or unique ID
+  prefix for one target's debug log, ratio CSV, and SuperMonitor comparison.
+  Default empty.
+- **SliceDropPercent**: Percentage of completed scheduler slices discarded
+  before transport. Valid range `0..99`; default `0`.
+- **ExternalAnomalyK**: Nonnegative multiplier applied to the target's
+  historical P99 external-contention ratio. Default `1.0`.
+- **SliceBatchSize**: Maximum slices per perf record. Valid range `1..128`;
+  default `128`.
+- **PerfEventPerCPUBufferBytes**: Requested perf-ring data capacity per CPU.
+  Default `524288`.
+- **PerfEventWatermarkBytes**: Positive reader wakeup watermark, smaller than
+  the effective per-CPU ring capacity. Default `8192`.
+- **PerfEventQueueRecords**: Shared decoded-record queue capacity. Default
+  `8192`.
+- **PollIntervalMs**: Interval for bounded queue draining and evaluation
+  checks. Valid range `1..1000`; default `100`.
+- **ExternalRatioDebugFile**: Optional CSV path for per-target one-second
+  ratio diagnostics. Default empty. See [SchedBlame Analysis](../best-practice/sched-blame-analysis_en.md)
+  for interactive charts and SuperMonitor comparisons.
+
+#### 7.9 Known issue labeling
 
 ```toml
 # Autotracing configuration.

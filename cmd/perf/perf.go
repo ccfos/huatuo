@@ -25,11 +25,10 @@ import (
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sys/unix"
 
-	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
 	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
-	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -50,25 +49,12 @@ func mainAction(ctx *cli.Context) error {
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
 
-	var targetCssAddr uint64
+	var cgroupCSSRef pod.CgroupCSSRef
 	if containerID := ctx.String("container-id"); containerID != "" {
-		serverAddress := ctx.String("huatuo-api-address")
-		nodeClient, err := client.NewNode(&client.NodeConfig{})
+		var err error
+		cgroupCSSRef, err = pod.ContainerCSSBySubsys(containerID, "cpu")
 		if err != nil {
-			return fmt.Errorf("initialize node client: %w", err)
-		}
-		container, err := nodeClient.FetchContainer(
-			ctx.Context,
-			client.NodeAddress{HostPort: serverAddress},
-			containerID,
-		)
-		if err != nil {
-			return fmt.Errorf("fetch container %q metadata: %w", containerID, err)
-		}
-		var ok bool
-		targetCssAddr, ok = kernaddr.Parse(container.CgroupCSS["cpu"])
-		if !ok {
-			return fmt.Errorf("container %q has no CPU CSS address", containerID)
+			return fmt.Errorf("resolve container %q CPU CSS identity locally: %w", containerID, err)
 		}
 	}
 
@@ -84,7 +70,11 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
+	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{
+		"perf_filter_css_addr":  cgroupCSSRef.CSSAddr,
+		"perf_filter_cgroup_id": cgroupCSSRef.CgroupID,
+		"pid":                   optPid,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -149,11 +139,6 @@ func main() {
 			Name:  "duration",
 			Value: 5,
 			Usage: "Tool duration(s)",
-		},
-		&cli.StringFlag{
-			Name:  "huatuo-api-address",
-			Value: "127.0.0.1:19704",
-			Usage: "HuaTuo API address used to resolve container metadata",
 		},
 		&cli.BoolFlag{
 			Name:  "tui",

@@ -74,7 +74,7 @@ func TestSelectMergeStacktracesUsesStrictProtobufContract(t *testing.T) {
 	handler := &APIHandler{profileQuery: service}
 	body, err := proto.Marshal(&querierv1.SelectMergeStacktracesRequest{
 		ProfileTypeID: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-		LabelSelector: `{hostname="node-1"}`,
+		LabelSelector: `{scope="host",hostname="node-1"}`,
 	})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -90,7 +90,7 @@ func TestSelectMergeStacktracesUsesStrictProtobufContract(t *testing.T) {
 	if _, ok := result.(serverapi.SelectMergeStacktraces200ApplicationProtoResponse); !ok {
 		t.Fatalf("SelectMergeStacktraces() response = %T", result)
 	}
-	if service.selectRequest == nil || service.selectRequest.LabelSelector != `{hostname="node-1"}` {
+	if service.selectRequest == nil || service.selectRequest.LabelSelector != `{scope="host",hostname="node-1"}` {
 		t.Fatalf("profile query request = %+v", service.selectRequest)
 	}
 }

@@ -15,11 +15,17 @@
 package tracing
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/log"
 
 	pkgtypes "github.com/ccfos/huatuo/pkg/types"
 )
@@ -184,35 +190,92 @@ func TestEventRunnerStopsDuringRestartInterval(t *testing.T) {
 	}
 }
 
-func TestEventRunnerNotSupportedStops(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	starter := &starterStub{
-		startFunc: func(context.Context) error {
-			close(started)
-			<-release
-
-			return pkgtypes.ErrNotSupported
-		},
+func TestEventRunnerNonRetryableErrorStops(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "unsupported", err: pkgtypes.ErrNotSupported},
+		{name: "terminal", err: pkgtypes.ErrTracingStopped},
+		{name: "wrapped terminal", err: fmt.Errorf("%w: collector failed", pkgtypes.ErrTracingStopped)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			starter := &starterStub{startFunc: func(context.Context) error {
+				close(started)
+				<-release
+				return test.err
+			}}
+			runner := newEventRunner(
+				test.name,
+				starter,
+				time.Hour,
+				FlagTracing,
+			)
+			if err := runner.start(t.Context()); err != nil {
+				t.Fatalf("eventRunner.start() error = %v, want nil", err)
+			}
+			<-started
+			runner.mu.RLock()
+			done := runner.done
+			runner.mu.RUnlock()
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				_ = runner.stop(t.Context())
+				t.Fatalf("runner did not stop after non-retryable error: %v", test.err)
+			}
+			if got := runner.snapshot(); got.IsRunning || got.RunCount != 1 {
+				t.Fatalf("eventRunner.snapshot() = %+v, want stopped with one run", got)
+			}
+		})
 	}
-	runner := newEventRunner("unsupported", starter, time.Hour, FlagTracing)
+}
 
-	if err := runner.start(t.Context()); err != nil {
-		t.Fatalf("eventRunner.start() error = %v, want nil", err)
-	}
-	<-started
-
-	runner.mu.RLock()
-	done := runner.done
-	runner.mu.RUnlock()
-	close(release)
-	<-done
-
-	got := runner.snapshot()
-	if got.IsRunning {
-		t.Error("eventRunner.snapshot().IsRunning = true, want false")
-	}
-	if got.RunCount != 1 {
-		t.Errorf("eventRunner.snapshot().RunCount = %d, want 1", got.RunCount)
+func TestEventRunnerReportsCleanupFailureOnCancellation(t *testing.T) {
+	cleanupErr := errors.New("detach test link failed")
+	for _, tc := range []struct {
+		name        string
+		err         error
+		wantFailure bool
+	}{
+		{name: "clean exit"},
+		{name: "reader cancellation", err: pkgtypes.ErrExitByCancelCtx},
+		{name: "context cancellation", err: context.Canceled},
+		{name: "deadline", err: context.DeadlineExceeded},
+		{name: "wrapped cancellation", err: fmt.Errorf("read event: %w", pkgtypes.ErrExitByCancelCtx)},
+		{name: "joined cancellation", err: errors.Join(context.Canceled, pkgtypes.ErrExitByCancelCtx)},
+		{name: "cleanup failure", err: cleanupErr, wantFailure: true},
+		{name: "joined cleanup failure", err: errors.Join(context.Canceled, cleanupErr), wantFailure: true},
+		{name: "wrapped joined failure", err: fmt.Errorf("stop: %w", errors.Join(pkgtypes.ErrExitByCancelCtx, cleanupErr)), wantFailure: true},
+		{name: "unsupported with cleanup failure", err: errors.Join(pkgtypes.ErrNotSupported, cleanupErr), wantFailure: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			log.SetOutput(&output)
+			t.Cleanup(func() { log.SetOutput(os.Stdout) })
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			runner := newEventRunner("cleanup", &starterStub{
+				startFunc: func(context.Context) error {
+					cancel()
+					return tc.err
+				},
+			}, time.Hour, FlagTracing)
+			done := make(chan struct{})
+			runner.run(ctx, done)
+			wantCount := 0
+			if tc.wantFailure {
+				wantCount = 1
+				if !strings.Contains(output.String(), cleanupErr.Error()) {
+					t.Fatalf("cleanup error missing from logs: %s", &output)
+				}
+			}
+			if got := strings.Count(output.String(), "tracer failed"); got != wantCount {
+				t.Fatalf("failure logs = %d, want %d: %s", got, wantCount, &output)
+			}
+		})
 	}
 }

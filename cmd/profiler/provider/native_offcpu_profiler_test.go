@@ -24,6 +24,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -99,7 +100,7 @@ func (*offCPUReaderStub) ReadInto(any) error {
 	return nil
 }
 
-func (r *offCPUReaderStub) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
+func (r *offCPUReaderStub) ReadBatch(func() any, ...bpf.ReadBatchOption) (bpf.PerfEventBatch, error) {
 	return r.readBatch()
 }
 
@@ -110,8 +111,8 @@ func (*offCPUReaderStub) Close() error {
 func newOffCPUReaderProfiler(reader bpf.PerfEventReader) *cpuNativeProfiler {
 	obj := stackLookupMissBPF{}
 	return &cpuNativeProfiler{
-		bpf:        obj,
-		offCPUMode: true,
+		bpf:    obj,
+		config: Config{Mode: profiling.ModeOffCPU},
 		ringCtx: &ringBufferContext{
 			bpf:         obj,
 			readerA:     reader,
@@ -343,9 +344,10 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 		OffCPUMinDurationUS: 250,
 		OffCPUStatsEnabled:  true,
 	}
-	constants := newNativeOffCPUBPFConstants(cfg, 456)
+	constants := newNativeOffCPUBPFConstants(cfg, pod.CgroupCSSRef{CSSAddr: 456, CgroupID: 789})
 	require.Equal(t, uint32(123), constants["profiler_filter_pid"])
-	require.Equal(t, uint64(456), constants["profiler_filter_css"])
+	require.Equal(t, uint64(456), constants["profiler_filter_css_addr"])
+	require.Equal(t, uint64(789), constants["profiler_filter_cgroup_id"])
 	require.Equal(t, true, constants["profiler_filter_threads"])
 	require.Equal(t, uint32(2), constants["profiler_offcpu_phase"])
 	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_duration_ns"])
@@ -354,7 +356,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 }
 
 func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
-	constants := newNativeOffCPUBPFConstants(&Config{}, 0)
+	constants := newNativeOffCPUBPFConstants(&Config{}, pod.CgroupCSSRef{})
 	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_set_enabled"])
 	require.Equal(t, uint32(0), constants["profiler_offcpu_stats_enabled"])
 }
@@ -569,5 +571,27 @@ func TestOffCPUBatchStackCache(t *testing.T) {
 			require.NotEqual(t, samples[2].UserFrames, samples[3].UserFrames)
 			require.NotEqual(t, samples[2].KernelFrames, samples[3].KernelFrames)
 		})
+	}
+}
+
+func BenchmarkReadOffCPUDataLoop(b *testing.B) {
+	failure := errors.New("end benchmark batch")
+	reader := &offCPUReaderStub{readBatch: func() (bpf.PerfEventBatch, error) {
+		return bpf.PerfEventBatch{Events: []any{&abi.ProfilerOffCPUEvent{
+			Base: abi.ProfilerEventBase{
+				PIDTGID:   uint64(123) << 32,
+				Value:     7,
+				Userstack: -1,
+				Kernstack: -1,
+			},
+		}}}, nil
+	}}
+	p := newOffCPUReaderProfiler(reader)
+	enqueue := func(*pipeline.SampleBatch) error { return failure }
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := p.ReadDataLoop(b.Context(), enqueue); !errors.Is(err, failure) {
+			b.Fatal(err)
+		}
 	}
 }

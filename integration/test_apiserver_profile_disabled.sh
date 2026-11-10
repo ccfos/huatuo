@@ -89,7 +89,7 @@ assert_removed_profile_route_is_not_registered() {
 		|| fatal "GET /v1/profiles did not return route_not_found"
 }
 
-integration_huatuo_apiserver_start write_apiserver_without_profile_storage_config \
+integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
 assert_profile_routes_require_authentication
 assert_profile_api_without_storage \
@@ -97,7 +97,21 @@ assert_profile_api_without_storage \
 	'.data.limit == 100 and .data.offset == 0 and .data.has_more == false and (.data.items | length) == 0' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-list.json"
 assert_profile_api_without_storage \
-	"/v1/profiling/capabilities" '(.data.items | length) > 0' \
+	"/v1/profiling/capabilities" '
+	[.data.items[] | {type, language, modes:(.modes | sort),
+		supported_scopes:(.supported_scopes | sort), supports_binary_match}]
+	| sort_by(.type, .language) == ([
+		(["c", "c++", "go"][] | {type:"cpu", language:.,
+			modes:["offcpu", "oncpu"], supported_scopes:["container", "host"], supports_binary_match:false}),
+		(["java", "python"][] | {type:"cpu", language:.,
+			modes:["oncpu"], supported_scopes:["container"], supports_binary_match:true}),
+		(["c", "c++", "go"][] | {type:"memory", language:.,
+			modes:["physical_alloc", "physical_usage", "virtual_alloc"],
+			supported_scopes:["container"], supports_binary_match:false}),
+		{type:"memory", language:"java", modes:["object_alloc", "object_usage"],
+			supported_scopes:["container"], supports_binary_match:false}
+	] | sort_by(.type, .language))' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-capabilities.json"
+assert_readiness_endpoint
 assert_removed_profile_route_is_not_registered
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver

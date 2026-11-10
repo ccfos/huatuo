@@ -21,9 +21,9 @@
 # - HOME: Used to add the user's Go binary directory to PATH.
 # - PATH: Extended with system and user Go binary directories.
 # Parameters:
-# - None.
+# - Optional --prepare-only or --test-only; omitted runs both phases.
 # Examples:
-# - run-in-vm.sh  # prepare the guest and run make e2e
+# - run-in-vm.sh  # prepare the guest and run make test
 
 set -euo pipefail
 
@@ -118,15 +118,46 @@ configure_proxy() {
 	export NO_PROXY="$no_proxy"
 }
 
+quiesce_apt_updates() {
+	command -v apt-get > /dev/null 2>&1 || return 0
+	local unit state deadline=$((SECONDS + 600))
+	# Ubuntu/Debian background APT upgrades can reload/reexec systemd and
+	# reset test cgroup settings.
+	# Runtime masks cover this VM run without changing the reusable image.
+	for unit in apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service; do
+		[[ $(systemctl show --property=LoadState --value "$unit") != not-found ]] || continue
+		systemctl mask --runtime "$unit"
+		if [[ "$unit" == *.timer ]]; then
+			systemctl stop "$unit"
+			continue
+		fi
+		# Let in-flight dpkg transactions finish instead of interrupting them.
+		while true; do
+			state=$(systemctl show --property=ActiveState --value "$unit")
+			case "$state" in
+			inactive | failed) break ;;
+			esac
+			if ((SECONDS >= deadline)); then
+				vm_log_error "timed out waiting for $unit to finish; inspect journalctl -u $unit"
+				return 1
+			fi
+			vm_log "waiting for $unit to finish (state=$state)"
+			sleep 5
+		done
+	done
+}
+
 install_test_dependencies() {
-	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb build-essential libelf-dev kmod "linux-headers-$(uname -r)")
+	local os_id os_like package_manager package toml_repo='' toml_repo_package=''
+	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb gcc make elfutils-libelf-devel kmod kernel-headers
+		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers stress-ng sysstat
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
+	local -a missing_toml_packages=()
 	local -a package_options=()
+	local -a toml_packages=()
 
 	# Add temporary dependencies here until the VM image includes them.
 	source /etc/os-release
@@ -139,17 +170,52 @@ install_test_dependencies() {
 			dpkg-query -W -f='${Status}' "$package" 2> /dev/null \
 				| grep -q 'ok installed' || missing_packages+=("$package")
 		done
-		((${#missing_packages[@]} == 0)) && return
-		export DEBIAN_FRONTEND=noninteractive
-		apt-get -o DPkg::Lock::Timeout=300 update
-		apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
-			"${missing_packages[@]}"
+		if ((${#missing_packages[@]})); then
+			export DEBIAN_FRONTEND=noninteractive
+			apt-get -o DPkg::Lock::Timeout=300 update
+			apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends \
+				"${missing_packages[@]}"
+		fi
 		;;
 	*fedora* | *rhel* | *centos* | *rocky* | *openeuler* | *anolis* | *opencloudos*)
+		# Some RPM guests lack python3-toml in their enabled base repositories.
+		case "$os_id" in
+		fedora) rpm_packages+=(python3-tomli-w) ;;
+		anolis)
+			rpm_packages+=(python3)
+			toml_repo=EPAO
+			toml_repo_package=anolis-epao-release
+			toml_packages=(python3-tomli python3-tomli-w)
+			;;
+		rocky)
+			if [[ ${VERSION_ID%%.*} == 8 ]]; then
+				rpm_packages+=(python3)
+				toml_repo=epel
+				toml_repo_package=epel-release
+				toml_packages=(python3-toml)
+			else
+				rpm_packages+=(python3-toml)
+			fi
+			;;
+		openeuler)
+			if [[ ${VERSION_ID%%.*} == 24 ]]; then
+				rpm_packages+=(python3-tomli-w)
+			else
+				rpm_packages+=(python3-toml)
+			fi
+			;;
+		*) rpm_packages+=(python3-toml) ;;
+		esac
 		for package in "${rpm_packages[@]}"; do
 			rpm -q "$package" > /dev/null 2>&1 || missing_packages+=("$package")
 		done
-		((${#missing_packages[@]} == 0)) && return
+		# Keep optional TOML repositories out of build dependency resolution.
+		if [[ "$os_id" == rocky ]]; then
+			package_options+=(--disablerepo='epel*')
+		fi
+		if [[ "$os_id" == anolis && -f /etc/yum.repos.d/AnolisOS-EPAO.repo ]]; then
+			package_options+=(--disablerepo=EPAO)
+		fi
 		if command -v dnf > /dev/null 2>&1; then
 			package_manager=dnf
 		elif command -v yum > /dev/null 2>&1; then
@@ -158,27 +224,46 @@ install_test_dependencies() {
 			vm_log_error "no RPM package manager found for $ID"
 			return 1
 		fi
-		# Rocky's EPEL repository is unrelated to kernel module builds and its
-		# mirror metadata is less reliable than the base repositories.
-		if [[ "$os_id" == rocky ]]; then
-			package_options+=(--disablerepo='epel*')
+		if ((${#missing_packages[@]})); then
+			# Keep EPOL available for packaged stress-ng while avoiding slow
+			# metadata unless a dependency needs the full repository set.
+			if [[ "$os_id" == openeuler ]]; then
+				package_options+=(
+					--disablerepo=debuginfo --disablerepo=source
+					--disablerepo=update-source --disablerepo=update
+					--disablerepo=everything
+				)
+			fi
+			if ! "$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"; then
+				((${#package_options[@]})) || return 1
+				vm_log "install with restricted repositories failed; retrying with all repositories"
+				"$package_manager" install -y "${missing_packages[@]}"
+			fi
 		fi
-		# openEuler publishes kernel-devel/kernel-headers in its binary OS
-		# repositories. Its update and everything repositories carry very
-		# large metadata (tens of MB) served by slow mirrors, so skip them
-		# and only fall back to the full set if a build dependency is missing
-		# from the restricted repositories.
-		if [[ "$os_id" == openeuler ]]; then
-			package_options+=(
-				--disablerepo=EPOL --disablerepo=debuginfo --disablerepo=source
-				--disablerepo=update-source --disablerepo=update
-				--disablerepo=everything
-			)
+		if [[ -n $toml_repo_package ]] && ! rpm -q "$toml_repo_package" > /dev/null 2>&1; then
+			if ! timeout 90 "$package_manager" "${package_options[@]}" --setopt=timeout=10 --setopt=retries=0 \
+				install -y "$toml_repo_package"; then
+				vm_log "$ID $toml_repo_package unavailable; checking installed modules"
+			fi
 		fi
-		if ! "$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"; then
-			((${#package_options[@]})) || return 1
-			vm_log "install with restricted repositories failed; retrying with all repositories"
-			"$package_manager" install -y "${missing_packages[@]}"
+		for package in "${toml_packages[@]}"; do
+			rpm -q "$package" > /dev/null 2>&1 || missing_toml_packages+=("$package")
+		done
+		if ((${#missing_toml_packages[@]})); then
+			# Keep optional TOML repositories out of kernel dependency resolution.
+			if ! timeout 90 "$package_manager" --disablerepo='*' --enablerepo="$toml_repo" \
+				--setopt=timeout=10 --setopt=retries=0 install -y "${missing_toml_packages[@]}"; then
+				vm_log "$ID $toml_repo TOML packages unavailable; checking installed modules"
+			fi
+		fi
+		if [[ -n $toml_repo ]] \
+			&& { ! python3 -c 'import toml' > /dev/null 2>&1 \
+				&& ! python3 -c 'import tomli_w' > /dev/null 2>&1 \
+				|| ! python3 -c 'import importlib.util; __import__(next(name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)))' > /dev/null 2>&1; }; then
+			# Keep pip packages outside the system Python.
+			"$package_manager" --disablerepo="$toml_repo" install -y python3-pip
+			python3 -m pip install --disable-pip-version-check \
+				--target /usr/local/lib/huatuo-test-python toml==0.10.2
 		fi
 		;;
 	*)
@@ -186,6 +271,15 @@ install_test_dependencies() {
 		return 1
 		;;
 	esac
+	if ! python3 -c 'import toml' > /dev/null 2>&1 \
+		&& ! python3 -c 'import tomli_w' > /dev/null 2>&1; then
+		vm_log_error "Python TOML writer unavailable after installation on $ID"
+		return 1
+	fi
+	python3 -c 'import importlib.util; __import__(next(name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)))' || {
+		vm_log_error "Python TOML reader unavailable after installation on $ID"
+		return 1
+	}
 }
 
 install_temporary_go_tools() {
@@ -221,26 +315,88 @@ install_temporary_go_tools() {
 	done
 }
 
-configure_proxy
-grow_root_filesystem
-print_sys_info
-export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
-install_test_dependencies
-install_temporary_go_tools
-export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
-export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
-export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
-export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+prefetch_storage_images() {
+	source integration/lib_storage.sh
+	local image
+	mkdir -p _output/storage-image-prefetch
+	for image in "${STORAGE_ES7_IMAGE}" "${STORAGE_OPENSEARCH_IMAGE}"; do
+		vm_log "preloading storage image: ${image}"
+		timeout 5m docker pull "${image}" > "_output/storage-image-prefetch/${image##*/}.log" 2>&1 &
+		storage_prefetch_pids+=("$!")
+	done
+}
 
-cd /mnt/host
-pwd
-ls -alh .
-git config --global --add safe.directory /mnt/host
+stop_storage_image_prefetch() {
+	local status=$? pid
+	trap - EXIT
+	for pid in "${storage_prefetch_pids[@]}"; do
+		# Only signal jobs still owned by this shell; completed PIDs may be reused.
+		if jobs -pr | grep -qx "${pid}"; then kill "${pid}" 2> /dev/null || true; fi
+		wait "${pid}" 2> /dev/null || vm_log "storage image prefetch did not finish successfully; see _output/storage-image-prefetch"
+	done
+	exit "${status}"
+}
 
-# This is the single entry point for all guest test targets.
-vm_log '⬅️⬅️⬅️ Running tests...'
+run_guest_tests() {
+	configure_proxy
+	export PATH="/usr/local/go/bin:${HOME}/go/bin:${PATH}"
+	# Preparation and testing use separate SSH sessions.
+	export PYTHONPATH="/usr/local/lib/huatuo-test-python${PYTHONPATH:+:$PYTHONPATH}"
+	export GOCACHE=/root/.cache/go-build
+	quiesce_apt_updates
+	if [[ ${1:-} != --test-only ]]; then
+		grow_root_filesystem
+		print_sys_info
+		install_test_dependencies
+	fi
+	# CI restores the Go cache after growing the filesystem, before any Go builds.
+	if [[ ${1:-} == --prepare-only ]]; then exit 0; fi
+	cd /mnt/host
+	if [[ ! -f _output/portable-generated.commit ]]; then
+		install_temporary_go_tools
+	fi
+	export JAVA_PROFILER_DOCKER_IMAGE=eclipse-temurin:17-jdk
+	export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
+	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
+	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+	export NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=1
+	# These pinned PR images must keep exercising the split-v1 memory CSS path.
+	local ID VERSION_ID
+	source /etc/os-release
+	case "${ID,,}:${VERSION_ID}" in
+	ubuntu:20.04 | openeuler:22.03*)
+		export NATIVE_PROFILER_REQUIRE_SPLIT_CGROUP_V1=1
+		;;
+	esac
 
-make install-tools
-make test
+	pwd
+	ls -alh .
+	git config --global --add safe.directory /mnt/host
 
-vm_log '✅✅✅ Tests passed.'
+	# This is the single entry point for all guest test targets.
+	vm_log '⬅️⬅️⬅️ Running tests...'
+
+	# Hide image downloads behind compilation and unit tests. Compatibility cases
+	# still perform their normal pull checks, including when prefetch fails.
+	storage_prefetch_pids=()
+	trap stop_storage_image_prefetch EXIT
+	prefetch_storage_images
+	make install-tools
+	if [[ -f _output/portable-generated.commit ]]; then
+		make test SKIP_PORTABLE_GENERATION=1
+	else
+		make test
+	fi
+
+	vm_log '✅✅✅ Tests passed.'
+}
+
+# Also support sourcing the entry function in local regression fixtures.
+if [[ ${BASH_SOURCE[0]:-$0} == "$0" ]]; then
+	export TEST_IO_DISK=${TEST_IO_DISK-/dev/disk/by-id/virtio-huatuo-ci-io}
+	[[ -b ${TEST_IO_DISK} ]] || {
+		vm_log_error "test disk is missing: TEST_IO_DISK=${TEST_IO_DISK}"
+		exit 1
+	}
+	run_guest_tests "$@"
+fi

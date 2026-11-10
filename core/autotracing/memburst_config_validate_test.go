@@ -54,6 +54,15 @@ func TestValidateMemBurst(t *testing.T) {
 		{name: "zero interval tracing", modify: func(c *MemBurstConfig) { c.IntervalTracing = 0 }, wantErr: true},
 		{name: "zero sliding window", modify: func(c *MemBurstConfig) { c.SlidingWindowLength = 0 }, wantErr: true},
 		{
+			name:   "maximum sliding window",
+			modify: func(c *MemBurstConfig) { c.SlidingWindowLength = maxMemBurstWindowSamples },
+		},
+		{
+			name:    "sliding window over maximum",
+			modify:  func(c *MemBurstConfig) { c.SlidingWindowLength = maxMemBurstWindowSamples + 1 },
+			wantErr: true,
+		},
+		{
 			name:    "negative dump process max num",
 			modify:  func(c *MemBurstConfig) { c.DumpProcessMaxNum = -1 },
 			wantErr: true,

@@ -1,5 +1,9 @@
 name: OS Distro QEMU CI
 
+permissions:
+  contents: read
+  actions: read
+
 on:
   push:
     branches: [main]

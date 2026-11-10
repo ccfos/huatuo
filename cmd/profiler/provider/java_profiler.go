@@ -38,6 +38,7 @@ type javaProfiler struct {
 	profileOutFile map[int]string
 	labels         map[int][]types.ProfileLabel
 	samplingOpt    *javaruntime.AsprofSamplingOption
+	collector      *javaruntime.CollapsedFileCollector
 }
 
 func (p *javaProfiler) Start(ctx context.Context) error {
@@ -97,25 +98,30 @@ func (p *javaProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.
 		return fmt.Errorf("read Java profile: profiler is not started")
 	}
 
+	p.collector = javaruntime.NewCollapsedFileCollector(p.samplingOpt.Pids, p.profileOutFile)
+
+	return p.collector.ReadDataLoop(ctx, p.enqueueOutput(enqueue))
+}
+
+func (p *javaProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	return p.collector.Finalize(ctx, p.samplingOpt, p.enqueueOutput(enqueue))
+}
+
+func (p *javaProfiler) enqueueOutput(enqueue func(*pipeline.SampleBatch) error) func(profile.SampleOutput) error {
 	multiplier := int64(1)
 	if p.config.Type == profiling.TypeCPU {
 		multiplier = int64(1000/p.config.Freq) * int64(time.Millisecond)
 	}
 
-	return javaruntime.ReadAsprofDataLoop(
-		ctx,
-		p.samplingOpt,
-		p.profileOutFile,
-		func(output profile.SampleOutput) error {
-			return enqueueFolded(
-				output,
-				p.labels[output.PID],
-				multiplier,
-				profiling.LanguageJava,
-				enqueue,
-			)
-		},
-	)
+	return func(output profile.SampleOutput) error {
+		return enqueueFolded(
+			output,
+			p.labels[output.PID],
+			multiplier,
+			profiling.LanguageJava,
+			enqueue,
+		)
+	}
 }
 
 func prepareJavaSampling(cfg *Config) ([]int, map[int][]types.ProfileLabel, error) {

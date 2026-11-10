@@ -18,9 +18,11 @@ package bpf
 
 import (
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,7 +54,19 @@ func TestReferenceAcquire(t *testing.T) {
 
 func TestReferenceUnPublishWaitsForLease(t *testing.T) {
 	var reference Reference
-	object := &defaultBPF{}
+	var detached atomic.Bool
+	object := &defaultBPF{
+		programsByID: map[uint32]*loadedProgram{
+			1: {
+				links: map[string]link.Link{
+					"test": detachTestLink{close: func() error {
+						detached.Store(true)
+						return nil
+					}},
+				},
+			},
+		},
+	}
 	require.NoError(t, reference.Publish(object))
 
 	lease, ok := reference.Acquire()
@@ -84,6 +98,7 @@ func TestReferenceUnPublishWaitsForLease(t *testing.T) {
 		t.Fatalf("UnPublish() returned while the object was leased: %v", err)
 	default:
 	}
+	require.False(t, detached.Load(), "leased samplers may still need active probes")
 
 	lease.Release()
 	select {
@@ -96,4 +111,5 @@ func TestReferenceUnPublishWaitsForLease(t *testing.T) {
 	loaded, err := object.IsLoaded()
 	require.NoError(t, err)
 	require.False(t, loaded)
+	require.True(t, detached.Load())
 }

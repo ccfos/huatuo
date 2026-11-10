@@ -208,6 +208,13 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	nodeAPIAddress, err := localAPIAddress(config.Get().HTTPServer.ListenAddress)
+	if err != nil {
+		return err
+	}
+
+	internalconfig.CoreAPIAddress = nodeAPIAddress
+
 	// Log level: CLI --log-debug overrides config file; config file overrides
 	// the built-in default (Info).
 	switch {

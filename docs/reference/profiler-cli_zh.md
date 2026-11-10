@@ -17,7 +17,7 @@ weight: 6
 | `--type`, `-t` | 无 | 全部 | 观测类型：`cpu` 或 `memory`，必填 |
 | `--language`, `-l` | 无 | 全部 | 目标语言：`c`、`c++`、`go`、`java` 或 `python`，必填 |
 | `--pid`, `-p` | 无 | 全部 | 目标 PID；Java、Python 可使用逗号分隔多个 PID，原生采集最多一个 PID |
-| `--container-id` | 无 | 全部 | 目标容器 ID；不能与 `--pid` 同时使用 |
+| `--container-id` | 无 | 全部 | 目标容器 ID；原生 CPU 采集可与 `--pid`（宿主机 PID）组合，两个过滤条件同时生效；其他采集类型与 `--pid` 互斥 |
 | `--duration`, `-d` | `10` | 全部 | 总采集时长，单位为秒，最小为 1 |
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
@@ -26,14 +26,18 @@ weight: 6
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
-| `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--task-id` | 空；本地输出时内部生成 | 全部；`remote-store` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
-| `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
+| `--enable-pprof` | `false` | 工具自身 | 在 `127.0.0.1:6000` 暴露工具自身的 Go runtime profile |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
 | `--version`, `-v` | - | 全部 | 显示版本与构建信息 |
 
+这些 pprof 接口描述 profiler 进程自身的 Go runtime，不是 `--pid` 指定的目标或 Java/Python 采集子进程。监听范围由所有网卡收紧为 loopback；端口被占用时启动失败。
+
 ## 采集参数
+
+原生 on-CPU 和内存采集要求内核支持 `MEMBARRIER_CMD_GLOBAL`（启用 `CONFIG_MEMBARRIER` 且未启用 full dynticks（`NO_HZ_FULL`）模式）。ring 切换依赖该命令在 Linux 4.18 中提供 sched-RCU grace period、在 Linux 5.0 及之后提供统一 RCU grace period；不能替换为 expedited membarrier 命令。RCU stall 可能延迟切换和采集结束。
+
 
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
@@ -47,6 +51,8 @@ weight: 6
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
+
+硬件 PMU 事件或采样不受支持时，命令退出码为 `1`，标准错误以 `Error: hardware_pmu_unavailable:` 标识该错误；权限及其他启动错误不使用此标识。
 
 ## 日志参数
 

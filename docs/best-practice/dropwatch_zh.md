@@ -142,10 +142,13 @@ dropwatch [flags]
 | `--output-storage <path>`     | （无） | 通过 Unix socket 将事件发送给 huatuo-bamai                   |
 | `--task-id <id>`              | （无） | 关联本次会话的任务 ID；通常与 `--output-storage` 一起使用    |
 | `--max-events-per-second <n>` | 0      | 全局上报限速，0 表示不限速；在 `--device` / `--filter` 后生效 |
+| `--enable-pprof` | `false` | 在 `127.0.0.1:6000` 暴露工具自身的 Go runtime profile。 |
 
 `--filter` 与设备过滤相互正交，同时指定时两者均生效（AND 语义）。不指定 `--device` / `--device-excluded` 时采集所有设备。`--device` 和 `--device-excluded` 不能同时使用；白名单模式会丢弃没有 `net_device` 的 SKB，黑名单模式会放行没有 `net_device` 的 SKB。
 
 dropwatch 启动时自动检测 `devlink:devlink_trap_report`。内核支持时同时加载软硬件丢包探针；不支持时记录 warning 并仅加载软件丢包探针。硬件丢包采集还要求网卡驱动注册 devlink drop trap，并将目标 trap action 配置为 `trap`。action 为 `drop` 时硬件不会向 CPU 提供报文副本，dropwatch 无法获取报文。
+
+pprof 默认关闭；传入 `--enable-pprof` 后监听 `127.0.0.1:6000`，端口被占用时启动失败。采集的是本工具进程，不是 huatuo-bamai 或被追踪的目标进程。
 
 ### 硬件丢包
 

@@ -152,14 +152,35 @@
       }
     },
     "schemas": {
+      "CgroupCSSRef": {
+        "additionalProperties": false,
+        "description": "A reference to one cgroup subsystem state observed in a single cgroup lifecycle event. The address may be reused after the cgroup is removed; consumers must compare both fields with the current kernel state before attributing samples.",
+        "properties": {
+          "cgroup_id": {
+            "description": "Full kernel cgroup ID of the cgroup owning this subsystem state, including the kernfs generation, encoded as a fixed-width hexadecimal string.",
+            "pattern": "^0x[0-9a-f]{16}$",
+            "type": "string"
+          },
+          "css_addr": {
+            "description": "Kernel virtual address of the cgroup subsystem state, encoded as a fixed-width hexadecimal string.",
+            "pattern": "^0x[0-9a-f]{16}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "css_addr",
+          "cgroup_id"
+        ],
+        "type": "object"
+      },
       "ContainerMetadata": {
         "additionalProperties": false,
         "properties": {
-          "cgroup_css": {
+          "cgroup_css_refs": {
             "additionalProperties": {
-              "pattern": "^0x[0-9a-f]{16}$",
-              "type": "string"
+              "$ref": "#/components/schemas/CgroupCSSRef"
             },
+            "description": "Subsystem-to-CSS-reference snapshot from this node. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Kernel addresses are meaningful only on this node; consumers must verify each pair against current kernel state before use.",
             "type": "object"
           },
           "id": {
@@ -169,7 +190,7 @@
         },
         "required": [
           "id",
-          "cgroup_css"
+          "cgroup_css_refs"
         ],
         "type": "object"
       },

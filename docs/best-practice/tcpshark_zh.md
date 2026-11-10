@@ -51,11 +51,14 @@ tcpshark --mode retransmit [flags]
 | `--device-excluded <names>` | （无） | 网卡黑名单，与 `--device` 互斥；要求 `--with-dropwatch`。 |
 | `--duration <n>` | 0 | 运行 N 秒后退出（0 表示持续运行直至 Ctrl-C）。 |
 | `--max-events-per-second <n>` | 0 | BPF 侧事件限速，0 表示不限速。 |
+| `--enable-pprof` | `false` | 在 `127.0.0.1:6000` 暴露工具自身的 Go runtime profile。 |
 | `--output <json\|text>` | `text` | 输出格式；设置 `--output-storage` 时会被忽略。 |
 | `--output-storage <path>` | （无） | 通过 Unix socket 将事件发送给 huatuo-bamai。 |
 | `--task-id <id>` | （无） | toolstream 会话关联的任务 ID；必须与 `--output-storage` 一起使用。 |
 
 显式同时指定 `--output` 和 `--output-storage` 时，`--output` 会被忽略并打印警告。
+
+pprof 默认关闭；传入 `--enable-pprof` 后监听 `127.0.0.1:6000`，端口被占用时启动失败。采集的是本工具进程，不是 huatuo-bamai 或被追踪的目标进程。
 
 ### 常用命令
 

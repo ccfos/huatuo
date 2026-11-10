@@ -67,12 +67,15 @@ snapshot_run_case() (
 	mkdir -p "${go_snapshot_case_dir}"
 
 	snapshot_require_pod_image
-	k8s_create_pod "${GO_SNAPSHOT_NAMESPACE}" "${pod_name}" "${BUSINESS_POD_IMAGE}" "${go_snapshot_pod_label}" 1
+	snapshot_create_pod
 	assert_kubelet_pod_count "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$" 1
 	go_snapshot_container_id=$(kubelet_container_ids "${GO_SNAPSHOT_NAMESPACE}" "^${go_snapshot_pod}$")
 	cgroup_root=$(cgroup_memory_root) || fatal "${mode}: memory cgroup mount not found"
 	go_snapshot_cgroup=$(cgroup_find_container "${cgroup_root}" "${go_snapshot_container_id}") \
 		|| fatal "${mode}: memory cgroup not found for container ${go_snapshot_container_id}"
+	if [[ ${go_snapshot_cgroup} == *.scope ]]; then
+		require_commands busctl
+	fi
 	go_snapshot_cgroup_path=${go_snapshot_cgroup#"${cgroup_root}"}
 	cgroup_configure_memory "${go_snapshot_cgroup}" "${GO_SNAPSHOT_LIMIT}" \
 		|| fatal "${mode}: cannot set container memory limit with swap disabled"
@@ -81,21 +84,19 @@ snapshot_run_case() (
 	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		go_snapshot_limit_file="${go_snapshot_cgroup}/memory.max"
 		usage_file="${go_snapshot_cgroup}/memory.current"
-		# V2 requires a high/max notification. Only this test Pod gets a high limit.
-		echo $((72 * 1024 * 1024)) > "${go_snapshot_cgroup}/memory.high"
 	fi
 
 	go_snapshot_stage="${mode}: start daemon and prepare workload"
 	# Set a finite limit before discovery; unavailable watches are not retried.
 	# A fresh daemon also isolates the node-wide cooldown between cases.
-	integration_huatuo_bamai_start write_memory_threshold_snapshot_config --region e2e --log-debug
+	integration_huatuo_bamai_start write_config_bamai_memory_threshold_snapshot --region e2e --log-debug
 	assert_memsnapshot_tracing_metrics memory_threshold_snapshot e2e 1
 	mkfifo "${go_snapshot_case_dir}/commands"
 	# The case subshell closes this descriptor on exit.
 	exec {go_snapshot_input_fd}<> "${go_snapshot_case_dir}/commands"
 	(
-		echo "${BASHPID}" > "${go_snapshot_cgroup}/cgroup.procs"
-		# Match the BestEffort Pod's sleep process so the larger Go RSS wins.
+		snapshot_join_container_cgroup
+		# Prefer the pressure workload over the Pod's sleep process on OOM.
 		echo 1000 > /proc/self/oom_score_adj
 		exec "${workload[@]}"
 	) < "${go_snapshot_case_dir}/commands" > "${go_snapshot_case_dir}/workload.log" 2>&1 &
@@ -109,6 +110,8 @@ snapshot_run_case() (
 	wait_until 30 0.1 go_snapshot_watch_is_ready || fatal "${mode}: memory cgroup watch was not registered"
 	if [[ -e "${go_snapshot_cgroup}/memory.max" ]]; then
 		high_before=$(awk '$1 == "high" { print $2 }' "${go_snapshot_cgroup}/memory.events")
+		# V2 requires a high/max notification. Only this test Pod gets a high limit.
+		snapshot_set_memory_high $((72 * 1024 * 1024))
 	fi
 
 	go_snapshot_stage="${mode}: trigger memory pressure"
@@ -118,7 +121,7 @@ snapshot_run_case() (
 		wait_until 15 0.1 awk -v before="${high_before}" '$1 == "high" { high = $2 } END { exit !(high > before) }' \
 			"${go_snapshot_cgroup}/memory.events" || fatal "${mode}: no kernel memory.high event"
 		# Release reclaim throttling after notification so the workload can finish.
-		echo max > "${go_snapshot_cgroup}/memory.high"
+		snapshot_set_memory_high max
 	fi
 	go_snapshot_stage="${mode}: wait for persisted snapshot"
 	wait_until 30 0.1 go_snapshot_read_event || fatal "${mode}: daemon did not persist a memory snapshot"
@@ -141,7 +144,7 @@ go build -mod=vendor -o "${GO_SNAPSHOT_BIN}" "${ROOT_DIR}/integration/testdata/t
 # The runner's baseline daemon serves the other e2e cases. This case needs
 # isolated configuration and a fresh node-wide cooldown for every scenario.
 huatuo_bamai_stop
-huatuo_bamai_log_check || fatal "baseline daemon reported an error before the snapshot scenario"
+assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error before the snapshot scenario"
 for snapshot_mode in aggregation topk disabled; do
 	snapshot_run_case "${snapshot_mode}"
 done

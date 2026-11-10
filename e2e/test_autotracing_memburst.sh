@@ -26,15 +26,13 @@ source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
 require_commands go jq awk ss
 
 huatuo_bamai_stop
-huatuo_bamai_log_check || fatal "baseline daemon reported an error"
+assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error"
 go_snapshot_case_dir="${HUATUO_BAMAI_TEST_TMPDIR}/daemon-container"
 HUATUO_BAMAI_TEST_TMPDIR=${go_snapshot_case_dir}
 mkdir -p "${go_snapshot_case_dir}"
-GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port)
+
 GO_SNAPSHOT_KUBELET_PORT=10250
 go_snapshot_top_k=10
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 memburst_container_name="huatuo-memburst-daemon-${BASHPID}-${RANDOM}"
 memburst_container_client=""
 
@@ -90,10 +88,10 @@ assert_memburst_container_event() {
 	' "${go_snapshot_case_dir}/snapshot.json" > /dev/null || fatal "incorrect persisted container memburst snapshot"
 }
 
-container_burst_config() {
-	write_memory_threshold_snapshot_config
-	sed -i 's/"memburst", //; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' "${go_snapshot_case_dir}/bamai.conf"
-	cat >> "${go_snapshot_case_dir}/bamai.conf" << 'CONFIG'
+write_config_bamai_container_memburst() {
+	write_config_bamai_memory_threshold_snapshot \
+		| sed 's/"memburst", //; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /'
+	cat << 'CONFIG'
 [AutoTracing.MemoryBurst]
  DeltaMemoryBurst = 1
  DeltaAnonThreshold = 0
@@ -103,7 +101,7 @@ container_burst_config() {
  DumpProcessMaxNum = 10
 CONFIG
 }
-integration_huatuo_bamai_start container_burst_config --region e2e --disable-kubelet --log-debug
+integration_huatuo_bamai_start write_config_bamai_container_memburst --region e2e --disable-kubelet --log-debug
 assert_memsnapshot_tracing_metrics memburst e2e 1
 memsnapshot_wait_memburst_samples 0 2
 memburst_triggered_at=$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')

@@ -48,7 +48,7 @@ cgroup_configure_memory "${memory_oom_kill_cgroup}" "${MEMORY_OOM_KILL_LIMIT}" \
 	|| skip "memory cgroup cannot enforce the memory limit with swap disabled"
 
 # Enable local persistence and use real /proc data for the captured memory snapshot.
-integration_huatuo_bamai_start write_memory_oom_kill_config \
+integration_huatuo_bamai_start write_config_bamai_memory_oom_kill \
 	--region dev --disable-kubelet --log-debug
 
 # The HTTP endpoint can become ready before the asynchronous BPF attachment.

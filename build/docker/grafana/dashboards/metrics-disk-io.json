@@ -120,8 +120,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
-          "legendFormat": "Read IOPS - {{device}}",
+          "expr": "rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m])",
+          "legendFormat": "Read IOPS - {{disk}}",
           "refId": "A"
         },
         {
@@ -129,8 +129,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
-          "legendFormat": "Write IOPS - {{device}}",
+          "expr": "rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m])",
+          "legendFormat": "Write IOPS - {{disk}}",
           "refId": "B"
         }
       ],
@@ -225,8 +225,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_read_bytes_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
-          "legendFormat": "Read BPS - {{device}}",
+          "expr": "rate(huatuo_bamai_diskio_read_bytes_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m])",
+          "legendFormat": "Read BPS - {{disk}}",
           "refId": "A"
         },
         {
@@ -234,8 +234,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_written_bytes_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
-          "legendFormat": "Write BPS - {{device}}",
+          "expr": "rate(huatuo_bamai_diskio_written_bytes_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m])",
+          "legendFormat": "Write BPS - {{disk}}",
           "refId": "B"
         }
       ],
@@ -330,8 +330,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_read_time_seconds_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]), 1e-9) * 1000",
-          "legendFormat": "Read Latency - {{device}}",
+          "expr": "rate(huatuo_bamai_diskio_read_time_seconds_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m]), 1e-9) * 1000",
+          "legendFormat": "Read Latency - {{disk}}",
           "refId": "A"
         },
         {
@@ -339,8 +339,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_write_time_seconds_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]), 1e-9) * 1000",
-          "legendFormat": "Write Latency - {{device}}",
+          "expr": "rate(huatuo_bamai_diskio_write_time_seconds_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}[5m]), 1e-9) * 1000",
+          "legendFormat": "Write Latency - {{disk}}",
           "refId": "B"
         }
       ],
@@ -435,8 +435,8 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "huatuo_bamai_diskio_io_in_progress{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}",
-          "legendFormat": "Queue Depth - {{device}}",
+          "expr": "huatuo_bamai_diskio_io_in_progress{host=~\"$host\",region=~\"$region\",disk!~\"loop.*\"}",
+          "legendFormat": "Queue Depth - {{disk}}",
           "refId": "A"
         }
       ],

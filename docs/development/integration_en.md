@@ -7,167 +7,229 @@ date: 2026-03-04
 weight: 5
 ---
 
-Integration tests run real programs to verify behavior across collectors, interfaces, and external dependencies. Metric tests use simulated `/proc` and `/sys` filesystems and check `/metrics` output. Other cases prepare processes, networking, or collection environments as needed.
-
-Run `make build` before invoking test scripts directly. This guide covers entry points, result interpretation, and adding metric tests.
-
-## Metric Test Flow
-
-Metric tests run these steps in order:
-
-1. Generate a temporary `bamai.conf` configuration.
-2. Start `huatuo-bamai` with simulated `procfs` and `sysfs`.
-3. Wait for `/metrics` to become accessible.
-4. Fetch all metrics from `/metrics`.
-5. Verify that every expected metric exists and matches.
-6. Stop the service and clean up resources.
-
-A missing or mismatched expected metric fails the test.
+Integration and E2E tests verify Huatuo collection, service interfaces, and external dependencies. This guide covers running tests, configuring the test environment, and reading results.
 
 ## Run Tests
 
-Run integration tests from the repository root:
-```bash
-bash integration/run.sh
-```
+Run commands from the repository root. Tests require Linux and root privileges. Use a dedicated test node for cases involving containers, Pods, or block devices.
 
-Pass a filename to run one integration test. The second argument sets the repetition count, which defaults to 1:
+Build and run through the Makefile:
 
 ```bash
-bash integration/run.sh test_metrics_exclude_filter.sh 10
+sudo make integration
+sudo make e2e
+sudo make test
 ```
 
-Or use the Makefile:
-```bash
-make integration
-```
-
-## Prerequisites and Results
-
-Both suites share `integration/run.sh`, which runs integration tests by default; `e2e/run.sh` forwards to `--suite e2e`. The `make integration`, `make e2e`, and single-case entry points remain available:
+`make test` includes unit, integration, and E2E tests. Alternatively, build first, then run scripts as root:
 
 ```bash
-bash integration/run.sh --suite e2e
-bash integration/run.sh --suite e2e test_metrics.sh 2
-bash e2e/run.sh test_metrics.sh 2
+make build test-build
+sudo bash integration/run.sh
+sudo bash e2e/run.sh
 ```
 
-Both suites run in isolated UTS and mount namespaces, with hostname `huatuo-dev` and private mount propagation. Integration cases start their own services. E2E starts the default bamai before each case, then stops it and checks logs. Integration removes the working directory after a pass or skip and retains it on failure; E2E retains it for all outcomes.
+### Single Cases and Repetitions
 
-The runner checks only that `_output` exists, not individual binaries or BPF artifacts. Run `make build` before invoking scripts directly. An existing directory does not imply a complete build; missing artifacts fail when used.
-
-Cases use one helper to check commands on PATH or executable paths and skip if they are missing:
+An optional count after the script name sets repetitions. It defaults to 1 and accepts 1–1,000. The number of selected tests multiplied by repetitions must not exceed 10,000.
 
 ```bash
-require_commands jq curl ss
-require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
+sudo bash integration/run.sh test_metrics_exclude_filter.sh 10
+sudo bash e2e/run.sh test_metrics.sh 2
 ```
 
-Check input files such as certificates with `require_readable`. An unreadable file causes a skip with the specific path reported:
+You can also select E2E with `--suite e2e`:
 
 ```bash
-require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
+sudo bash integration/run.sh --suite e2e test_metrics.sh 2
 ```
 
-`skip` prints a reason and exits with 77; `EXIT` cleanup still runs. The runner records 0 as PASS, 77 as SKIP, and other statuses as FAIL. Cleanup failure is also FAIL. The runner returns 0 only for passes and skips. On failure, it stops subsequent cases and reports the counts so far.
+Invalid arguments return exit code 2 without creating a run directory or report.
 
-Each execution is counted separately, including repetitions, for example:
+### Parallel Runs
 
-```text
-summary: total=5 passed=3 skipped=2 failed=0
-```
-
-If root privileges or namespace commands are unavailable, both suites mark every selected case as SKIP.
-
-### Failure Handling
-
-- `huatuo-bamai` metrics and logs are printed to standard output for diagnosis.
-- The temporary working directory is retained for debugging.
-
-### Successful Results
-
-- The list of successfully verified metrics is displayed.
-
-## Profiling
-
-Run `make build` first and configure Java or Python tool paths according to `integration/env.sh`.
-
-Repository integration tests provide executable end-to-end examples. They create target processes, run profiler, and check expected stacks in the output:
+Integration tests default to one worker. `-j` accepts 1–8; `INTEGRATION_JOBS` also sets the worker count:
 
 ```bash
-# Native CPU
-sudo ./integration/run.sh test_profiler_native_cpu.sh
-
-# Native off-CPU blocking and scheduling delay
-sudo ./integration/run.sh test_profiler_native_cpu_offcpu.sh
-
-# Native virtual and physical memory
-sudo ./integration/run.sh test_profiler_native_memory_virtual_alloc.sh
-sudo ./integration/run.sh test_profiler_native_memory_physical_usage.sh
-
-# Java CPU and memory
-sudo ./integration/run.sh test_profiler_java_cpu_multi_pid.sh
-sudo ./integration/run.sh test_profiler_java_memory_usage_alloc.sh
-
-# Python multiprocess CPU
-sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
+sudo bash integration/run.sh -j 2
+sudo env INTEGRATION_JOBS=2 make integration
 ```
 
-Container, thread-group, and CPU-specific examples are in `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`.
+Some cases require exclusive execution, so actual concurrency may be lower. Run only one suite runner per host. E2E always runs serially and does not accept `-j` greater than 1.
 
-## Storage Tests
+## Environment Requirements
 
-Neither of these cases requires an Elasticsearch service:
+Run `make build test-build` before invoking scripts; missing build artifacts cause failures. Reports require `jq`. The test environment also needs `unshare`, `mount`, `flock`, `ss`, and `stat`. Individual cases check their required commands, kernel capabilities, services, and input files.
+
+Missing root privileges or required namespace commands cause selected cases to report SKIP. Cases also report specific reasons for missing external dependencies. SKIP does not mean validation passed.
+
+Common environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `INTEGRATION_JOBS` | Integration worker count; default 1 |
+| `KUBELET_CERT`, `KUBELET_KEY` | Client certificate and private key paths for the local kubelet |
+| `PROFILER_TOOL_DIR` | Java/Python collection tool directory; default `_output/tools` |
+| `APISERVER_TEST_NODE` | Local Kubernetes node name for the apiserver matrix |
+| `APISERVER_TEST_NATIVE_IMAGE`, `APISERVER_TEST_GO_IMAGE`, `APISERVER_TEST_JAVA_IMAGE`, `APISERVER_TEST_PYTHON_IMAGE` | Apiserver matrix images |
+| `TEST_IO_DISK` | Dedicated scratch disk for IO tests; contents may be overwritten |
+
+Pass overrides with `sudo env NAME=value ...` so sudo environment filtering does not discard them.
+
+## Results and Logs
+
+| Result | Meaning |
+| --- | --- |
+| PASS | Test and cleanup succeeded |
+| SKIP | Missing dependencies, unstarted execution, or cancellation; see the report reason |
+| FAIL | Test, service preparation, or cleanup failed |
+
+After a failure, no new cases start. Unstarted and cancelled executions are SKIP. INT/TERM interruption returns 130/143. A run with only skipped cases can return success, so also inspect counts and skip reasons.
+
+Each valid invocation creates `/tmp/huatuo-test.XXXXXX/`. Integration runs remove this directory after every execution passes and the final summary is printed. Runs with skips, failures, or interruptions retain it for diagnosis. E2E runs retain it regardless of outcome. The run directory contains `test_run_results.json`; each execution directory contains `stdout.log`, `stderr.log`, and service logs, configuration, and response data. For a fully passing integration run, the printed `output_dir` and `results_path` refer to the directory removed at completion.
+
+### Console Summary
+
+The console shows individual results, a JSON summary, and then failed test logs:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `passed`, `failed`, or `interrupted` |
+| `output_dir`, `results_path` | Run directory and full report path |
+| `runs_per_test` | Planned repetitions per test |
+| `started_at`, `finished_at`, `duration_seconds` | Start time, finish time, and elapsed seconds |
+| `execution_counts` | `total`, `passed`, `failed`, `skipped`, including repeated and unstarted executions |
+| `skipped_tests` | Names of skipped tests |
+| `failed_tests` | Failed test names, execution indexes, reasons, and logs |
+Each `failed_tests` entry contains `name`, `run_index`, `reason`, and `logs`. The `logs` array contains paths relative to `output_dir`.
+
+Logs include nonempty `.log`, `.err`, `.out`, `.json`, and `.conf` text files under the failed execution directory. Binary files, `test_run_results.json`, and `reason.*.log` are excluded. Each failed execution has a `Failed: ... (run N/M)` heading after the JSON summary, followed by file headings and contents. Files larger than 64 KiB show a `(64KB)` heading and their last 64 KiB; full content remains in the original file. Start diagnosis with `reason` and `stderr.log`, then inspect related service logs and responses.
+
+Log contents are printed as text, including JSON files. Explicit failure reasons take precedence. Unhandled command failures record the script, line, command, and exit code. Failures without a recorded cause retain the exit-code fallback; caught child errors are not treated as the test failure.
+
+### Full Report
+
+`test_run_results.json` uses `schema_version: 1`:
+
+| Field | Meaning |
+| --- | --- |
+| `suite`, `runs_per_test` | Suite and planned repetitions per test |
+| `status` | `running`, `completed`, `aborted`, `interrupted` |
+| `exit_code`, `reason` | Run exit code and reason for early termination |
+| `started_at`, `finished_at`, `duration_seconds` | Start time, finish time, and elapsed seconds |
+| `execution_counts` | Execution counts |
+| `test_executions` | One record for each planned execution of each test |
+
+Each execution contains `test_name`, `run_index`, `result`, `exit_code`, `reason`, timestamps and duration, and `logs.stdout` / `logs.stderr` paths relative to the report directory. Results are `passed`, `failed`, or `skipped`; unfinished executions use `null`. Unstarted executions have no timestamps or logs. Unknown process exit codes are `null`. Cleanup failure can make an execution `failed` even if its process exited with code 0.
+
+A report with `status: running` is incomplete and must not be treated as final. Forced termination or report write failures can leave this state.
+
+Inspect failed or skipped executions:
+
+```bash
+jq '.test_executions[] | select(.result == "failed" or .result == "skipped") | {test_name, run_index, result, reason, logs}' /tmp/huatuo-test.XXXXXX/test_run_results.json
+```
+
+## Common Test Cases
+
+### CPU Metrics and Autotracing
+
+```bash
+sudo bash e2e/run.sh test_metrics_cpu_util.sh
+sudo bash e2e/run.sh test_metrics_cpu_stat.sh
+sudo bash e2e/run.sh test_metrics_cpu_runqlat_tracing.sh
+sudo bash e2e/run.sh test_autotracing_cpuidle.sh
+sudo bash e2e/run.sh test_autotracing_dload.sh
+```
+
+These cases need local Kubernetes/kubelet access. The reference environment is a VM with 4 CPUs and 8 GB of memory. Install `stress-ng`; CPU util/stat also require `sysstat`. The container runtime must be able to obtain workload images. CPU reference collection, cpuidle, and dload also require Docker.
+
+CPU metrics support cgroup v1/v2. Runqlat and cpuidle require the relevant kernel sampling capabilities. Dload functional checks require Legacy cgroups, taskstats, dm-delay, `dmsetup`, `losetup`, `mkfs.ext4`, `modprobe`, `nsenter`, mount privileges, and an available loop device. Other cgroup modes report unsupported behavior and a skip reason.
+
+### Apiserver
+
+```bash
+sudo bash integration/run.sh test_apiserver_profile_disabled.sh
+sudo bash integration/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling_matrix.sh
+```
+
+Integration cases cover authentication, capabilities, parameters, and invalid requests. E2E covers profile results, pagination, flamegraphs, and the language/sampling matrix. Run `test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh` separately for stopping, concurrency, and recovery scenarios.
+
+API checks without storage do not need Docker, perf, or a compiler. Sampling tests need Docker, curl, jq, ss, timeout, perf settings that allow sampling, and built collection tools. Native host workloads also need gcc.
+
+The matrix additionally requires Python 3, ip, kubectl administration access, crictl, local kubelet credentials, and asprof/py-spy. `APISERVER_TEST_NODE` can select the local node. Otherwise, the test matches it automatically and fails if the match is ambiguous.
+
+Default images are `gcc:14`, `golang:1.24`, `eclipse-temurin:17-jdk`, and `python:3.11-slim`. Override them with the corresponding `APISERVER_TEST_*_IMAGE` variables. Image access is required at runtime. The workspace `summary.tsv` records each matrix combination's result.
+
+### Profiling
+
+```bash
+sudo bash integration/run.sh test_profiler_native_cpu.sh
+sudo bash integration/run.sh test_profiler_native_cpu_offcpu.sh
+sudo bash integration/run.sh test_profiler_native_memory_virtual_alloc.sh
+sudo bash integration/run.sh test_profiler_native_memory_physical_usage.sh
+sudo bash integration/run.sh test_profiler_java_cpu_multi_pid.sh
+sudo bash integration/run.sh test_profiler_java_memory_usage_alloc.sh
+sudo bash integration/run.sh test_profiler_python_cpu_multi_pid.sh
+```
+
+Java/Python cases need the corresponding collection tools in `PROFILER_TOOL_DIR`. Container, thread-group, and CPU-specific tests are `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`.
+
+### Storage and Resource Limits
+
+These storage tests do not require Elasticsearch:
 
 | Test | Checks |
 | --- | --- |
-| `test_basic_storage_elasticsearch_config.sh` | All eight combinations of `Address`, `Username`, and `Password`: partial configurations must exit with a configuration error; empty and complete configurations must reach readiness. The complete case uses `--disable-storage` to isolate backend availability. |
-| `test_basic_storage_localfile_rotation.sh` | Enables only LocalFile and sends packets to a closed UDP port to trigger rotation through Dropwatch events. Checks that the first backup is evicted, two backups and one active file remain, and each file is at most 1 MiB and contains valid JSON for the target events. |
+| `test_basic_storage_elasticsearch_config.sh` | Elasticsearch configuration completeness and startup behavior |
+| `test_basic_storage_localfile_rotation.sh` | LocalFile rotation, retention count, and event data |
 
-The rotation case requires kernel BTF, the `skb/kfree_skb` tracepoint, and the Dropwatch binary and BPF object. It shares UDP sending and configuration helpers with the backend consistency test. Callers of `write_storage_events_config` must set `STORAGE_EVENT_RATE`, `STORAGE_ROTATION_MIB`, and `STORAGE_MAX_ROTATED_FILES`.
-
-Both cases call `integration_isolate_run_directory` before starting the service to isolate its PID lock and Toolstream socket. The configuration, rotation, and backend consistency cases call `assert_huatuo_bamai_shutdown` before checking final data and logs to confirm a clean shutdown; `EXIT` traps handle best-effort cleanup.
-
-## Background Process Cleanup
-
-`stop_and_wait_by_pid PID [TIMEOUT]` stops and waits for a child process, returning its exit status. A missing or empty PID returns success immediately, so callers can pass initialized PID variables directly. Clear the variable after waiting. Use `|| true` for best-effort cleanup; assert the exit status when it is part of the test contract.
-
-## Network Namespace Helpers
-
-Network tests can source `integration/lib_namespace.sh` after `lib.sh`:
-
-- `namespace_setup NAME` creates a network namespace and exposes its name through `NETNS`. The caller enables `lo` and configures addresses.
-- `namespace_setup_with_pair PREFIX SERVER_ADDR CLIENT_ADDR [PREFIX_LENGTH]` creates two namespaces connected by veth, configures addresses, and enables interfaces. The prefix length defaults to 24. Namespaces, interfaces, and addresses are exposed through `NETNS_SERVER`, `NETNS_CLIENT`, `NETNS_VETH_SERVER`, `NETNS_VETH_CLIENT`, `NETNS_SERVER_ADDR`, and `NETNS_CLIENT_ADDR`.
-- `namespace_cleanup` deletes namespaces created by these helpers and clears state. Repeated calls are supported. In `EXIT` cleanup, stop processes inside the namespaces before calling it.
-
-## Shared Packet Sender
-
-Tests requiring raw packets reuse `integration/testdata/test_packet_sender.py`; extend it for new scenarios. It requires Python 3 and raw socket privileges and supports `ipv4-options` (TCP/UDP EOL options, including maximum IHL) and `icmpv6-echo`. Use each subcommand's `--help` for address, port, or Echo identifier parameters. The program sends packets every 100 ms and exits normally on SIGTERM. Shell cases manage namespaces, drop rules, assertions, logs, and process cleanup. Workloads needing real TCP connections continue to use `testdata/tcp_server.py`.
-
-## Add a Metric Test
-
-### 1. Prepare Simulated Data
-
-If the new metric depends on `/proc` or `/sys`, add or update simulated data in:
-```bash
-integration/fixtures/
-```
-This directory contains only kernel filesystem snapshots (`proc/`, `sys/`, `dev/`) with original paths and filenames. Put tool fixtures in `integration/testdata/tools/`, using filenames that start with `test_` or `Test`. For example, copy `test_perf.sh` to a temporary tool directory as `perf` before starting the test.
-
-### 2. Add Expected Metrics
-
-Create a file in:
-```bash
-integration/testdata/expected_metrics/
-├── test_cpu.txt
-├── test_memory.txt
-└── ...
-```
-Each nonempty, non-comment line defines one expected Prometheus metric and must exactly match a line returned by `/metrics`. Tests load `test_*.txt` automatically and derive the metric prefix by removing `test_` from the filename.
-
-### 3. Run the Test
+LocalFile rotation needs kernel BTF, the `skb/kfree_skb` tracepoint, and built Dropwatch tools.
 
 ```bash
-bash integration/run.sh
+sudo bash integration/run.sh test_node_runtime_limits.sh
 ```
-The test fails if any expected metric is missing or does not match.
+
+The resource-limit test checks CPU and memory configuration during startup and normal operation. It needs writable CPU and memory controllers; cgroup v2 also needs accessible systemd. Run on both v1/hybrid and v2 environments to establish coverage of both hierarchies. A busy environment or missing capabilities produces SKIP. This case does not test CPU throughput or OOM behavior.
+
+### IO
+
+IO cases cover public metrics, container attribution, automatic diagnostics,
+health events and device evidence. Run on a dedicated Linux test node with
+BPF/BTF support. Build as an ordinary user, then run the harness as root:
+
+```bash
+make build test-build
+sudo bash integration/run.sh test_metrics_io_wait.sh
+sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
+```
+
+`TEST_IO_DISK` defaults to `/dev/disk/by-id/virtio-huatuo-ci-io`. It must be a
+dedicated scratch disk whose contents may be overwritten. When the default
+device is missing, cases that require it are skipped. A missing device at a
+different configured path, a non-block device, or a mounted or partitioned disk
+fails the case. MD, loop and NVMe-loop backing files also
+use this disk. Cases requiring SCSI driver controls create separate
+`scsi_debug` devices. Container cases use the local Kubernetes node and
+existing kubelet credentials.
+
+`make unit` checks Go configuration, compatibility selection, decoding and metric conversion.
+Host and container metric cases verify real IOLatency output; they do not
+independently verify complete tracepoint argument counts on each kernel or
+exercise every remap path.
+
+Health evidence cases invoke real `smartctl` and `nvme`, requiring
+`smartmontools` and `nvme-cli`, respectively. Controlled tool responses cover
+command failures.
+
+### SchedBlame
+
+```bash
+sudo bash integration/run.sh test_sched_blame.sh
+```
+
+Use an isolated Linux 4.18–6.5 test environment with BTF, scheduler and cgroup hooks, a local Kubernetes node, kubelet authentication, and a cached `BUSINESS_POD_IMAGE`. Unsupported kernels or missing capabilities produce SKIP.
+
+Success prints `sched-blame live collection verified`. Failed runs retain CSV data, command logs, and Pod diagnostics in the workspace. This case verifies live collection and contention scenarios, not exact resource accounting.

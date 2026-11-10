@@ -30,6 +30,8 @@ var (
 	ErrDisconnectedHuatuo = errors.New("disconnected to huatuo")
 	// ErrNotSupported indicates that a feature is not supported.
 	ErrNotSupported = errors.New("not supported")
+	// ErrTracingStopped ends tracing without retrying after a fatal error.
+	ErrTracingStopped = errors.New("tracing stopped")
 	// Not valid args for function
 	ErrArgsInvalid = errors.New("args invalid")
 )

@@ -253,7 +253,8 @@ paths:
       security:
         - BearerAuth: []
       requestBody:
-        required: true
+        description: All LabelNames fields are optional, so the default protobuf message is empty.
+        required: false
         content:
           application/proto:
             schema:

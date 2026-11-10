@@ -29,7 +29,6 @@ type Config struct {
 	CPUIDs               []int
 	RequireHardwarePMU   bool
 
-	ServerAddress             string
 	ContainerID               string
 	Type                      profiling.Type
 	ExecPath                  string

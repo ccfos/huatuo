@@ -206,7 +206,7 @@ func TestDiskIOStatsCollector_MetricContract(t *testing.T) {
 			prometheus.BuildFQName(metricpkg.DefaultNamespace, "diskio", metrics[i].Name()),
 		)
 		assert.Equal(t, expected[i].metricType, metrics[i].Type())
-		assert.Equal(t, "sda", metrics[i].Labels()["device"])
+		assert.Equal(t, "sda", metrics[i].Labels()["disk"])
 		assert.NotEmpty(t, metrics[i].Help())
 	}
 

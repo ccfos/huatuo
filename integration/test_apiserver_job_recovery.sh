@@ -36,13 +36,11 @@ APISERVER_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
 readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
-readonly NODE_OPERATIONS_ADDR="${HUATUO_BAMAI_ADDR}/v1/operations"
 readonly PROFILE_CREATE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json"
 
 TARGET_PID=""
 PROFILE_ID=""
-STOPPING_APISERVER_PID=""
 
 cleanup() {
 	local status=$?
@@ -54,7 +52,7 @@ node_operation_status_is() {
 	local expected_status=$1
 	curl -sf "${CURL_TIMEOUT[@]}" \
 		-H 'Authorization: Bearer integration-node-token' \
-		"${NODE_OPERATIONS_ADDR}/${PROFILE_ID}" \
+		"${HUATUO_BAMAI_ADDR}/v1/operations/${PROFILE_ID}" \
 		> "${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
@@ -68,24 +66,13 @@ node_operation_status_is() {
 		"${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" > /dev/null
 }
 
-apiserver_process_exited() {
-	! kill -0 "${STOPPING_APISERVER_PID}" 2> /dev/null
-}
-
 stop_apiserver_for_restart() {
-	STOPPING_APISERVER_PID=$(
-		cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
-	) || fatal "apiserver pid file is missing"
+	local pid
+	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid") \
+		|| fatal "apiserver pid file is missing"
 
-	kill -TERM "${STOPPING_APISERVER_PID}" \
-		|| fatal "failed to signal apiserver pid=${STOPPING_APISERVER_PID}"
-	wait_until 20 1 apiserver_process_exited \
+	assert_process_shutdown_by_pid "${pid}" 20 \
 		|| fatal "apiserver did not exit gracefully"
-
-	local exit_status=0
-	wait "${STOPPING_APISERVER_PID}" || exit_status=$?
-	assert_eq "${exit_status}" "0" "graceful apiserver exit" \
-		|| fatal "apiserver exited with status ${exit_status}"
 
 	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \
@@ -115,7 +102,7 @@ node_operation_status_is running \
 	|| fatal "graceful apiserver shutdown stopped the Node Operation"
 
 integration_huatuo_apiserver_start \
-	write_continuous_profiling_apiserver_config
+	write_config_apiserver_continuous_profiling
 wait_until 10 1 recovered_job_metric_is_one \
 	|| fatal "replacement apiserver did not report one recovered job"
 wait_until 10 1 continuous_profile_status_is \

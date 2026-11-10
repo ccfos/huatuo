@@ -14,20 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Host-only integration: private procfs input, real processes, collector and daemon.
+# Controlled procfs input, real processes, collector and daemon in a private PID namespace.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
-require_commands go jq mount umount awk unshare timeout
-[[ ${EUID} == 0 ]] || skip "requires root and a private mount namespace"
-# Never replace procfs in the host mount namespace when invoked manually.
-if [[ ${MEMBURST_PRIVATE_PIDNS:-0} != 1 ]]; then
-	[[ $(readlink /proc/self/ns/mnt) != $(readlink /proc/1/ns/mnt) ]] || fatal "run through integration/run.sh (private mount namespace required)"
-	# Product scenarios use controlled rankings in their own PID namespace.
-	export MEMBURST_PRIVATE_PIDNS=1
-	exec unshare --pid --fork --mount-proc bash "${BASH_SOURCE[0]}"
-fi
+require_commands go jq mount umount awk timeout
 readonly MEMBURST_ROOT_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
 readonly MEMBURST_STANDARD_BIN=${HUATUO_BAMAI_BIN}
 export MEMSNAP_ACCEPTANCE_ARTIFACTS="${MEMBURST_ROOT_WORKSPACE}/helpers"
@@ -107,45 +99,48 @@ assert_burst_configuration_rejected() {
 	! grep -q 'started successfully' "${file}" || fatal "daemon started with invalid ${name}"
 }
 
-GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port)
 GO_SNAPSHOT_KUBELET_PORT=10250
 go_snapshot_top_k=100
 KUBELET_CERT=${KUBELET_CERT:-unused}
 KUBELET_KEY=${KUBELET_KEY:-unused}
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
 burst_top=10
 burst_threshold=10
 burst_anon=0
 burst_blacklist=0
 burst_cooldown=30
 burst_window=2
-burst_write_config() {
-	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
-	write_memory_threshold_snapshot_config
-	sed -i 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	if [[ ${burst_blacklist} == 1 ]]; then sed -i 's/^BlackList = \[/BlackList = ["memburst", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"; fi
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
+write_config_bamai_memburst() {
+	local go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
+	local blacklist_filter=''
+	if [[ ${burst_blacklist} == 1 ]]; then
+		blacklist_filter='s/^BlackList = \[/BlackList = ["memburst", /'
+	fi
+	write_config_bamai_memory_threshold_snapshot \
+		| sed -e 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' \
+			-e "${blacklist_filter}"
+	cat << CONFIG
 [AutoTracing.MemoryBurst]
  DeltaMemoryBurst = ${burst_threshold}
  DeltaAnonThreshold = ${burst_anon}
  Interval = 1
- SlidingWindowLength = ${burst_window}
  IntervalTracing = ${burst_cooldown}
  DumpProcessMaxNum = ${burst_top}
 CONFIG
+	if [[ -n ${burst_window} ]]; then
+		printf ' SlidingWindowLength = %s\n' "${burst_window}"
+	fi
 }
 burst_start() {
 	local pid
 	for pid in "${burst_workloads[@]}"; do kill -0 "${pid}" || fatal "workload exited before scenario"; done
-	integration_huatuo_bamai_start burst_write_config --region integration --disable-kubelet --log-debug
+	integration_huatuo_bamai_start write_config_bamai_memburst --region integration --disable-kubelet --log-debug
 	local enabled=1
 	[[ ${burst_blacklist} == 0 ]] || enabled=0
 	assert_memsnapshot_tracing_metrics memburst integration "${enabled}"
 }
 burst_stop() {
 	local signal=$1
-	huatuo_bamai_stop_with_signal "${signal}" "${2:-}"
+	assert_huatuo_bamai_shutdown_with_signal "${signal}" "${2:-}"
 	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/expected-storage-failure ]]; then
 		# Only the deliberate directory obstruction may produce a save warning.
 		awk '!(/level="warning"/ && /msg="save memburst snapshot"/ && /not a directory/)' \
@@ -187,7 +182,7 @@ assert_burst_event() {
 while IFS='|' read -r memburst_invalid memburst_config_field memburst_input_value memburst_config_error; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/invalid-${memburst_invalid}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
-	burst_write_config
+	write_config_bamai_memburst > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	sed -i "s/^ ${memburst_config_field} = .*/ ${memburst_config_field} = ${memburst_input_value}/" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	status=0
 	timeout --kill-after=2s 10s "${HUATUO_BAMAI_BIN}" \
@@ -206,6 +201,7 @@ cooldown-zero|IntervalTracing|0|memory burst tracing interval must be positive
 cooldown-negative|IntervalTracing|-1|memory burst tracing interval must be positive
 window-zero|SlidingWindowLength|0|memory burst sliding window length must be positive
 window-negative|SlidingWindowLength|-1|memory burst sliding window length must be positive
+window-over|SlidingWindowLength|86401|memory burst sliding window length must not exceed 86400 samples
 ranking-zero|DumpProcessMaxNum|0|memory burst dump process max num must be positive
 ranking-negative|DumpProcessMaxNum|-1|memory burst dump process max num must be positive
 wrong-type|DumpProcessMaxNum|"invalid"|invalid(string) to int
@@ -223,7 +219,7 @@ for i in 1 2 3; do
 	wait_until 20 .1 grep -qx 'pressure ready' "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "real allocation pressure failed"
 done
 huatuo_bamai_stop
-for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11; do
+for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11 default_window; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/${memburst_scenario}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	burst_top=10
@@ -232,6 +228,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	burst_blacklist=0
 	burst_window=2
 	[[ ${memburst_scenario} != window_minimum ]] || burst_window=1
+	[[ ${memburst_scenario} != default_window ]] || burst_window=""
 	[[ ${memburst_scenario} != anon_maximum ]] || burst_anon=100
 	[[ ${memburst_scenario} != top1 ]] || burst_top=1
 	[[ ${memburst_scenario} != top2 ]] || burst_top=2
@@ -242,6 +239,16 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	[[ ${memburst_scenario} != blacklist ]] || burst_blacklist=1
 	burst_input low
 	burst_start
+	if [[ ${memburst_scenario} == default_window ]]; then
+		# Omit the setting: an early burst must not bypass the default history.
+		burst_wait_samples low
+		burst_input high
+		burst_wait_samples high 3
+		assert_burst_count 0 "default history triggered before filling"
+		burst_input low
+		wait_until 90 .2 memsnapshot_memburst_samples_ready "${burst_sample_offset}" 60 100000 \
+			|| fatal "default memburst history did not fill"
+	fi
 	[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low
 	assert_burst_count 0 "event without burst"
 	burst_input high
@@ -275,6 +282,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	log_info "PASS: memburst ${memburst_scenario}"
 done
 log_info "PASS: memburst controlled-input scenarios"
+burst_window=2
 
 # Restart acceptance uses the standard daemon.
 # The standard daemon must retain completed events and recover after TERM/KILL.
@@ -365,6 +373,8 @@ assert_burst_runtime() {
  and all(.entries[]; .objects > 0 and .average_bytes == (.bytes / .objects))' \
 			"${go_snapshot_case_dir}/snapshot.json" > /dev/null || fatal "invalid concurrent allocation snapshot"
 		;;
+	# Each memburst process has only a two-second census budget.
+	python) assert_snapshot_runtime_payload python deadline-partial ;;
 	*) assert_snapshot_runtime_payload "${language}" ;;
 	esac
 	assert_burst_count "${count}"
