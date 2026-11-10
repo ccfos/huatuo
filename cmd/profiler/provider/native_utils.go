@@ -28,16 +28,16 @@ import (
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
-func newNativeBPFConstants(pid int, target pod.CgroupCSSRef, threadGroup bool) map[string]any {
+func newNativeBPFConstants(pid int, cgroupCSSRef pod.CgroupCSSRef, threadGroup bool) map[string]any {
 	return map[string]any{
-		"profiler_filter_css_addr":  target.CSSAddr,
-		"profiler_filter_kernfs_id": target.KernfsID,
+		"profiler_filter_css_addr":  cgroupCSSRef.CSSAddr,
+		"profiler_filter_cgroup_id": cgroupCSSRef.CgroupID,
 		"profiler_filter_pid":       uint32(pid),
 		"profiler_filter_threads":   threadGroup,
 	}
 }
 
-func resolveContainerCgroupTarget(ctx context.Context, cfg *Config, subsys string) (pod.CgroupCSSRef, error) {
+func resolveContainerCgroupCSSRef(ctx context.Context, cfg *Config, subsys string) (pod.CgroupCSSRef, error) {
 	if cfg.ContainerID == "" {
 		return pod.CgroupCSSRef{}, nil
 	}
@@ -69,21 +69,21 @@ func resolveContainerCgroupRef(ctx context.Context, serverAddr, containerID, sub
 		log.Warn("local node API unavailable; resolving complete CSS identity locally", "error", err)
 		return pod.ContainerCSSBySubsys(containerID, subsysName)
 	}
-	if container.CgroupCSSInstances != nil {
-		if instance, found := (*container.CgroupCSSInstances)[subsysName]; found {
-			cssAddr, cssOK := kernaddr.Parse(instance.CSSAddr)
-			kernfsID, idOK := kernaddr.Parse(instance.KernfsID)
-			if !cssOK || !idOK || cssAddr == 0 || kernfsID == 0 {
+	if container.CgroupCSSRefs != nil {
+		if remoteRef, found := (*container.CgroupCSSRefs)[subsysName]; found {
+			cssAddr, cssOK := kernaddr.Parse(remoteRef.CSSAddr)
+			cgroupID, idOK := kernaddr.Parse(remoteRef.CgroupID)
+			if !cssOK || !idOK || cssAddr == 0 || cgroupID == 0 {
 				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has invalid %s CSS identity in node API", containerID, subsysName)
 			}
 			if legacyAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName]); ok && legacyAddr != cssAddr {
 				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has conflicting %s CSS addresses in node API", containerID, subsysName)
 			}
-			return pod.CgroupCSSRef{CSSAddr: cssAddr, KernfsID: kernfsID}, nil
+			return pod.CgroupCSSRef{CSSAddr: cssAddr, CgroupID: cgroupID}, nil
 		}
 	}
 	if !localNodeAddress(serverAddr) {
-		return pod.CgroupCSSRef{}, fmt.Errorf("container %q has no %s kernfs ID in remote node API", containerID, subsysName)
+		return pod.CgroupCSSRef{}, fmt.Errorf("container %q has no %s cgroup ID in remote node API", containerID, subsysName)
 	}
 	local, err := pod.ContainerCSSBySubsys(containerID, subsysName)
 	if err != nil {

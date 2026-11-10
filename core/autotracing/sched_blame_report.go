@@ -199,7 +199,7 @@ func (state *schedBlameState) topExternalCompetitors(
 			continue
 		}
 		ref := state.cssRefs[competitorCSSID]
-		if ref.CSSAddr == 0 || ref.KernfsID == 0 {
+		if ref.CSSAddr == 0 || ref.CgroupID == 0 {
 			continue
 		}
 		chargeByRef[ref] += charge
@@ -219,7 +219,7 @@ func (state *schedBlameState) topExternalCompetitors(
 		if competitors[i].ref.CSSAddr != competitors[j].ref.CSSAddr {
 			return competitors[i].ref.CSSAddr < competitors[j].ref.CSSAddr
 		}
-		return competitors[i].ref.KernfsID < competitors[j].ref.KernfsID
+		return competitors[i].ref.CgroupID < competitors[j].ref.CgroupID
 	})
 	if len(competitors) > schedBlameTopExternalCompetitors {
 		competitors = competitors[:schedBlameTopExternalCompetitors]
@@ -402,11 +402,11 @@ func schedBlameResolveCSSAddr(
 	containers map[string]*pod.Container,
 ) (string, string) {
 	unknown := func() (string, string) {
-		label := fmt.Sprintf("css-%016x-%016x", ref.CSSAddr, ref.KernfsID)
+		label := fmt.Sprintf("css-%016x-%016x", ref.CSSAddr, ref.CgroupID)
 		return label, label
 	}
 	containerID, exists := css[ref.CSSAddr]
-	if !exists || ref.CSSAddr == 0 || ref.KernfsID == 0 {
+	if !exists || ref.CSSAddr == 0 || ref.CgroupID == 0 {
 		return unknown()
 	}
 	liveRef, err := schedBlameContainerCSSRef(containerID, "cpu")

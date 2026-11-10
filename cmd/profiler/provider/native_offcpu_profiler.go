@@ -68,8 +68,8 @@ func nativeOffCPUAttachOptions() []bpf.AttachOption {
 	}
 }
 
-func newNativeOffCPUBPFConstants(cfg *Config, target pod.CgroupCSSRef) map[string]any {
-	constants := newNativeBPFConstants(cfg.PID(), target, cfg.ThreadGroup)
+func newNativeOffCPUBPFConstants(cfg *Config, cgroupCSSRef pod.CgroupCSSRef) map[string]any {
+	constants := newNativeBPFConstants(cfg.PID(), cgroupCSSRef, cfg.ThreadGroup)
 	constants["profiler_offcpu_phase"] = offCPUPhaseCode(cfg.OffCPUPhase)
 	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(cfg.OffCPUMinDurationUS)
 	constants["profiler_offcpu_cpu_set_enabled"] = uint32(0)

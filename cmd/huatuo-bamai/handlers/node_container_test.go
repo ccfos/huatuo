@@ -31,7 +31,7 @@ func TestGetContainer(t *testing.T) {
 			if id != testContainerID || subsys != "cpu" {
 				t.Fatalf("CSS lookup = (%q, %q), want (%q, cpu)", id, subsys, testContainerID)
 			}
-			return pod.CgroupCSSRef{CSSAddr: 0xffff888012345678, KernfsID: 42}, nil
+			return pod.CgroupCSSRef{CSSAddr: 0xffff888012345678, CgroupID: 42}, nil
 		},
 		containerByID: func(id string) (*pod.Container, error) {
 			if id != testContainerID {
@@ -66,9 +66,9 @@ func TestGetContainer(t *testing.T) {
 	if _, ok := response.Data.CgroupCSS["memory"]; ok {
 		t.Error("GetContainer() returned a zero memory CSS address")
 	}
-	if response.Data.CgroupCSSInstances == nil ||
-		(*response.Data.CgroupCSSInstances)["cpu"].KernfsID != "0x000000000000002a" {
-		t.Errorf("GetContainer() CPU CSS instance = %v, want kernfs ID 42", response.Data.CgroupCSSInstances)
+	if response.Data.CgroupCSSRefs == nil ||
+		(*response.Data.CgroupCSSRefs)["cpu"].CgroupID != "0x000000000000002a" {
+		t.Errorf("GetContainer() CPU CSS instance = %v, want cgroup ID 42", response.Data.CgroupCSSRefs)
 	}
 }
 
@@ -99,8 +99,8 @@ func TestGetContainerOmitsUnverifiedCSSRef(t *testing.T) {
 		ref  pod.CgroupCSSRef
 		err  error
 	}{
-		{name: "address mismatch", ref: pod.CgroupCSSRef{CSSAddr: 0x200, KernfsID: 7}},
-		{name: "zero kernfs ID", ref: pod.CgroupCSSRef{CSSAddr: 0x100}},
+		{name: "address mismatch", ref: pod.CgroupCSSRef{CSSAddr: 0x200, CgroupID: 7}},
+		{name: "zero cgroup ID", ref: pod.CgroupCSSRef{CSSAddr: 0x100}},
 		{name: "lookup failure", err: errors.New("cache unavailable")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -122,8 +122,8 @@ func TestGetContainerOmitsUnverifiedCSSRef(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := result.(nodeapi.GetContainer200JSONResponse)
-			if response.Data.CgroupCSSInstances != nil {
-				t.Fatalf("unverified CSS ref published: %+v", response.Data.CgroupCSSInstances)
+			if response.Data.CgroupCSSRefs != nil {
+				t.Fatalf("unverified CSS ref published: %+v", response.Data.CgroupCSSRefs)
 			}
 			if response.Data.CgroupCSS["cpu"] != "0x0000000000000100" {
 				t.Fatalf("legacy CSS address missing: %+v", response.Data.CgroupCSS)

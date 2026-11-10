@@ -26,7 +26,7 @@ var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 // CgroupCSSRef identifies one cgroup subsystem state instance.
 type CgroupCSSRef struct {
 	CSSAddr  uint64
-	KernfsID uint64
+	CgroupID uint64
 }
 
 // Container object

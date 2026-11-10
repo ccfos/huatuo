@@ -110,9 +110,9 @@ static u64 css_id_to_dense_id[MAX_CSS_IDS];
 static struct waiting_target_bitmap waiting_target_bitmap_by_cpu[MAX_CPUS];
 static u32 waiting_epoch_by_cpu[MAX_CPUS];
 static u64 observed_identity[MAX_CSS_IDS];
-static u64 observed_kernfs_id[MAX_CSS_IDS];
+static u64 observed_cgroup_id[MAX_CSS_IDS];
 static u64 cached_css_addr[MAX_CSS_IDS];
-static u64 cached_kernfs_id[MAX_CSS_IDS];
+static u64 cached_cgroup_id[MAX_CSS_IDS];
 static u64 previous_switch_ns_by_cpu[MAX_CPUS];
 static u64 batch_first_ts_ns_by_cpu[MAX_CPUS];
 // Access only through the helpers below; zero encodes idle or unknown.
@@ -305,7 +305,7 @@ static __always_inline u32 resolve_target_dense_id(
 	u64 cached;
 	u8 dense_id;
 	struct sched_blame_target_ref *mapped;
-	u64 ref_kernfs_id = 0;
+	u64 ref_cgroup_id = 0;
 
 	if (epoch & 1)
 		return NON_TARGET;
@@ -320,7 +320,7 @@ static __always_inline u32 resolve_target_dense_id(
 			return NON_TARGET;
 		if (cached_css_addr[css_index] == css_addr &&
 		    cgroup_css_matches_ref(css_addr, css_addr,
-					   cached_kernfs_id[css_index]))
+					   cached_cgroup_id[css_index]))
 			return cache_dense_id(cached);
 	}
 
@@ -331,15 +331,15 @@ static __always_inline u32 resolve_target_dense_id(
 		count(&n_invalid_target_dense_id);
 		dense_id = NON_TARGET;
 	} else if (!cgroup_css_matches_ref(css_addr, css_addr,
-					     mapped->kernfs_id)) {
+					     mapped->cgroup_id)) {
 		dense_id = NON_TARGET;
 	} else {
 		dense_id = mapped->dense_id;
-		ref_kernfs_id = mapped->kernfs_id;
+		ref_cgroup_id = mapped->cgroup_id;
 	}
 
 	cached_css_addr[css_index] = css_addr;
-	cached_kernfs_id[css_index] = ref_kernfs_id;
+	cached_cgroup_id[css_index] = ref_cgroup_id;
 	*cache_entry = pack_dense_id_cache(epoch, dense_id);
 	return dense_id;
 }
@@ -439,25 +439,25 @@ static __always_inline void maybe_emit_identity(
 {
 	struct sched_blame_identity_event event = {};
 	u64 css_addr;
-	u64 kernfs_id;
+	u64 cgroup_id;
 
 	// event_cpu_index selects the perf entry for the CPU executing this hook.
 	// It may differ from a remotely woken task's destination CPU.
 	if (!tg)
 		return;
 	css_addr = (u64)tg;
-	kernfs_id = cgroup_css_kernfs_id(css_addr);
-	if (!kernfs_id)
+	cgroup_id = cgroup_id_from_css(css_addr);
+	if (!cgroup_id)
 		return;
 	asm volatile("%0 &= 4095" : "+r"(css_index));
 	if (observed_identity[css_index] == css_addr &&
-	    observed_kernfs_id[css_index] == kernfs_id)
+	    observed_cgroup_id[css_index] == cgroup_id)
 		return;
 
 	event.magic = IDENTITY_EVENT_MAGIC;
 	event.css_id = (u16)css_index;
 	event.css_addr = css_addr;
-	event.kernfs_id = kernfs_id;
+	event.cgroup_id = cgroup_id;
 	// Perf output must use the current hook CPU's perf-array entry.
 	asm volatile("%0 &= 511" : "+r"(event_cpu_index));
 	if (bpf_perf_event_output(ctx, &events, event_cpu_index,
@@ -466,7 +466,7 @@ static __always_inline void maybe_emit_identity(
 	}
 	asm volatile("%0 &= 4095" : "+r"(css_index));
 	observed_identity[css_index] = css_addr;
-	observed_kernfs_id[css_index] = kernfs_id;
+	observed_cgroup_id[css_index] = cgroup_id;
 }
 
 static __always_inline void emit_throttle_event(

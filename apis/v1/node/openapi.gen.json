@@ -156,20 +156,20 @@
         "additionalProperties": false,
         "description": "A reference to one cgroup subsystem state observed in a single cgroup lifecycle event. The address may be reused after the cgroup is removed; consumers must compare both fields with the current kernel state before attributing samples.",
         "properties": {
-          "css_addr": {
-            "description": "Kernel virtual address of the cgroup subsystem state, encoded as a fixed-width hexadecimal string.",
+          "cgroup_id": {
+            "description": "Full kernel cgroup ID of the cgroup owning this subsystem state, including the kernfs generation, encoded as a fixed-width hexadecimal string.",
             "pattern": "^0x[0-9a-f]{16}$",
             "type": "string"
           },
-          "kernfs_id": {
-            "description": "Full kernfs ID of the cgroup owning this subsystem state, including its generation, encoded as a fixed-width hexadecimal string.",
+          "css_addr": {
+            "description": "Kernel virtual address of the cgroup subsystem state, encoded as a fixed-width hexadecimal string.",
             "pattern": "^0x[0-9a-f]{16}$",
             "type": "string"
           }
         },
         "required": [
           "css_addr",
-          "kernfs_id"
+          "cgroup_id"
         ],
         "type": "object"
       },
@@ -184,11 +184,11 @@
             "description": "Legacy subsystem-to-CSS-address snapshot. An address alone does not identify a cgroup instance.",
             "type": "object"
           },
-          "cgroup_css_instances": {
+          "cgroup_css_refs": {
             "additionalProperties": {
               "$ref": "#/components/schemas/CgroupCSSRef"
             },
-            "description": "Subsystem-to-CSS-reference snapshot. Each entry pairs values from one discovery event. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different kernfs IDs. Consumers must verify the pair against current kernel state before use.",
+            "description": "Subsystem-to-CSS-reference snapshot. Each entry pairs values from one discovery event. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Consumers must verify the pair against current kernel state before use.",
             "type": "object"
           },
           "id": {

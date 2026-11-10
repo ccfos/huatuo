@@ -26,7 +26,7 @@ typedef enum {
  * Naming follows skb_filter convention for consistency.
  */
 volatile const u64 profiler_filter_css_addr = 0;
-volatile const u64 profiler_filter_kernfs_id = 0;
+volatile const u64 profiler_filter_cgroup_id = 0;
 volatile const u32 profiler_filter_pid = 0;
 volatile const bool profiler_filter_threads = false;
 volatile const u8 profiler_sampling_prob = 100;
@@ -49,7 +49,7 @@ static __always_inline bool profiler_should_trace(u64 pid_tgid, u64 css)
 	}
 	if (profiler_filter_css_addr != 0 &&
 	    !cgroup_css_matches_ref(css, profiler_filter_css_addr,
-				   profiler_filter_kernfs_id))
+				   profiler_filter_cgroup_id))
 		return false;
 	return true;
 }

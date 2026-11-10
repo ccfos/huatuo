@@ -325,9 +325,9 @@ func TestContainerCSSCachePairsHierarchyAndRejectsStaleRemoval(t *testing.T) {
 	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu", 1: "memory"}
 	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldIDs })
 	const containerID = "container"
-	first := &containerCssPerfEvent{KernfsID: 11}
+	first := &containerCssPerfEvent{CgroupID: 11}
 	first.CSS[0] = 0x100
-	second := &containerCssPerfEvent{KernfsID: 22}
+	second := &containerCssPerfEvent{CgroupID: 22}
 	second.CSS[1] = 0x200
 	t.Cleanup(func() {
 		cgroupCssMetaDataMap.Delete(uint64(0x100))
@@ -340,8 +340,8 @@ func TestContainerCSSCachePairsHierarchyAndRejectsStaleRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	for subsystem, want := range map[string]CgroupCSSRef{
-		"cpu":    {CSSAddr: 0x100, KernfsID: 11},
-		"memory": {CSSAddr: 0x200, KernfsID: 22},
+		"cpu":    {CSSAddr: 0x100, CgroupID: 11},
+		"memory": {CSSAddr: 0x200, CgroupID: 22},
 	} {
 		for _, css := range cgroupListCssDataByKnode(containerID) {
 			if css.SubSys != subsystem {
@@ -353,7 +353,7 @@ func TestContainerCSSCachePairsHierarchyAndRejectsStaleRemoval(t *testing.T) {
 			}
 		}
 	}
-	newInstance := &containerCssPerfEvent{KernfsID: 33}
+	newInstance := &containerCssPerfEvent{CgroupID: 33}
 	newInstance.CSS[0] = 0x100
 	if err := cgroupUpdateOrCreateCssData(newInstance, containerID); err != nil {
 		t.Fatal(err)
@@ -362,10 +362,10 @@ func TestContainerCSSCachePairsHierarchyAndRejectsStaleRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	value, exists := cgroupCssMetaDataMap.Load(uint64(0x100))
-	if !exists || value.(*containerCssMetaData).KernfsID != 33 {
+	if !exists || value.(*containerCssMetaData).CgroupID != 33 {
 		t.Fatalf("stale deletion removed replacement CSS: %v, %v", value, exists)
 	}
 	if _, err := containerCSSRef(&containerCssMetaData{CSS: 0x100, SubSys: "cpu"}, containerID); err == nil {
-		t.Fatal("zero kernfs ID accepted")
+		t.Fatal("zero cgroup ID accepted")
 	}
 }

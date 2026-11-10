@@ -86,7 +86,7 @@ var (
 
 type containerCssMetaData struct {
 	CSS         uint64
-	KernfsID    uint64
+	CgroupID    uint64
 	SubSys      string
 	Cgroup      uint64
 	CgroupRoot  int32
@@ -120,7 +120,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent, containerID string
 		if sysName, ok := cgroupCssID2SubSysNameMap[index]; ok {
 			m := &containerCssMetaData{
 				CSS:         css,
-				KernfsID:    data.KernfsID,
+				CgroupID:    data.CgroupID,
 				Cgroup:      data.Cgroup,
 				CgroupRoot:  data.CgroupRoot,
 				CgroupLevel: data.CgroupLevel,
@@ -147,7 +147,7 @@ func cgroupDeleteCssData(data *containerCssPerfEvent, containerID string) error 
 
 		if _, ok := cgroupCssID2SubSysNameMap[index]; ok {
 			m, loaded := cgroupCssMetaDataMap.Load(css)
-			if loaded && m.(*containerCssMetaData).KernfsID == data.KernfsID &&
+			if loaded && m.(*containerCssMetaData).CgroupID == data.CgroupID &&
 				m.(*containerCssMetaData).ContainerID == containerID &&
 				cgroupCssMetaDataMap.CompareAndDelete(css, m) {
 				log.Debugf("delete container css data: %+v", m)
@@ -341,7 +341,7 @@ func cgroupCssExistedSync() error {
 	return nil
 }
 
-// ContainerCSSBySubsys returns a paired CSS address and kernfs ID for one
+// ContainerCSSBySubsys returns a paired CSS address and cgroup ID for one
 // container subsystem. A missing cache entry triggers one BPF sync.
 // This function is compatible with the shared cgroup lifecycle initialization.
 func ContainerCSSBySubsys(containerID, subsysName string) (CgroupCSSRef, error) {
@@ -379,11 +379,11 @@ func ContainerCSSBySubsys(containerID, subsysName string) (CgroupCSSRef, error) 
 }
 
 func containerCSSRef(css *containerCssMetaData, containerID string) (CgroupCSSRef, error) {
-	if css.CSS == 0 || css.KernfsID == 0 {
-		return CgroupCSSRef{}, fmt.Errorf("container %q %s CSS identity is incomplete: address=%#x kernfs_id=%#x",
-			containerID, css.SubSys, css.CSS, css.KernfsID)
+	if css.CSS == 0 || css.CgroupID == 0 {
+		return CgroupCSSRef{}, fmt.Errorf("container %q %s CSS identity is incomplete: address=%#x cgroup_id=%#x",
+			containerID, css.SubSys, css.CSS, css.CgroupID)
 	}
-	return CgroupCSSRef{CSSAddr: css.CSS, KernfsID: css.KernfsID}, nil
+	return CgroupCSSRef{CSSAddr: css.CSS, CgroupID: css.CgroupID}, nil
 }
 
 // syncContainerCSS triggers a one-time BPF-based CSS collection for a specific container.

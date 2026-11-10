@@ -50,12 +50,12 @@ func BenchmarkSchedBlameHandlePackedSlice(b *testing.B) {
 	state.handleIdentity(&schedBlameIdentity{
 		CSSID:    targetCSSID,
 		CSSAddr:  targetCSSAddr,
-		KernfsID: 1,
+		CgroupID: 1,
 	})
 	state.handleIdentity(&schedBlameIdentity{
 		CSSID:    competitorCSSID,
 		CSSAddr:  competitorCSSAddr,
-		KernfsID: 1,
+		CgroupID: 1,
 	})
 	packedSlice := packSchedBlameSliceForTest(
 		1_000,

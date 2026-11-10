@@ -15,7 +15,7 @@ struct kernfs_node___css_modern {
 	u64 id;
 } __attribute__((preserve_access_index));
 
-static __always_inline u64 cgroup_kernfs_id(struct cgroup *cgrp)
+static __always_inline u64 cgroup_id(struct cgroup *cgrp)
 {
 	struct kernfs_node *kn;
 
@@ -32,7 +32,7 @@ static __always_inline u64 cgroup_kernfs_id(struct cgroup *cgrp)
 	return 0;
 }
 
-static __always_inline u64 cgroup_css_kernfs_id(u64 css_addr)
+static __always_inline u64 cgroup_id_from_css(u64 css_addr)
 {
 	struct cgroup_subsys_state *css = (void *)css_addr;
 	struct cgroup *cgrp;
@@ -40,16 +40,16 @@ static __always_inline u64 cgroup_css_kernfs_id(u64 css_addr)
 	if (!css)
 		return 0;
 	cgrp = BPF_CORE_READ(css, cgroup);
-	return cgroup_kernfs_id(cgrp);
+	return cgroup_id(cgrp);
 }
 
 static __always_inline bool cgroup_css_matches_ref(u64 observed_css_addr,
 						   u64 ref_css_addr,
-						   u64 ref_kernfs_id)
+						   u64 ref_cgroup_id)
 {
 	return observed_css_addr != 0 && ref_css_addr != 0 &&
-	       ref_kernfs_id != 0 && observed_css_addr == ref_css_addr &&
-	       cgroup_css_kernfs_id(observed_css_addr) == ref_kernfs_id;
+	       ref_cgroup_id != 0 && observed_css_addr == ref_css_addr &&
+	       cgroup_id_from_css(observed_css_addr) == ref_cgroup_id;
 }
 
 static __always_inline u64 current_task_cpu_css_addr(void)

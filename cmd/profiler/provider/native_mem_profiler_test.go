@@ -285,7 +285,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			cfg, err := newNativeMemoryBPFLoadConfig(
 				tc.mode,
 				123,
-				pod.CgroupCSSRef{CSSAddr: 456, KernfsID: 789},
+				pod.CgroupCSSRef{CSSAddr: 456, CgroupID: 789},
 				true,
 				42,
 			)
@@ -296,8 +296,8 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			if cfg.ObjectFile != tc.wantObject {
 				t.Fatalf("ObjectFile = %q, want %q", cfg.ObjectFile, tc.wantObject)
 			}
-			if got := cfg.Constants["profiler_filter_kernfs_id"]; got != uint64(789) {
-				t.Fatalf("profiler_filter_kernfs_id = %v, want 789", got)
+			if got := cfg.Constants["profiler_filter_cgroup_id"]; got != uint64(789) {
+				t.Fatalf("profiler_filter_cgroup_id = %v, want 789", got)
 			}
 
 			if !reflect.DeepEqual(cfg.AttachOpts, tc.wantAttach) {

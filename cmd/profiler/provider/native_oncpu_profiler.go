@@ -102,7 +102,7 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 
 	log.Infof("starting native CPU profiler: mode=%s", cfg.Mode)
 
-	target, err := resolveContainerCgroupTarget(ctx, cfg, subsystem.SubsystemCPU)
+	cgroupCSSRef, err := resolveContainerCgroupCSSRef(ctx, cfg, subsystem.SubsystemCPU)
 	if err != nil {
 		return err
 	}
@@ -111,10 +111,10 @@ func (p *cpuNativeProfiler) Start(ctx context.Context) error {
 	var constants map[string]any
 	if offCPU {
 		objectName = "native_offcpu_profiler.o"
-		constants = newNativeOffCPUBPFConstants(cfg, target)
+		constants = newNativeOffCPUBPFConstants(cfg, cgroupCSSRef)
 	} else {
 		objectName = "native_oncpu_profiler.o"
-		constants = newNativeBPFConstants(cfg.PID(), target, cfg.ThreadGroup)
+		constants = newNativeBPFConstants(cfg.PID(), cgroupCSSRef, cfg.ThreadGroup)
 	}
 
 	dbg := bpf.NewDbg(cfg.LogBpfDebug)

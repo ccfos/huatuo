@@ -27,7 +27,7 @@ enum cgroup_css_operation {
 
 struct cgroup_css_event {
 	u64 cgroup;
-	u64 kernfs_id;
+	u64 cgroup_id;
 	enum cgroup_css_operation operation;
 	u32 pad0;
 	s32 cgroup_root;

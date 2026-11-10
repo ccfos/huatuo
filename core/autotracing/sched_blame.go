@@ -121,7 +121,7 @@ type schedBlameIdentity struct {
 	CSSID    uint16
 	_        uint32
 	CSSAddr  uint64
-	KernfsID uint64
+	CgroupID uint64
 }
 
 var (
@@ -209,10 +209,10 @@ func decodeSchedBlameIdentity(
 		Magic:    binary.LittleEndian.Uint16(raw[:2]),
 		CSSID:    binary.LittleEndian.Uint16(raw[2:4]),
 		CSSAddr:  binary.LittleEndian.Uint64(raw[8:16]),
-		KernfsID: binary.LittleEndian.Uint64(raw[16:24]),
+		CgroupID: binary.LittleEndian.Uint64(raw[16:24]),
 	}
 	if decoded.CSSID >= schedBlameMaxCSSIDs ||
-		decoded.CSSAddr == 0 || decoded.KernfsID == 0 {
+		decoded.CSSAddr == 0 || decoded.CgroupID == 0 {
 		return errors.New("invalid sched-blame identity record")
 	}
 	*identity = decoded
@@ -334,7 +334,7 @@ type schedBlameExternalChargeMatrix [schedBlameMaxPairs]uint64
 
 type schedBlameTarget struct {
 	cssAddr     uint64
-	kernfsID    uint64
+	cgroupID    uint64
 	containerID string
 	name        string
 	cgroupPath  string
@@ -343,7 +343,7 @@ type schedBlameTarget struct {
 }
 
 func (target schedBlameTarget) active() bool {
-	return target.cssAddr != 0 && target.kernfsID != 0 && target.containerID != ""
+	return target.cssAddr != 0 && target.cgroupID != 0 && target.containerID != ""
 }
 
 func (bitmap *schedBlameTargetBitmap) set(targetIndex int) {
@@ -421,7 +421,7 @@ func schedBlameSameTargetOwner(left, right schedBlameTarget) bool {
 		return !left.active() && !right.active()
 	}
 	return left.containerID == right.containerID &&
-		left.cssAddr == right.cssAddr && left.kernfsID == right.kernfsID
+		left.cssAddr == right.cssAddr && left.cgroupID == right.cgroupID
 }
 
 func schedBlameSameTargetAssignments(
@@ -472,7 +472,7 @@ func (state *schedBlameState) rebuildTargetDenseByCSSID() {
 			target := state.targets[targetIndex]
 			denseIDByRef[pod.CgroupCSSRef{
 				CSSAddr:  target.cssAddr,
-				KernfsID: target.kernfsID,
+				CgroupID: target.cgroupID,
 			}] = uint8(targetIndex)
 		}
 	}
@@ -511,11 +511,11 @@ func (state *schedBlameState) handleIdentity(
 	identity *schedBlameIdentity,
 ) {
 	if identity.CSSID >= schedBlameMaxCSSIDs ||
-		identity.CSSAddr == 0 || identity.KernfsID == 0 {
+		identity.CSSAddr == 0 || identity.CgroupID == 0 {
 		return
 	}
 	state.cssRefs[identity.CSSID] = pod.CgroupCSSRef{
-		CSSAddr: identity.CSSAddr, KernfsID: identity.KernfsID,
+		CSSAddr: identity.CSSAddr, CgroupID: identity.CgroupID,
 	}
 	state.cssKnown[identity.CSSID] = true
 	oldTargetIndex := state.targetDenseByCSSID[identity.CSSID]
@@ -530,7 +530,7 @@ func (state *schedBlameState) handleIdentity(
 	for targetIndex := range state.targets {
 		target := &state.targets[targetIndex]
 		if !target.active() || identity.CSSAddr != target.cssAddr ||
-			identity.KernfsID != target.kernfsID {
+			identity.CgroupID != target.cgroupID {
 			continue
 		}
 		state.targetDenseByCSSID[identity.CSSID] = uint8(targetIndex)
@@ -689,12 +689,12 @@ func schedBlameTargetFromContainer(
 		return schedBlameTarget{}, false
 	}
 	ref, err := schedBlameContainerCSSRef(containerID, subsystem.SubsystemCPU)
-	if err != nil || ref.CSSAddr != cssAddr || ref.KernfsID == 0 {
+	if err != nil || ref.CSSAddr != cssAddr || ref.CgroupID == 0 {
 		return schedBlameTarget{}, false
 	}
 	return schedBlameTarget{
 		cssAddr:     cssAddr,
-		kernfsID:    ref.KernfsID,
+		cgroupID:    ref.CgroupID,
 		containerID: containerID,
 		name:        container.Hostname,
 		cgroupPath:  container.CgroupPath,
@@ -1046,7 +1046,7 @@ func publishSchedBlameTargets(
 		key := make([]byte, 8)
 		binary.LittleEndian.PutUint64(key, target.cssAddr)
 		value := make([]byte, abi.SchedBlameTargetRefSize)
-		binary.LittleEndian.PutUint64(value, target.kernfsID)
+		binary.LittleEndian.PutUint64(value, target.cgroupID)
 		value[8] = byte(targetIndex)
 		items = append(items, ibpf.MapItem{
 			Key:   key,

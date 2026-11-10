@@ -54,10 +54,10 @@ func mainAction(ctx *cli.Context) error {
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
 
-	var target pod.CgroupCSSRef
+	var cgroupCSSRef pod.CgroupCSSRef
 	if containerID := ctx.String("container-id"); containerID != "" {
 		var err error
-		target, err = resolvePerfContainerCSSRef(ctx.Context, ctx.String("huatuo-api-address"), containerID)
+		cgroupCSSRef, err = resolvePerfContainerCSSRef(ctx.Context, ctx.String("huatuo-api-address"), containerID)
 		if err != nil {
 			return err
 		}
@@ -76,8 +76,8 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{
-		"perf_filter_css_addr":  target.CSSAddr,
-		"perf_filter_kernfs_id": target.KernfsID,
+		"perf_filter_css_addr":  cgroupCSSRef.CSSAddr,
+		"perf_filter_cgroup_id": cgroupCSSRef.CgroupID,
 		"pid":                   optPid,
 	})
 	if err != nil {
@@ -132,17 +132,17 @@ func resolvePerfContainerCSSRef(ctx context.Context, serverAddress, containerID 
 		}
 		return pod.ContainerCSSBySubsys(containerID, "cpu")
 	}
-	if container.CgroupCSSInstances != nil {
-		if instance, found := (*container.CgroupCSSInstances)["cpu"]; found {
-			cssAddr, cssOK := kernaddr.Parse(instance.CSSAddr)
-			kernfsID, idOK := kernaddr.Parse(instance.KernfsID)
-			if !cssOK || !idOK || cssAddr == 0 || kernfsID == 0 {
+	if container.CgroupCSSRefs != nil {
+		if remoteRef, found := (*container.CgroupCSSRefs)["cpu"]; found {
+			cssAddr, cssOK := kernaddr.Parse(remoteRef.CSSAddr)
+			cgroupID, idOK := kernaddr.Parse(remoteRef.CgroupID)
+			if !cssOK || !idOK || cssAddr == 0 || cgroupID == 0 {
 				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has invalid CPU CSS identity in node API", containerID)
 			}
 			if legacyAddr, ok := kernaddr.Parse(container.CgroupCSS["cpu"]); ok && legacyAddr != cssAddr {
 				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has conflicting CPU CSS addresses in node API", containerID)
 			}
-			return pod.CgroupCSSRef{CSSAddr: cssAddr, KernfsID: kernfsID}, nil
+			return pod.CgroupCSSRef{CSSAddr: cssAddr, CgroupID: cgroupID}, nil
 		}
 	}
 	if !perfLocalNodeAddress(serverAddress) {

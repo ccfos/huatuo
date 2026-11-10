@@ -28,11 +28,11 @@ struct sched_blame_identity_event {
 	u16 css_id;
 	u8 padding[4];
 	u64 css_addr;
-	u64 kernfs_id;
+	u64 cgroup_id;
 };
 
 struct sched_blame_target_ref {
-	u64 kernfs_id;
+	u64 cgroup_id;
 	u8 dense_id;
 	u8 padding[7];
 };
