@@ -1134,6 +1134,7 @@ type fakeIOCostBPF struct {
 	attachCalls     int
 	attachFailAt    int
 	attachErr       error
+	attachCallback  func()
 	closeCalls      int
 	closeErr        error
 	sessionVisible  func() bool
@@ -1155,6 +1156,9 @@ func (object *fakeIOCostBPF) AttachWithOptions(
 	for _, option := range options {
 		object.options = append(object.options, option)
 		if object.attachFailAt == len(object.options) {
+			if object.attachCallback != nil {
+				object.attachCallback()
+			}
 			return object.attachErr
 		}
 	}
@@ -1251,6 +1255,27 @@ func TestIOCostAttachFailureClosesObject(t *testing.T) {
 	require.Equal(t, 1, state.closeCalls)
 	require.False(t, state.visibleAtClose)
 	require.False(t, object.visibleAtAttach)
+}
+
+func TestIOCostAttachCancellationClosesObject(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	object := &fakeIOCostBPF{
+		attachFailAt:   len(ioCostSessionTestAttachOptions(t)),
+		attachErr:      context.Canceled,
+		attachCallback: cancel,
+	}
+	collector := &iocostTracing{}
+	err := collector.startWithProfile(
+		ctx,
+		func(string, map[string]any) (bpf.BPF, error) { return object, nil },
+		ioCostSessionTestProfile(),
+		1,
+		emptyIOCostContainerSource,
+	)
+	require.NoError(t, err)
+	require.Nil(t, collector.session)
+	require.Equal(t, 1, object.state().closeCalls)
 }
 
 func TestIOCostStartPrePublishFailures(t *testing.T) {

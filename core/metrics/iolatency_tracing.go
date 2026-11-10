@@ -86,6 +86,9 @@ func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
 		arguments, err = loadIOLatencyTracepointArguments()
 		return err
 	}); err != nil {
+		if err == ctx.Err() { //nolint:errorlint // Wrapped cleanup failures must remain visible.
+			return nil
+		}
 		if errors.Is(err, types.ErrNotSupported) {
 			log.WithError(err).Warn("iolatency: tracepoint ABI unavailable")
 		}
@@ -115,6 +118,9 @@ func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
 	if err := retryIOControlAttach(childCtx, ioControlAttachRetryInterval, func() error {
 		return attachIOLatencyHooks(b)
 	}); err != nil {
+		if err == childCtx.Err() { //nolint:errorlint // Wrapped cleanup failures must remain visible.
+			return nil
+		}
 		if errors.Is(err, types.ErrNotSupported) {
 			log.WithError(err).Warn("iolatency: required hooks unavailable")
 		}
