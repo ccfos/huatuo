@@ -319,3 +319,53 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 		t.Fatal("reader did not stop")
 	}
 }
+
+func TestContainerCSSCachePairsHierarchyAndRejectsStaleRemoval(t *testing.T) {
+	oldIDs := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu", 1: "memory"}
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldIDs })
+	const containerID = "container"
+	first := &containerCssPerfEvent{KernfsID: 11}
+	first.CSS[0] = 0x100
+	second := &containerCssPerfEvent{KernfsID: 22}
+	second.CSS[1] = 0x200
+	t.Cleanup(func() {
+		cgroupCssMetaDataMap.Delete(uint64(0x100))
+		cgroupCssMetaDataMap.Delete(uint64(0x200))
+	})
+	if err := cgroupUpdateOrCreateCssData(first, containerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cgroupUpdateOrCreateCssData(second, containerID); err != nil {
+		t.Fatal(err)
+	}
+	for subsystem, want := range map[string]CgroupCSSRef{
+		"cpu":    {CSSAddr: 0x100, KernfsID: 11},
+		"memory": {CSSAddr: 0x200, KernfsID: 22},
+	} {
+		for _, css := range cgroupListCssDataByKnode(containerID) {
+			if css.SubSys != subsystem {
+				continue
+			}
+			got, err := containerCSSRef(css, containerID)
+			if err != nil || got != want {
+				t.Fatalf("%s CSS = %+v, %v; want %+v", subsystem, got, err, want)
+			}
+		}
+	}
+	newInstance := &containerCssPerfEvent{KernfsID: 33}
+	newInstance.CSS[0] = 0x100
+	if err := cgroupUpdateOrCreateCssData(newInstance, containerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cgroupDeleteCssData(first, containerID); err != nil {
+		t.Fatal(err)
+	}
+	value, exists := cgroupCssMetaDataMap.Load(uint64(0x100))
+	if !exists || value.(*containerCssMetaData).KernfsID != 33 {
+		t.Fatalf("stale deletion removed replacement CSS: %v, %v", value, exists)
+	}
+	if _, err := containerCSSRef(&containerCssMetaData{CSS: 0x100, SubSys: "cpu"}, containerID); err == nil {
+		t.Fatal("zero kernfs ID accepted")
+	}
+}

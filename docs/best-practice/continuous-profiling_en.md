@@ -196,6 +196,11 @@ sudo _output/bin/profiler \
 `--type` and `--language` are required. Java, Python, and native memory collection require exactly one of `--pid` or `--container-id`. Native CPU collection can sample the host without a target.
 
 Container targets also require access to the huatuo-bamai node API to resolve container metadata. Set its address with `--huatuo-api-address`.
+The Node API returns `cgroup_css_instances` for observed subsystem references.
+Each entry contains hexadecimal string fields `css_addr` and `kernfs_id`.
+The BPF filter checks both values against the current cgroup before sampling.
+Native profiling requires both values; an older remote node API that only
+returns `cgroup_css` cannot safely target a container.
 
 ### C, C++, and Go
 

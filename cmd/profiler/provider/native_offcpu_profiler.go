@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
 
@@ -67,7 +68,7 @@ func nativeOffCPUAttachOptions() []bpf.AttachOption {
 	}
 }
 
-func newNativeOffCPUBPFConstants(cfg *Config, target nativeCgroupTarget) map[string]any {
+func newNativeOffCPUBPFConstants(cfg *Config, target pod.CgroupCSSRef) map[string]any {
 	constants := newNativeBPFConstants(cfg.PID(), target, cfg.ThreadGroup)
 	constants["profiler_offcpu_phase"] = offCPUPhaseCode(cfg.OffCPUPhase)
 	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(cfg.OffCPUMinDurationUS)

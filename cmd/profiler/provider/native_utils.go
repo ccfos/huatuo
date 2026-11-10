@@ -17,75 +17,31 @@ package provider
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
+	"net"
+	"strings"
 
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
-
-	"golang.org/x/sys/unix"
 )
 
-type nativeCgroupTarget struct {
-	CSS uint64
-	ID  uint64
-}
-
-func newNativeBPFConstants(pid int, target nativeCgroupTarget, threadGroup bool) map[string]any {
+func newNativeBPFConstants(pid int, target pod.CgroupCSSRef, threadGroup bool) map[string]any {
 	return map[string]any{
-		"profiler_filter_css":       target.CSS,
-		"profiler_filter_cgroup_id": target.ID,
+		"profiler_filter_css_addr":  target.CSSAddr,
+		"profiler_filter_kernfs_id": target.KernfsID,
 		"profiler_filter_pid":       uint32(pid),
 		"profiler_filter_threads":   threadGroup,
 	}
 }
 
-func resolveContainerCgroupTarget(ctx context.Context, cfg *Config, subsys string) (nativeCgroupTarget, error) {
+func resolveContainerCgroupTarget(ctx context.Context, cfg *Config, subsys string) (pod.CgroupCSSRef, error) {
 	if cfg.ContainerID == "" {
-		return nativeCgroupTarget{}, nil
+		return pod.CgroupCSSRef{}, nil
 	}
-	path, err := pod.ContainerCgroupPathBySubsys(cfg.ContainerID, subsys)
-	if err != nil {
-		return nativeCgroupTarget{}, fmt.Errorf("resolve target %s cgroup: %w", subsys, err)
-	}
-	id, err := nativeCgroupID(path)
-	if err != nil {
-		return nativeCgroupTarget{}, err
-	}
-	css, err := resolveContainerCgroupCss(ctx, cfg, subsys)
-	if err != nil {
-		return nativeCgroupTarget{}, err
-	}
-	// CSS discovery may take time; never bind a replacement at the same path.
-	currentID, err := nativeCgroupID(path)
-	if err != nil {
-		return nativeCgroupTarget{}, err
-	}
-	if currentID != id {
-		return nativeCgroupTarget{}, fmt.Errorf("target cgroup %q changed during profiler startup", path)
-	}
-	if css == 0 {
-		return nativeCgroupTarget{}, fmt.Errorf("container %q has no %s CSS address", cfg.ContainerID, subsys)
-	}
-	return nativeCgroupTarget{CSS: css, ID: id}, nil
-}
-
-func nativeCgroupID(path string) (uint64, error) {
-	handle, _, err := unix.NameToHandleAt(unix.AT_FDCWD, path, unix.AT_SYMLINK_FOLLOW)
-	if err != nil {
-		return 0, fmt.Errorf("read target cgroup identity %q: %w", path, err)
-	}
-	if handle.Size() != 8 {
-		return 0, fmt.Errorf("target cgroup %q has unsupported file handle size %d", path, handle.Size())
-	}
-	id := binary.NativeEndian.Uint64(handle.Bytes())
-	if id == 0 {
-		return 0, fmt.Errorf("target cgroup %q has zero instance ID", path)
-	}
-	return id, nil
+	return resolveContainerCgroupRef(ctx, cfg.ServerAddress, cfg.ContainerID, subsys)
 }
 
 func taskCommString(comm [bpf.TaskCommLen]byte) string {
@@ -96,47 +52,10 @@ func taskCommString(comm [bpf.TaskCommLen]byte) string {
 	return string(comm[:length])
 }
 
-// resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
-// It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
-// method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem
-// (e.g., "memory", "cpu").
-func resolveContainerCgroupCss(ctx context.Context, cfg *Config, subsysName string) (uint64, error) {
-	if cfg.ContainerID == "" {
-		return 0, nil
-	}
-
-	// Try API method first
-	cssAddr, err := resolveContainerCgroupCssByAPI(
-		ctx,
-		cfg.ServerAddress,
-		cfg.ContainerID,
-		subsysName,
-	)
-	if err == nil {
-		return cssAddr, nil
-	}
-
-	log.Warn("API method failed, falling back to local method", "error", err, "container_id", cfg.ContainerID, "subsystem", subsysName)
-
-	// Fallback to local BPF-based method
-	cssAddr, err = resolveContainerCgroupCssByLocal(cfg.ContainerID, subsysName)
-	if err != nil {
-		return 0, fmt.Errorf("both API and local methods failed for subsystem %s: %w", subsysName, err)
-	}
-
-	return cssAddr, nil
-}
-
-// resolveContainerCgroupCssByAPI attempts to get CSS address via huatuo-bamai API.
-func resolveContainerCgroupCssByAPI(
-	ctx context.Context,
-	serverAddr string,
-	containerID string,
-	subsysName string,
-) (uint64, error) {
+func resolveContainerCgroupRef(ctx context.Context, serverAddr, containerID, subsysName string) (pod.CgroupCSSRef, error) {
 	nodeClient, err := client.NewNode(&client.NodeConfig{})
 	if err != nil {
-		return 0, fmt.Errorf("initialize node client: %w", err)
+		return pod.CgroupCSSRef{}, fmt.Errorf("initialize node client: %w", err)
 	}
 	container, err := nodeClient.FetchContainer(
 		ctx,
@@ -144,23 +63,44 @@ func resolveContainerCgroupCssByAPI(
 		containerID,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("fetch container metadata: %w", err)
+		if !localNodeAddress(serverAddr) {
+			return pod.CgroupCSSRef{}, fmt.Errorf("fetch container %q metadata: %w", containerID, err)
+		}
+		log.Warn("local node API unavailable; resolving complete CSS identity locally", "error", err)
+		return pod.ContainerCSSBySubsys(containerID, subsysName)
 	}
-
-	cssAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName])
-	if !ok {
-		return 0, fmt.Errorf("%s CSS not found in API response", subsysName)
+	if container.CgroupCSSInstances != nil {
+		if instance, found := (*container.CgroupCSSInstances)[subsysName]; found {
+			cssAddr, cssOK := kernaddr.Parse(instance.CSSAddr)
+			kernfsID, idOK := kernaddr.Parse(instance.KernfsID)
+			if !cssOK || !idOK || cssAddr == 0 || kernfsID == 0 {
+				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has invalid %s CSS identity in node API", containerID, subsysName)
+			}
+			if legacyAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName]); ok && legacyAddr != cssAddr {
+				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has conflicting %s CSS addresses in node API", containerID, subsysName)
+			}
+			return pod.CgroupCSSRef{CSSAddr: cssAddr, KernfsID: kernfsID}, nil
+		}
 	}
-
-	return cssAddr, nil
+	if !localNodeAddress(serverAddr) {
+		return pod.CgroupCSSRef{}, fmt.Errorf("container %q has no %s kernfs ID in remote node API", containerID, subsysName)
+	}
+	local, err := pod.ContainerCSSBySubsys(containerID, subsysName)
+	if err != nil {
+		return pod.CgroupCSSRef{}, fmt.Errorf("resolve container %q %s CSS identity locally: %w", containerID, subsysName, err)
+	}
+	legacyAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName])
+	if !ok || legacyAddr != local.CSSAddr {
+		return pod.CgroupCSSRef{}, fmt.Errorf("container %q %s CSS address differs between local cache and node API", containerID, subsysName)
+	}
+	return local, nil
 }
 
-// resolveContainerCgroupCssByLocal retrieves CSS address using local BPF-based method.
-func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, error) {
-	cssAddr, err := pod.ContainerCSSBySubsys(containerID, subsysName)
+func localNodeAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
 	if err != nil {
-		return 0, fmt.Errorf("local CSS retrieval failed: %w", err)
+		return false
 	}
-
-	return cssAddr, nil
+	return strings.EqualFold(host, "localhost") ||
+		(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
 }

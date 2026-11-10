@@ -38,14 +38,15 @@ import (
 
 // NodeAPIHandler implements the generated Node Agent Strict Server.
 type NodeAPIHandler struct {
-	operationManager  *operation.Manager
-	profiling         *nodeprofiling.Service
-	tracing           *nodetracing.Service
-	cloudEvents       *nodecloudevents.Service
-	keepAliveInterval time.Duration
-	updateConfig      func(map[string]any) error
-	containerByID     func(string) (*pod.Container, error)
-	openAPI           nodeapi.GetOpenAPI200JSONResponse
+	operationManager     *operation.Manager
+	profiling            *nodeprofiling.Service
+	tracing              *nodetracing.Service
+	cloudEvents          *nodecloudevents.Service
+	keepAliveInterval    time.Duration
+	updateConfig         func(map[string]any) error
+	containerByID        func(string) (*pod.Container, error)
+	containerCSSBySubsys func(string, string) (pod.CgroupCSSRef, error)
+	openAPI              nodeapi.GetOpenAPI200JSONResponse
 }
 
 // NodeAPIHandlerOptions groups the services required by the Node API adapter.
@@ -184,14 +185,15 @@ func NewNodeAPIHandler(options *NodeAPIHandlerOptions) (*NodeAPIHandler, error) 
 		return nil, fmt.Errorf("create Node API handler: decode bundled OpenAPI: %w", err)
 	}
 	return &NodeAPIHandler{
-		operationManager:  options.OperationManager,
-		profiling:         options.ProfilingService,
-		tracing:           options.TracingService,
-		cloudEvents:       options.CloudEventsService,
-		keepAliveInterval: options.EventStreamKeepAliveInterval,
-		updateConfig:      config.UpdateAndSync,
-		containerByID:     pod.ContainerByID,
-		openAPI:           specification,
+		operationManager:     options.OperationManager,
+		profiling:            options.ProfilingService,
+		tracing:              options.TracingService,
+		cloudEvents:          options.CloudEventsService,
+		keepAliveInterval:    options.EventStreamKeepAliveInterval,
+		updateConfig:         config.UpdateAndSync,
+		containerByID:        pod.ContainerByID,
+		containerCSSBySubsys: pod.ContainerCSSBySubsys,
+		openAPI:              specification,
 	}, nil
 }
 

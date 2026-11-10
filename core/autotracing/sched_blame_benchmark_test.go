@@ -41,19 +41,21 @@ func BenchmarkDecodeSchedBlameBatch(b *testing.B) {
 
 func BenchmarkSchedBlameHandlePackedSlice(b *testing.B) {
 	const (
-		targetCgid      = 0x100
-		competitorCgid  = 0x200
-		targetCSSID     = 65
-		competitorCSSID = 1057
+		targetCSSAddr     = 0x100
+		competitorCSSAddr = 0x200
+		targetCSSID       = 65
+		competitorCSSID   = 1057
 	)
-	state := newSchedBlameStateForTest(0, targetCgid)
+	state := newSchedBlameStateForTest(0, targetCSSAddr)
 	state.handleIdentity(&schedBlameIdentity{
-		CSSID: targetCSSID,
-		Cgid:  targetCgid,
+		CSSID:    targetCSSID,
+		CSSAddr:  targetCSSAddr,
+		KernfsID: 1,
 	})
 	state.handleIdentity(&schedBlameIdentity{
-		CSSID: competitorCSSID,
-		Cgid:  competitorCgid,
+		CSSID:    competitorCSSID,
+		CSSAddr:  competitorCSSAddr,
+		KernfsID: 1,
 	})
 	packedSlice := packSchedBlameSliceForTest(
 		1_000,

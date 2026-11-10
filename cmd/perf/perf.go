@@ -15,10 +15,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +31,7 @@ import (
 	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
 	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 	"github.com/ccfos/huatuo/internal/version"
@@ -50,25 +54,12 @@ func mainAction(ctx *cli.Context) error {
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
 
-	var targetCssAddr uint64
+	var target pod.CgroupCSSRef
 	if containerID := ctx.String("container-id"); containerID != "" {
-		serverAddress := ctx.String("huatuo-api-address")
-		nodeClient, err := client.NewNode(&client.NodeConfig{})
+		var err error
+		target, err = resolvePerfContainerCSSRef(ctx.Context, ctx.String("huatuo-api-address"), containerID)
 		if err != nil {
-			return fmt.Errorf("initialize node client: %w", err)
-		}
-		container, err := nodeClient.FetchContainer(
-			ctx.Context,
-			client.NodeAddress{HostPort: serverAddress},
-			containerID,
-		)
-		if err != nil {
-			return fmt.Errorf("fetch container %q metadata: %w", containerID, err)
-		}
-		var ok bool
-		targetCssAddr, ok = kernaddr.Parse(container.CgroupCSS["cpu"])
-		if !ok {
-			return fmt.Errorf("container %q has no CPU CSS address", containerID)
+			return err
 		}
 	}
 
@@ -84,7 +75,11 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
+	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{
+		"perf_filter_css_addr":  target.CSSAddr,
+		"perf_filter_kernfs_id": target.KernfsID,
+		"pid":                   optPid,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -123,6 +118,54 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	return nil
+}
+
+func resolvePerfContainerCSSRef(ctx context.Context, serverAddress, containerID string) (pod.CgroupCSSRef, error) {
+	nodeClient, err := client.NewNode(&client.NodeConfig{})
+	if err != nil {
+		return pod.CgroupCSSRef{}, fmt.Errorf("initialize node client: %w", err)
+	}
+	container, err := nodeClient.FetchContainer(ctx, client.NodeAddress{HostPort: serverAddress}, containerID)
+	if err != nil {
+		if !perfLocalNodeAddress(serverAddress) {
+			return pod.CgroupCSSRef{}, fmt.Errorf("fetch container %q metadata: %w", containerID, err)
+		}
+		return pod.ContainerCSSBySubsys(containerID, "cpu")
+	}
+	if container.CgroupCSSInstances != nil {
+		if instance, found := (*container.CgroupCSSInstances)["cpu"]; found {
+			cssAddr, cssOK := kernaddr.Parse(instance.CSSAddr)
+			kernfsID, idOK := kernaddr.Parse(instance.KernfsID)
+			if !cssOK || !idOK || cssAddr == 0 || kernfsID == 0 {
+				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has invalid CPU CSS identity in node API", containerID)
+			}
+			if legacyAddr, ok := kernaddr.Parse(container.CgroupCSS["cpu"]); ok && legacyAddr != cssAddr {
+				return pod.CgroupCSSRef{}, fmt.Errorf("container %q has conflicting CPU CSS addresses in node API", containerID)
+			}
+			return pod.CgroupCSSRef{CSSAddr: cssAddr, KernfsID: kernfsID}, nil
+		}
+	}
+	if !perfLocalNodeAddress(serverAddress) {
+		return pod.CgroupCSSRef{}, fmt.Errorf("container %q has no CPU kernfs ID in remote node API", containerID)
+	}
+	local, err := pod.ContainerCSSBySubsys(containerID, "cpu")
+	if err != nil {
+		return pod.CgroupCSSRef{}, fmt.Errorf("resolve container %q CPU CSS identity locally: %w", containerID, err)
+	}
+	legacyAddr, ok := kernaddr.Parse(container.CgroupCSS["cpu"])
+	if !ok || legacyAddr != local.CSSAddr {
+		return pod.CgroupCSSRef{}, fmt.Errorf("container %q CPU CSS address differs between local cache and node API", containerID)
+	}
+	return local, nil
+}
+
+func perfLocalNodeAddress(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(host, "localhost") ||
+		(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())
 }
 
 func main() {

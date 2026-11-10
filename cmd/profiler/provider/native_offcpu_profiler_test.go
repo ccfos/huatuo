@@ -24,6 +24,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -343,10 +344,10 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 		OffCPUMinDurationUS: 250,
 		OffCPUStatsEnabled:  true,
 	}
-	constants := newNativeOffCPUBPFConstants(cfg, nativeCgroupTarget{CSS: 456, ID: 789})
+	constants := newNativeOffCPUBPFConstants(cfg, pod.CgroupCSSRef{CSSAddr: 456, KernfsID: 789})
 	require.Equal(t, uint32(123), constants["profiler_filter_pid"])
-	require.Equal(t, uint64(456), constants["profiler_filter_css"])
-	require.Equal(t, uint64(789), constants["profiler_filter_cgroup_id"])
+	require.Equal(t, uint64(456), constants["profiler_filter_css_addr"])
+	require.Equal(t, uint64(789), constants["profiler_filter_kernfs_id"])
 	require.Equal(t, true, constants["profiler_filter_threads"])
 	require.Equal(t, uint32(2), constants["profiler_offcpu_phase"])
 	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_duration_ns"])
@@ -355,7 +356,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 }
 
 func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
-	constants := newNativeOffCPUBPFConstants(&Config{}, nativeCgroupTarget{})
+	constants := newNativeOffCPUBPFConstants(&Config{}, pod.CgroupCSSRef{})
 	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_set_enabled"])
 	require.Equal(t, uint32(0), constants["profiler_offcpu_stats_enabled"])
 }

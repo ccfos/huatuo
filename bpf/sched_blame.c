@@ -9,6 +9,7 @@
 #include <bpf/bpf_tracing.h>
 #include "abi/sched_blame_types.h"
 #include "bpf_common.h"
+#include "bpf_cgroup.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -44,7 +45,7 @@ struct waiting_target_bitmap {
 #endif
 };
 
-_Static_assert(sizeof(struct sched_blame_identity_event) == 16,
+_Static_assert(sizeof(struct sched_blame_identity_event) == 24,
 	"sched-blame identity ABI changed");
 _Static_assert(sizeof(struct sched_blame_throttle_event) == 8,
 	"sched-blame throttle ABI changed");
@@ -67,9 +68,9 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, u64);
-	__type(value, u8);
+	__type(value, struct sched_blame_target_ref);
 	__uint(max_entries, MAX_TARGETS);
-} target_cgid_to_dense SEC(".maps");
+} target_css_to_dense SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -109,6 +110,9 @@ static u64 css_id_to_dense_id[MAX_CSS_IDS];
 static struct waiting_target_bitmap waiting_target_bitmap_by_cpu[MAX_CPUS];
 static u32 waiting_epoch_by_cpu[MAX_CPUS];
 static u64 observed_identity[MAX_CSS_IDS];
+static u64 observed_kernfs_id[MAX_CSS_IDS];
+static u64 cached_css_addr[MAX_CSS_IDS];
+static u64 cached_kernfs_id[MAX_CSS_IDS];
 static u64 previous_switch_ns_by_cpu[MAX_CPUS];
 static u64 batch_first_ts_ns_by_cpu[MAX_CPUS];
 // Access only through the helpers below; zero encodes idle or unknown.
@@ -295,31 +299,47 @@ static __always_inline void ensure_waiting_bitmap_epoch(
 }
 
 static __always_inline u32 resolve_target_dense_id(
-	u64 cgid, u64 css_index, u32 epoch)
+	u64 css_addr, u64 css_index, u32 epoch)
 {
 	volatile u64 *cache_entry;
 	u64 cached;
 	u8 dense_id;
-	u8 *mapped;
+	struct sched_blame_target_ref *mapped;
+	u64 ref_kernfs_id = 0;
+
+	if (epoch & 1)
+		return NON_TARGET;
 
 	asm volatile("%0 &= 4095" : "+r"(css_index));
 	cache_entry = &css_id_to_dense_id[css_index];
 	// Preserve the verifier-bounded map-value pointer across helper calls.
 	asm volatile("" : "+r"(cache_entry));
 	cached = *cache_entry;
-	if (cache_epoch(cached) == epoch)
-		return cache_dense_id(cached);
-
-	mapped = bpf_map_lookup_elem(&target_cgid_to_dense, &cgid);
-	if (!mapped) {
-		dense_id = NON_TARGET;
-	} else if (*mapped >= MAX_TARGETS) {
-		count(&n_invalid_target_dense_id);
-		dense_id = NON_TARGET;
-	} else {
-		dense_id = *mapped;
+	if (cache_epoch(cached) == epoch) {
+		if (cache_dense_id(cached) == NON_TARGET)
+			return NON_TARGET;
+		if (cached_css_addr[css_index] == css_addr &&
+		    cgroup_css_matches_ref(css_addr, css_addr,
+					   cached_kernfs_id[css_index]))
+			return cache_dense_id(cached);
 	}
 
+	mapped = bpf_map_lookup_elem(&target_css_to_dense, &css_addr);
+	if (!mapped) {
+		dense_id = NON_TARGET;
+	} else if (mapped->dense_id >= MAX_TARGETS) {
+		count(&n_invalid_target_dense_id);
+		dense_id = NON_TARGET;
+	} else if (!cgroup_css_matches_ref(css_addr, css_addr,
+					     mapped->kernfs_id)) {
+		dense_id = NON_TARGET;
+	} else {
+		dense_id = mapped->dense_id;
+		ref_kernfs_id = mapped->kernfs_id;
+	}
+
+	cached_css_addr[css_index] = css_addr;
+	cached_kernfs_id[css_index] = ref_kernfs_id;
 	*cache_entry = pack_dense_id_cache(epoch, dense_id);
 	return dense_id;
 }
@@ -418,20 +438,26 @@ static __always_inline void maybe_emit_identity(
 	void *ctx, u64 event_cpu_index, struct task_group *tg, u64 css_index)
 {
 	struct sched_blame_identity_event event = {};
-	u64 cgid;
+	u64 css_addr;
+	u64 kernfs_id;
 
 	// event_cpu_index selects the perf entry for the CPU executing this hook.
 	// It may differ from a remotely woken task's destination CPU.
 	if (!tg)
 		return;
-	cgid = (u64)tg;
+	css_addr = (u64)tg;
+	kernfs_id = cgroup_css_kernfs_id(css_addr);
+	if (!kernfs_id)
+		return;
 	asm volatile("%0 &= 4095" : "+r"(css_index));
-	if (observed_identity[css_index] == cgid)
+	if (observed_identity[css_index] == css_addr &&
+	    observed_kernfs_id[css_index] == kernfs_id)
 		return;
 
 	event.magic = IDENTITY_EVENT_MAGIC;
 	event.css_id = (u16)css_index;
-	event.cgid = cgid;
+	event.css_addr = css_addr;
+	event.kernfs_id = kernfs_id;
 	// Perf output must use the current hook CPU's perf-array entry.
 	asm volatile("%0 &= 511" : "+r"(event_cpu_index));
 	if (bpf_perf_event_output(ctx, &events, event_cpu_index,
@@ -439,7 +465,8 @@ static __always_inline void maybe_emit_identity(
 		return;
 	}
 	asm volatile("%0 &= 4095" : "+r"(css_index));
-	observed_identity[css_index] = cgid;
+	observed_identity[css_index] = css_addr;
+	observed_kernfs_id[css_index] = kernfs_id;
 }
 
 static __always_inline void emit_throttle_event(

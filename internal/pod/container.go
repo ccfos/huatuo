@@ -23,6 +23,12 @@ import (
 // containerIDRegexp matches a 12-64 character hex container ID.
 var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 
+// CgroupCSSRef identifies one cgroup subsystem state instance.
+type CgroupCSSRef struct {
+	CSSAddr  uint64
+	KernfsID uint64
+}
+
 // Container object
 type Container struct {
 	ID                 string            `json:"id"`
@@ -150,15 +156,6 @@ func containerBy[T comparable](selector func(*Container) T, val T) (*Container, 
 // ContainerByNetNamespaceInum returns the container whose network namespace inum matches.
 func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
 	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
-}
-
-// GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
-func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
-	containers, err := Containers()
-	if err != nil {
-		return nil, err
-	}
-	return BuildCssContainersID(containers, subsys), nil
 }
 
 // BuildCssContainersID builds a css-address map from the provided containers.

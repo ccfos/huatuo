@@ -21,6 +21,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -191,7 +192,7 @@ type nativeMemoryBPFLoadConfig struct {
 func newNativeMemoryBPFLoadConfig(
 	internalMode profiling.Mode,
 	pid int,
-	target nativeCgroupTarget,
+	target pod.CgroupCSSRef,
 	threadGroup bool,
 	probability uint,
 ) (*nativeMemoryBPFLoadConfig, error) {

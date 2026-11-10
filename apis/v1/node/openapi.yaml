@@ -357,6 +357,20 @@ components:
           schema:
             $ref: '../components.yaml#/components/schemas/ErrorResponse'
   schemas:
+    CgroupCSSRef:
+      type: object
+      description: A reference to one cgroup subsystem state observed in a single cgroup lifecycle event. The address may be reused after the cgroup is removed; consumers must compare both fields with the current kernel state before attributing samples.
+      additionalProperties: false
+      required: [css_addr, kernfs_id]
+      properties:
+        css_addr:
+          type: string
+          description: Kernel virtual address of the cgroup subsystem state, encoded as a fixed-width hexadecimal string.
+          pattern: '^0x[0-9a-f]{16}$'
+        kernfs_id:
+          type: string
+          description: Full kernfs ID of the cgroup owning this subsystem state, including its generation, encoded as a fixed-width hexadecimal string.
+          pattern: '^0x[0-9a-f]{16}$'
     ContainerMetadata:
       type: object
       additionalProperties: false
@@ -367,9 +381,15 @@ components:
           pattern: '^[0-9a-fA-F]{64}$'
         cgroup_css:
           type: object
+          description: Legacy subsystem-to-CSS-address snapshot. An address alone does not identify a cgroup instance.
           additionalProperties:
             type: string
             pattern: '^0x[0-9a-f]{16}$'
+        cgroup_css_instances:
+          type: object
+          description: Subsystem-to-CSS-reference snapshot. Each entry pairs values from one discovery event. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different kernfs IDs. Consumers must verify the pair against current kernel state before use.
+          additionalProperties:
+            $ref: '#/components/schemas/CgroupCSSRef'
     ContainerResponse:
       type: object
       additionalProperties: false

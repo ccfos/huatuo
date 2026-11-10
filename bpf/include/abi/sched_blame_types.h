@@ -27,7 +27,14 @@ struct sched_blame_identity_event {
 	u16 magic;
 	u16 css_id;
 	u8 padding[4];
-	u64 cgid;
+	u64 css_addr;
+	u64 kernfs_id;
+};
+
+struct sched_blame_target_ref {
+	u64 kernfs_id;
+	u8 dense_id;
+	u8 padding[7];
 };
 
 struct sched_blame_throttle_event {
@@ -52,6 +59,7 @@ struct sched_blame_slice_batch_event {
 };
 
 BPF_ABI_EXPORT(sched_blame_identity_event);
+BPF_ABI_EXPORT(sched_blame_target_ref);
 BPF_ABI_EXPORT(sched_blame_throttle_event);
 BPF_ABI_EXPORT(sched_blame_packed_slice);
 BPF_ABI_EXPORT(sched_blame_slice_batch_event);

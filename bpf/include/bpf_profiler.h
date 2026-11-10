@@ -25,34 +25,12 @@ typedef enum {
  * Keep rewritten constants global so cilium/ebpf exposes them as variables.
  * Naming follows skb_filter convention for consistency.
  */
-volatile const u64 profiler_filter_css = 0;
-volatile const u64 profiler_filter_cgroup_id = 0;
+volatile const u64 profiler_filter_css_addr = 0;
+volatile const u64 profiler_filter_kernfs_id = 0;
 volatile const u32 profiler_filter_pid = 0;
 volatile const bool profiler_filter_threads = false;
 volatile const u8 profiler_sampling_prob = 100;
 static volatile const u64 profiler_idle_class_addr = 0;
-
-struct kernfs_node___profiler_legacy {
-	union {
-		u64 id;
-	} id;
-} __attribute__((preserve_access_index));
-
-struct kernfs_node___profiler_modern {
-	u64 id;
-} __attribute__((preserve_access_index));
-
-static __always_inline u64 profiler_css_cgroup_id(u64 css_addr)
-{
-	struct cgroup_subsys_state *css = (void *)css_addr;
-	struct kernfs_node *kn = BPF_CORE_READ(css, cgroup, kn);
-
-	/* Older kernels store the full ID, including generation, in a union. */
-	if (bpf_core_field_exists(((struct kernfs_node___profiler_legacy *)kn)->id.id))
-		return BPF_CORE_READ((struct kernfs_node___profiler_legacy *)kn, id.id);
-
-	return BPF_CORE_READ((struct kernfs_node___profiler_modern *)kn, id);
-}
 
 /*
  * profiler_should_trace - check if current process and cgroup should be traced.
@@ -63,21 +41,17 @@ static __always_inline bool profiler_should_trace(u64 pid_tgid, u64 css)
 	u32 tgid = pid_tgid >> 32;
 	u32 pid = pid_tgid & 0xffffffffUL;
 
-	if (profiler_filter_css != 0) {
-		if (css != profiler_filter_css)
+	if (profiler_filter_pid != 0) {
+		if (profiler_filter_threads && tgid != profiler_filter_pid)
 			return false;
-		/* CSS addresses can be reused after the target cgroup is removed. */
-		if (profiler_css_cgroup_id(css) != profiler_filter_cgroup_id)
+		if (!profiler_filter_threads && pid != profiler_filter_pid)
 			return false;
 	}
-
-	if (profiler_filter_pid == 0)
-		return true;
-
-	if (profiler_filter_threads)
-		return tgid == profiler_filter_pid;
-
-	return pid == profiler_filter_pid;
+	if (profiler_filter_css_addr != 0 &&
+	    !cgroup_css_matches_ref(css, profiler_filter_css_addr,
+				   profiler_filter_kernfs_id))
+		return false;
+	return true;
 }
 
 /*

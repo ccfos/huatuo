@@ -207,10 +207,23 @@ func (e WatchEventSpecVersion) Valid() bool {
 	}
 }
 
+// CgroupCSSRef A reference to one cgroup subsystem state observed in a single cgroup lifecycle event. The address may be reused after the cgroup is removed; consumers must compare both fields with the current kernel state before attributing samples.
+type CgroupCSSRef struct {
+	// CSSAddr Kernel virtual address of the cgroup subsystem state, encoded as a fixed-width hexadecimal string.
+	CSSAddr string `json:"css_addr"`
+
+	// KernfsID Full kernfs ID of the cgroup owning this subsystem state, including its generation, encoded as a fixed-width hexadecimal string.
+	KernfsID string `json:"kernfs_id"`
+}
+
 // ContainerMetadata defines model for ContainerMetadata.
 type ContainerMetadata struct {
+	// CgroupCSS Legacy subsystem-to-CSS-address snapshot. An address alone does not identify a cgroup instance.
 	CgroupCSS map[string]string `json:"cgroup_css"`
-	ID        string            `json:"id"`
+
+	// CgroupCSSInstances Subsystem-to-CSS-reference snapshot. Each entry pairs values from one discovery event. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different kernfs IDs. Consumers must verify the pair against current kernel state before use.
+	CgroupCSSInstances *map[string]CgroupCSSRef `json:"cgroup_css_instances,omitempty"`
+	ID                 string                   `json:"id"`
 }
 
 // ContainerResponse defines model for ContainerResponse.
