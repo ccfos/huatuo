@@ -109,19 +109,15 @@ report_failure_logs() {
 	while IFS= read -r -d '' file; do
 		grep -Iq '' "${file}" || continue
 		size=$(stat -c %s "${file}") || return 1
-		tail -c 65536 "${file}" | jq -Rsc --arg workspace "${dir}" \
-			--arg path "${file#"${RUNNER_OUTPUT_DIR}/"}" --argjson size "${size}" \
-			'{workspace: $workspace, path: $path,
-			 content: (if ($path | endswith(".json")) and $size <= 65536
-			 then . as $text | try fromjson catch $text else . end),
-			 truncated: ($size > 65536)}' || return 1
+		jq -nc --arg workspace "${dir}" --arg path "${file#"${RUNNER_OUTPUT_DIR}/"}" \
+			--argjson size "${size}" '{workspace: $workspace, path: $path, size: $size}' || return 1
 	done < <(find "${dir}" -type f -size +0c \
 		! -name 'test_run_results.json' ! -name 'reason.*.log' \
 		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' -o -name '*.out' \) -print0 | sort -z)
 }
 
 report_summary() {
-	local workspace diagnostics="${RUNNER_OUTPUT_DIR}/failed-logs.jsonl"
+	local workspace kind value path size diagnostics="${RUNNER_OUTPUT_DIR}/failed-logs.jsonl"
 	# Workers have exited; collect each failed execution's files without interleaving output.
 	: > "${diagnostics}"
 	while IFS= read -r workspace; do
@@ -132,7 +128,8 @@ report_summary() {
 	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile diagnostics "${diagnostics}" '
 		def short_reason: if . == null then null else split("\n")[0] end;
 		.suite as $suite |
-		{status, output_dir: $output, results_path: ($output + "/test_run_results.json"),
+		{status: (if .status == "completed" then "passed" elif .status == "aborted" then "failed" else .status end),
+		 output_dir: $output, results_path: ($output + "/test_run_results.json"),
 		 runs_per_test, started_at, finished_at, duration_seconds, execution_counts,
 		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
 			$suite + "/" + .test_name] | unique),
@@ -140,7 +137,29 @@ report_summary() {
 			(if .logs == null then null else
 			 $output + "/" + (.logs.stdout | rtrimstr("/stdout.log")) end) as $workspace |
 			{name: ($suite + "/" + .test_name), run_index, reason: (.reason | short_reason),
-			 logs: [$diagnostics[] | select(.workspace == $workspace) | del(.workspace)]}]}
-		+ (if .reason == null then {} else {reason: (.reason | short_reason)} end)
-	' "${RUNNER_OUTPUT_DIR}/test_run_results.json"
+			 logs: [$diagnostics[] | select(.workspace == $workspace) | .path]}]}
+	' "${RUNNER_OUTPUT_DIR}/test_run_results.json" || return 1
+	while IFS= read -r -d '' kind && IFS= read -r -d '' value; do
+		if [[ ${kind} == failed ]]; then
+			printf '\nFailed: %s\n' "${value}"
+			continue
+		fi
+		path=${value}
+		IFS= read -r -d '' size || return 1
+		if ((size > 65536)); then
+			printf '\n--- %s (64KB) ---\n' "${path}"
+		else
+			printf '\n--- %s ---\n' "${path}"
+		fi
+		tail -c 65536 "${RUNNER_OUTPUT_DIR}/${path}" || return 1
+		printf '\n'
+	done < <(jq -jr --slurpfile diagnostics "${diagnostics}" '
+		.suite as $suite | .runs_per_test as $runs | .test_executions[] |
+		select(.result == "failed") |
+		"failed\u0000\($suite)/\(.test_name) (run \(.run_index)/\($runs))\u0000",
+		(if .logs == null then empty else
+		 (.logs.stdout | rtrimstr("/stdout.log")) as $dir |
+		 $diagnostics[] | select(.path | startswith($dir + "/")) |
+		 "log\u0000\(.path)\u0000\(.size)\u0000" end)
+	' "${RUNNER_OUTPUT_DIR}/test_run_results.json")
 }

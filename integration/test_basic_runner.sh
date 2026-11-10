@@ -28,11 +28,14 @@ export runner_parent_uts runner_parent_mount
 
 assert_runner_summary() {
 	local log=$1
-	# Raw diagnostic files can contain JSON too; the summary is the final object.
+	# Diagnostic files can contain JSON before or after the summary.
 	awk '
 		/^\{/ {block = ""; collecting = 1}
 		collecting {block = block $0 ORS}
-		/^\}/ && collecting {last = block; collecting = 0}
+		/^\}/ && collecting {
+			if (block ~ /"output_dir":/ && block ~ /"results_path":/) last = block
+			collecting = 0
+		}
 		END {printf "%s", last}
 	' "${log}" | jq -se '
 		if length == 1 and (.[0].results_path | type == "string") then .[0]
@@ -43,6 +46,8 @@ assert_runner_summary() {
 assert_runner_result() {
 	local suite=$1 label=$2 expected_status=$3 expected_summary=$4 status=0
 	shift 4
+	local invoked_suite=$suite
+	if [[ ${1:-} == --suite ]]; then invoked_suite=${2:-}; fi
 	local log="${HUATUO_BAMAI_TEST_TMPDIR}/${suite}-${label}.log" summary
 	local -a signal_reset_launcher
 	runner_build_signal_reset_launcher signal_reset_launcher
@@ -71,16 +76,25 @@ assert_runner_result() {
 		local report
 		report=$(jq -r .results_path <<< "${summary}")
 		[[ $(grep -Fc "\"results_path\": \"${report}\"" "${log}") == 1 ]] || fatal "${suite}/${label}: summary was printed more than once"
+		if [[ ${invoked_suite} == integration && ${expected_status} == 0 ]] \
+			&& jq -e '.execution_counts.total == .execution_counts.passed' <<< "${summary}" > /dev/null; then
+			local summary_start
+			summary_start=$(grep -n '^{' "${log}" | tail -n 1)
+			[[ $(tail -n +"${summary_start%%:*}" "${log}") == "${summary}" ]] \
+				|| fatal "${suite}/${label}: output follows the successful JSON summary; see ${log}"
+			[[ ! -e ${report%/*} ]] || fatal "${suite}/${label}: successful integration directory was retained: ${report%/*}"
+			return 0
+		fi
+		[[ -d ${report%/*} ]] || fatal "${suite}/${label}: diagnostic directory was removed: ${report%/*}"
 		jq -e --slurpfile report "${report}" '
 			. as $summary | $report[0] | .suite as $suite |
 			$summary.execution_counts == .execution_counts and
-			$summary.status == .status and $summary.runs_per_test == .runs_per_test and
+			$summary.status == (if .status == "completed" then "passed" elif .status == "aborted" then "failed" else .status end) and
+			$summary.runs_per_test == .runs_per_test and
 			$summary.started_at == .started_at and $summary.finished_at == .finished_at and
 			$summary.duration_seconds == .duration_seconds and
 			$summary.results_path == ($summary.output_dir + "/test_run_results.json") and
-			($summary | has("suite") or has("exit_code") or has("report") or has("summary") | not) and
-			(if .reason == null then ($summary | has("reason") | not)
-			 else $summary.reason == (.reason | split("\n")[0]) end) and
+			($summary | has("suite") or has("exit_code") or has("report") or has("summary") or has("reason") | not) and
 			$summary.skipped_tests == ([.test_executions[] | select(.result == "skipped") | $suite + "/" + .test_name] | unique) and
 			([$summary.failed_tests[] | {name, run_index, reason}] ==
 			 [.test_executions[] | select(.result == "failed") | {name: ($suite + "/" + .test_name), run_index, reason: (.reason | if . == null then null else split("\n")[0] end)}])
@@ -423,6 +437,10 @@ EOF
 		esac
 		REPORT_MODE=${mode} assert_runner_result integration "report-${mode}" "${code}" "${counts}" test_report.sh
 		report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/integration-report-${mode}.log" | jq -r .results_path)
+		if [[ ${mode} == pass || ${mode} == caught_success ]]; then
+			[[ ! -e ${report%/*} ]] || fatal "${mode}: successful integration directory was retained"
+			continue
+		fi
 		stdout=${report%/*}/$(jq -r '.test_executions[0].logs.stdout' "${report}")
 		stderr=${report%/*}/$(jq -r '.test_executions[0].logs.stderr' "${report}")
 		grep -Fxq 'stdout marker' "${stdout}" || fatal "stdout was not retained"
@@ -435,22 +453,17 @@ EOF
 				[.failed_tests[] | {name, run_index, reason}] ==
 				[{name: "integration/test_report.sh", run_index: 1,
 				 reason: "fixture failed: \"runtime\""}] and
-				(.failed_tests[0].logs | any(.path | endswith("/execution.log"))) and
-				(.failed_tests[0].logs | any((.path | endswith("/response.json")) and .content == {results_path: "diagnostic-only"})) and
-				(.failed_tests[0].logs | any((.path | endswith("/array.json")) and .content == [1, {nested: true}])) and
-				(.failed_tests[0].logs | any((.path | endswith("/false.json")) and .content == false)) and
-				(.failed_tests[0].logs | any((.path | endswith("/null.json")) and .content == null)) and
-				(.failed_tests[0].logs | any((.path | endswith("/invalid.json")) and .content == "{invalid\n")) and
-				(.failed_tests[0].logs | any((.path | endswith("/large.json")) and .truncated and (.content | type) == "string")) and
-				(.failed_tests[0].logs | any((.path | endswith("/large.log")) and
-				 .truncated and (.content | utf8bytelength) == 65536)) and
-				(.failed_tests[0].logs | all(.path | test("/(reason\\.[^/]*|test_case.sh|binary.log|test_run_results.json)$") | not))
-			' > /dev/null || fatal "failure summary lost its identity or bounded diagnostic logs"
-			local marker contents
-			contents=$(assert_runner_summary "${log}" | jq -r '.failed_tests[].logs[].content')
+				(.failed_tests[0].logs | any(endswith("/execution.log"))) and
+				(.failed_tests[0].logs | any(endswith("/response.json"))) and
+				(.failed_tests[0].logs | any(endswith("/large.log"))) and
+				(.failed_tests[0].logs | all(test("/(reason\\.[^/]*|test_case.sh|binary.log|test_run_results.json)$") | not))
+			' > /dev/null || fatal "failure summary lost its identity or diagnostic paths"
+			local marker
+			grep -Fq 'Failed: integration/test_report.sh (run 1/1)' "${log}" || fatal "failure heading missing"
+			grep -Eq '^--- [^ ]+/large.log \(64KB\) ---$' "${log}" || fatal "truncated log heading missing"
 			for marker in 'stdout marker' 'stderr marker' 'fixture failed: "runtime"' '诊断路径: C:\tmp' \
 				'end marker' '"results_path": "diagnostic-only"' 'exit_code=1' 'output marker' 'config marker' 'tool error marker'; do
-				grep -Fq "$marker" <<< "$contents" || fatal "JSON failure diagnostics omitted $marker"
+				grep -Fq "$marker" "${log}" || fatal "failure diagnostics omitted $marker"
 			done
 			! grep -Fq -- '----- FILE (' "$log" || fatal "obsolete raw file diagnostics were printed"
 
@@ -754,7 +767,11 @@ EOF
 			report=$(assert_runner_summary "${log}" | jq -r .results_path)
 			for previous in "${reports[@]}"; do [[ ${report} != "${previous}" ]] || fatal "invocations reused report ${report}"; done
 			reports+=("${report}")
-			jq -e --arg suite "${suite}" '.suite == $suite and .status == "completed" and .exit_code == 0 and .execution_counts == {total:1,passed:1,failed:0,skipped:0} and .test_executions[0].result == "passed"' "${report}" > /dev/null || fatal "${suite}/${run}: report disagrees with execution: ${report}"
+			if [[ ${suite} == integration ]]; then
+				[[ ! -e ${report%/*} ]] || fatal "${suite}/${run}: successful integration directory was retained: ${report%/*}"
+			else
+				jq -e --arg suite "${suite}" '.suite == $suite and .status == "completed" and .exit_code == 0 and .execution_counts == {total:1,passed:1,failed:0,skipped:0} and .test_executions[0].result == "passed"' "${report}" > /dev/null || fatal "${suite}/${run}: report disagrees with execution: ${report}"
+			fi
 		done
 	done
 	[[ ! -e $(< "${fixture}/preloaded-workspace")/test_run_results.json ]] || fatal "runner wrote a report into the preloaded workspace"

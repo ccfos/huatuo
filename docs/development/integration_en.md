@@ -86,28 +86,26 @@ Pass overrides with `sudo env NAME=value ...` so sudo environment filtering does
 
 After a failure, no new cases start. Unstarted and cancelled executions are SKIP. INT/TERM interruption returns 130/143. A run with only skipped cases can return success, so also inspect counts and skip reasons.
 
-Each valid invocation creates `/tmp/huatuo-test.XXXXXX/`. Logs and working files are retained for all outcomes and can be archived or deleted together. The run directory contains `test_run_results.json`. Each execution directory contains `stdout.log`, `stderr.log`, and service logs, configuration, and response data.
+Each valid invocation creates `/tmp/huatuo-test.XXXXXX/`. Integration runs remove this directory after every execution passes and the final summary is printed. Runs with skips, failures, or interruptions retain it for diagnosis. E2E runs retain it regardless of outcome. The run directory contains `test_run_results.json`; each execution directory contains `stdout.log`, `stderr.log`, and service logs, configuration, and response data. For a fully passing integration run, the printed `output_dir` and `results_path` refer to the directory removed at completion.
 
 ### Console Summary
 
-The console shows individual results and ends with a JSON summary:
+The console shows individual results, a JSON summary, and then failed test logs:
 
 | Field | Meaning |
 | --- | --- |
-| `status` | `completed`, `aborted`, or `interrupted` |
+| `status` | `passed`, `failed`, or `interrupted` |
 | `output_dir`, `results_path` | Run directory and full report path |
 | `runs_per_test` | Planned repetitions per test |
 | `started_at`, `finished_at`, `duration_seconds` | Start time, finish time, and elapsed seconds |
 | `execution_counts` | `total`, `passed`, `failed`, `skipped`, including repeated and unstarted executions |
 | `skipped_tests` | Names of skipped tests |
 | `failed_tests` | Failed test names, execution indexes, reasons, and logs |
-| `reason` | Reason for early termination; omitted on normal completion |
+Each `failed_tests` entry contains `name`, `run_index`, `reason`, and `logs`. The `logs` array contains paths relative to `output_dir`.
 
-Each `failed_tests` entry contains `name`, `run_index`, `reason`, and `logs`. Each log contains a `path` relative to `output_dir`, `content`, and a `truncated` flag.
+Logs include nonempty `.log`, `.err`, `.out`, `.json`, and `.conf` text files under the failed execution directory. Binary files, `test_run_results.json`, and `reason.*.log` are excluded. Each failed execution has a `Failed: ... (run N/M)` heading after the JSON summary, followed by file headings and contents. Files larger than 64 KiB show a `(64KB)` heading and their last 64 KiB; full content remains in the original file. Start diagnosis with `reason` and `stderr.log`, then inspect related service logs and responses.
 
-Logs include nonempty `.log`, `.err`, `.out`, `.json`, and `.conf` text files under the failed execution directory. Binary files, `test_run_results.json`, and `reason.*.log` are excluded. At most the last 64 KiB of each file is shown; full content remains in the original file. Start diagnosis with `reason` and `stderr.log`, then inspect related service logs and responses.
-
-Complete valid `.json` files are embedded as JSON values in `content`; invalid or truncated JSON remains text. Explicit failure reasons take precedence. Unhandled command failures record the script, line, command, and exit code. Failures without a recorded cause retain the exit-code fallback; caught child errors are not treated as the test failure.
+Log contents are printed as text, including JSON files. Explicit failure reasons take precedence. Unhandled command failures record the script, line, command, and exit code. Failures without a recorded cause retain the exit-code fallback; caught child errors are not treated as the test failure.
 
 ### Full Report
 
