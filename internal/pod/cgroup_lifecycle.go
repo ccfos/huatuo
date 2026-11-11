@@ -46,7 +46,9 @@ var (
 	cgroupCSSCacheEvent func(*containerCssPerfEvent, string)
 )
 
-func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, lifecycle bool) <-chan struct{} {
+func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader,
+	lifecycle bool, onLost func(),
+) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -59,6 +61,9 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader, 
 				if err := reader.ReadInto(&data); err != nil {
 					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 						log.WithError(err).Warn("lost BPF perf event samples")
+						if onLost != nil {
+							onLost()
+						}
 						if lifecycle {
 							requestContainerRefresh("", false)
 						}
@@ -122,7 +127,7 @@ func superviseCgroupCssEventLoop(ctx context.Context, reader bpf.PerfEventReader
 	for {
 		current := reader
 		stop := context.AfterFunc(ctx, func() { _ = current.Close() })
-		<-cgroupCssEventSyncHandler(ctx, reader, true)
+		<-cgroupCssEventSyncHandler(ctx, reader, true, nil)
 		stop()
 		_ = reader.Close()
 		if ctx.Err() != nil {

@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -330,15 +331,24 @@ func cgroupCssExistedSync() error {
 	}
 	defer reader.Close()
 
-	done := cgroupCssEventSyncHandler(childCtx, reader, false)
+	var samplesLost atomic.Bool
+	done := cgroupCssEventSyncHandler(childCtx, reader, false, func() {
+		samplesLost.Store(true)
+	})
 	defer func() { cancel(); _ = reader.Close(); <-done }()
 	time.Sleep(100 * time.Millisecond)
 
-	cgroupCssNotifyFile()
-
-	// wait sync
-	time.Sleep(1 * time.Second)
-	return nil
+	for attempt := 1; attempt <= 3; attempt++ {
+		samplesLost.Store(false)
+		cgroupCssNotifyFile()
+		// Let the reader process the events before deciding whether to retry.
+		time.Sleep(time.Second)
+		if !samplesLost.Load() {
+			return nil
+		}
+		log.Warnf("CSS startup sync lost perf event samples on attempt %d/3", attempt)
+	}
+	return errors.New("CSS startup sync lost perf event samples on all 3 attempts")
 }
 
 // ContainerCSSBySubsys returns a paired CSS address and cgroup ID for one
@@ -499,7 +509,7 @@ func triggerContainerCSSSync(cgroupPath string) error {
 	defer reader.Close()
 
 	// Start event handler
-	done := cgroupCssEventSyncHandler(childCtx, reader, false)
+	done := cgroupCssEventSyncHandler(childCtx, reader, false, nil)
 	defer func() { cancel(); _ = reader.Close(); <-done }()
 
 	// Give BPF time to initialize
