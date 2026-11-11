@@ -201,12 +201,12 @@ IO 用例覆盖公开指标、容器归属、自动诊断及健康事件取证�
 ```bash
 make build test-build
 sudo bash integration/run.sh test_metrics_io_wait.sh
-sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
+sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_blk_iotrace.sh
 ```
 
 `TEST_IO_DISK` 默认 `/dev/disk/by-id/virtio-huatuo-ci-io`，必须是专用测试盘，内容可被覆盖。默认设备不存在时跳过依赖该盘的测试；指定其他不存在的设备，或设备不是块设备、已挂载、有分区时直接失败。MD、loop 和 NVMe-loop 的后端文件也使用该盘。需要 SCSI 驱动控制的用例单独创建 `scsi_debug` 设备。容器用例使用本机 Kubernetes 节点和已有 kubelet 凭证。
 
-`make unit` 验证 Go 配置解析、兼容选择、数据解码和指标转换。宿主机及容器指标用例验证真实 IOLatency 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
+`make unit` 验证 Go 配置解析、兼容选择、数据解码和指标转换。宿主机及容器指标用例验证真实 blk_iotrace 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
 
 健康取证用例调用真实 `smartctl`、`nvme`，分别需要 `smartmontools`、`nvme-cli`；受控工具输出覆盖命令失败场景。
 

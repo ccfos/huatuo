@@ -31,12 +31,14 @@ You do not need to uncomment a field to use its built-in default. Restart after 
 # Global blacklist for tracing and metrics.
 # Default: [] (empty). The list below explicitly disables these modules.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
+BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "blk_iostat", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 | Field | Description |
 | --- | --- |
 | `BlackList` | Array of tracer and metric collector names to disable. The built-in default is `[]`. To enable a module, remove its name, satisfy its dependencies and enablement conditions, and restart to register it. |
+
+When upgrading, replace `io_health`, `iolatency`, `iocost`, and `diskio` in an existing `BlackList` with `blk_device_health`, `blk_iotrace`, `blk_iocost`, and `blk_iostat`, respectively. The old names no longer take effect.
 
 The configuration file explicitly disables these modules:
 
@@ -47,7 +49,7 @@ The configuration file explicitly disables these modules:
 | `net_conntrack` | Connection tracking statistics |
 | `metax_gpu` | Metax GPU metrics |
 | `ascend_npu` | Ascend NPU metrics |
-| `diskio` | Disk I/O metrics |
+| `blk_iostat` | Disk I/O metrics |
 | `tcp_retransmit` | TCP retransmission tracing |
 | `mthreads_gpu` | Moore Threads GPU metrics |
 | `mthreads_xid` | Moore Threads GPU XID events |

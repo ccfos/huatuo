@@ -248,26 +248,26 @@ io_test_report_disk_lock() {
 io_test_lock_disks() {
 	local limit=${1:-300} started=${SECONDS} status=0 previous_umask
 	require_commands flock
-	[[ -z ${io_health_md_lock_fd:-} ]] || return 0
+	[[ -z ${blk_device_health_md_lock_fd:-} ]] || return 0
 	mkdir -p /run/lock
 	[[ ! -L /run/lock/huatuo-kernel-tests.lock ]] || fatal "shared kernel device lock must not be a symlink"
 	previous_umask=$(umask)
 	umask 077
-	exec {io_health_md_lock_fd}<> /run/lock/huatuo-kernel-tests.lock \
+	exec {blk_device_health_md_lock_fd}<> /run/lock/huatuo-kernel-tests.lock \
 		|| fatal "cannot open shared kernel device lock"
 	umask "${previous_umask}"
-	log_info "IO topology lock requested: pid=${BASHPID} fd=${io_health_md_lock_fd} budget_seconds=${limit}"
+	log_info "IO topology lock requested: pid=${BASHPID} fd=${blk_device_health_md_lock_fd} budget_seconds=${limit}"
 	io_test_report_disk_lock >> "${HUATUO_BAMAI_TEST_TMPDIR}/io-disks.resources" 2>&1 || true
-	flock --exclusive --timeout "${limit}" "${io_health_md_lock_fd}" || status=$?
+	flock --exclusive --timeout "${limit}" "${blk_device_health_md_lock_fd}" || status=$?
 	printf 'lock_exit=%s wait_seconds=%s pid=%s fd=%s time=%s\n' \
-		"${status}" "$((SECONDS - started))" "${BASHPID}" "${io_health_md_lock_fd}" "$(date -u +%FT%TZ)" \
+		"${status}" "$((SECONDS - started))" "${BASHPID}" "${blk_device_health_md_lock_fd}" "$(date -u +%FT%TZ)" \
 		>> "${HUATUO_BAMAI_TEST_TMPDIR}/io-disks.resources"
 	if ((status != 0)); then
 		io_test_report_disk_lock >> "${HUATUO_BAMAI_TEST_TMPDIR}/io-disks.resources" 2>&1 || true
 		cat "${HUATUO_BAMAI_TEST_TMPDIR}/io-disks.resources" >&2
 		fatal "cannot acquire shared kernel device lock within ${limit} seconds (exit ${status})"
 	fi
-	log_info "IO topology lock acquired: pid=${BASHPID} fd=${io_health_md_lock_fd} wait_seconds=$((SECONDS - started))"
+	log_info "IO topology lock acquired: pid=${BASHPID} fd=${blk_device_health_md_lock_fd} wait_seconds=$((SECONDS - started))"
 }
 
 assert_io_test_disk_identity() {

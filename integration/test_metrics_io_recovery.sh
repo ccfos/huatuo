@@ -26,7 +26,7 @@ run_io_recovery() {
 	source "${ROOT_DIR}/integration/config.sh"
 	source "${ROOT_DIR}/integration/lib_io.sh"
 	source "${ROOT_DIR}/integration/lib_io_wait.sh"
-	source "${ROOT_DIR}/integration/lib_iolatency.sh"
+	source "${ROOT_DIR}/integration/lib_blk_iotrace.sh"
 	require_commands python3 jq timeout flock readlink
 	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 	WAIT_HUATUO_BAMAI_TIMEOUT=30
@@ -100,7 +100,7 @@ run_io_recovery() {
 
 	recovery_control() {
 		local index=$1 enabled=$2 collector=$3 owner value operation
-		[[ ${collector} != iolatency ]] || return 0
+		[[ ${collector} != blk_iotrace ]] || return 0
 		recovery_owned || return 1
 		read -r owner < "/sys/block/${recovery_disks[index]}/device/vendor" || return 1
 		[[ ${owner} == "${io_test_scsi_owner}" ]] || return 1
@@ -189,7 +189,7 @@ run_io_recovery() {
 				[[ -d ${directory} ]] || continue
 				printf 'workload_evidence=%s\n' "${directory}"
 				for file in "${directory}"/{0,1}.json{,.diskstats,.log,.started} \
-					"${directory}"/{0,1}.timing.json "${directory}"/{0,1}.{iocost,blk_throtl}.json \
+					"${directory}"/{0,1}.timing.json "${directory}"/{0,1}.{blk_iocost,blk_throtl}.json \
 					"${directory}"/sample.metrics.latency-{0,1}.{json,err}; do
 					[[ ! -s ${file} ]] || {
 						printf '%s:\n' "${file}"
@@ -201,9 +201,9 @@ run_io_recovery() {
 					}
 				done
 				if [[ -r ${directory}/sample.metrics ]]; then
-					awk '/^# TYPE huatuo_bamai_(iolatency|blk_throtl|iocost)/ { print; next }
-					/^huatuo_bamai_(iolatency|blk_throtl|iocost|scrape_collector_success)/ &&
-						(!/iolatency/ || /le="\+Inf"/ || /interval_/) { print }' "${directory}/sample.metrics"
+					awk '/^# TYPE huatuo_bamai_(blk_iotrace|blk_throtl|blk_iocost)/ { print; next }
+					/^huatuo_bamai_(blk_iotrace|blk_throtl|blk_iocost|scrape_collector_success)/ &&
+						(!/blk_iotrace/ || /le="\+Inf"/ || /interval_/) { print }' "${directory}/sample.metrics"
 				fi
 			done < <(printf '%s\n' "${recovery_metrics%/*}" "${recovery_directory}" "${RECOVERY_WORK}/initial-baseline" \
 				| awk 'NF && !seen[$0]++')
@@ -285,7 +285,7 @@ run_io_recovery() {
 	mkdir "${recovery_leaf}"
 	if [[ -w ${recovery_cgroup_root}/${recovery_control_prefix}.cost.model && -w ${recovery_cgroup_root}/${recovery_control_prefix}.cost.qos &&
 		(! -r /sys/kernel/realtime || $(< /sys/kernel/realtime) != 1) ]]; then
-		recovery_collectors+=(iocost)
+		recovery_collectors+=(blk_iocost)
 	else
 		log_info "NOT_RUN IOCOST recovery: writable cost controls and non-RT kernel are required"
 	fi
@@ -294,7 +294,7 @@ run_io_recovery() {
 	else
 		log_info "NOT_RUN blk-throttle recovery: writable throttle controls are unavailable"
 	fi
-	recovery_collectors+=(iolatency)
+	recovery_collectors+=(blk_iotrace)
 	recovery_disks=("${io_test_disks[@]:0:2}")
 	for index in 0 1; do
 		recovery_numbers[index]=$(< "/sys/block/${recovery_disks[index]}/dev")
@@ -341,12 +341,12 @@ run_io_recovery() {
 
 	assert_recovery_latency() {
 		local metrics=$1 operation=$2 index=$3 status=0
-		assert_iolatency_metrics "${recovery_disks[index]}" "${operation}" drain "${metrics}" \
+		assert_blk_iotrace_metrics "${recovery_disks[index]}" "${operation}" drain "${metrics}" \
 			"${recovery_scrape_started}" "${recovery_scrape_ended}" "${RECOVERY_WORK}/latency-last-interval-${index}" \
 			"${metrics}.json" 2> "${metrics}.latency-${index}.err" || status=$?
 		if ((status != 0 && status != 3)); then
 			cat "${metrics}.latency-${index}.err" >&2
-			fatal "${recovery_context} disk=${recovery_disks[index]}: invalid IOLatency schema or interval; inspect ${metrics}"
+			fatal "${recovery_context} disk=${recovery_disks[index]}: invalid BlkIOTrace schema or interval; inspect ${metrics}"
 		fi
 		cp "${metrics}.assertion.json" "${metrics}.latency-${index}.json"
 	}
@@ -360,7 +360,7 @@ run_io_recovery() {
 			--arg operation "${operation}" '
 		all(.[] | select(.labels.disk != null and
 			(.labels.disk == $first or .labels.disk == $second or .labels.disk == $retired))
-			| select(.name | test("^huatuo_bamai_(iocost|blk_throtl|iolatency)_"))
+			| select(.name | test("^huatuo_bamai_(blk_iocost|blk_throtl|blk_iotrace)_"))
 			| select($operation == "all" or .labels.operation == $operation); .value == 0)
 		' "${metrics}.json" > /dev/null || fatal "discarded or idle IO statistics reappeared: ${metrics}"
 	}
@@ -484,11 +484,11 @@ run_io_recovery() {
 				[[ ${phase} == initial ]] || assert_recovery_empty "${metrics}" write
 				confirmed=1
 				for index in 0 1; do
-					if [[ ${collector} != iolatency && -n ${baseline} ]]; then
+					if [[ ${collector} != blk_iotrace && -n ${baseline} ]]; then
 						assert_io_wait_slowdown "${baseline}/${index}.json" "${directory}/${index}.json" \
 							> "${directory}/${index}.timing.json" || fatal "${collector} slowdown was not independently established"
 					fi
-					if [[ ${collector} == iolatency ]]; then
+					if [[ ${collector} == blk_iotrace ]]; then
 						jq -e '.ready' "${metrics}.latency-${index}.json" > /dev/null || confirmed=0
 					else
 						summary="${directory}/${index}.${collector}.json"

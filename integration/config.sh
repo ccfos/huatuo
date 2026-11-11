@@ -34,8 +34,8 @@ write_config_blacklist_except() {
 	local -a blacklist=()
 	for collector in \
 		arp ascend_npu blk_throtl cpu_stat cpu_util \
-		cpuidle cpusys diskio dload dropwatch \
-		hungtask io_health iocost iolatency iotracing \
+		cpuidle cpusys blk_iostat dload dropwatch \
+		hungtask blk_device_health blk_iocost blk_iotrace iotracing \
 		irqtracing loadavg memburst memory_buddyinfo memory_events \
 		memory_free memory_oom_kill memory_others memory_reclaim memory_reclaim_events \
 		memory_threshold_snapshot memory_vmstat metax_gpu mountpoint_perm mthreads_gpu \
@@ -154,8 +154,8 @@ EOF
 write_config_bamai_default() {
 	write_config_blacklist \
 		"memory_threshold_snapshot" "metax_gpu" "ascend_npu" "softlockup" "ethtool" \
-		"netstat_hw" "iolatency" "memory_free" "memory_reclaim" "reschedipi" \
-		"softirq" "iotracing" "iocost" "blk_throtl" "sched-blame"
+		"netstat_hw" "blk_iotrace" "memory_free" "memory_reclaim" "reschedipi" \
+		"softirq" "iotracing" "blk_iocost" "blk_throtl" "sched-blame"
 	write_config_bamai_auth "integration-node-token"
 }
 
@@ -238,8 +238,8 @@ EOF
 write_config_bamai_net_rx_latency() {
 	write_config_blacklist \
 		"memory_threshold_snapshot" "metax_gpu" "ascend_npu" "softlockup" "ethtool" \
-		"netstat_hw" "iolatency" "memory_free" "memory_reclaim" "reschedipi" \
-		"softirq" "iotracing" "dropwatch" "iocost" "blk_throtl" \
+		"netstat_hw" "blk_iotrace" "memory_free" "memory_reclaim" "reschedipi" \
+		"softirq" "iotracing" "dropwatch" "blk_iocost" "blk_throtl" \
 		"sched-blame"
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
@@ -284,8 +284,8 @@ write_config_bamai_sched_tick() {
 	write_config_bamai_sched_tick_threshold 60000000000
 }
 
-write_config_bamai_io_health() {
-	write_config_bamai_sched_tick | sed 's/"io_health"/"sched_tick"/'
+write_config_bamai_blk_device_health() {
+	write_config_bamai_sched_tick | sed 's/"blk_device_health"/"sched_tick"/'
 }
 
 # Let normal ticks exercise the irqoff reporting path without disabling IRQs.
@@ -359,7 +359,7 @@ write_config_bamai_cpusys_profiler() {
 
 # The iotracing test controls proc/diskstats and the toolstream subprocess.
 write_config_bamai_iotracing_autotracing() {
-	write_config_blacklist_except diskio io_health iotracing irqtracing mthreads_gpu mthreads_xid net_conntrack tcp_retransmit xfs
+	write_config_blacklist_except blk_iostat blk_device_health iotracing irqtracing mthreads_gpu mthreads_xid net_conntrack tcp_retransmit xfs
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 
@@ -422,8 +422,8 @@ write_config_bamai_continuous_profiling() {
 	local tool_dir=${1:-}
 	write_config_blacklist \
 		"metax_gpu" "ascend_npu" "softlockup" "ethtool" "netstat_hw" \
-		"iolatency" "memory_free" "memory_reclaim" "reschedipi" "softirq" \
-		"iotracing" "dropwatch" "memory_threshold_snapshot" "sched-blame" "iocost"
+		"blk_iotrace" "memory_free" "memory_reclaim" "reschedipi" "softirq" \
+		"iotracing" "dropwatch" "memory_threshold_snapshot" "sched-blame" "blk_iocost"
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 

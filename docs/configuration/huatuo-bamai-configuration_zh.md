@@ -31,12 +31,14 @@ weight: 4
 # Global blacklist for tracing and metrics.
 # Default: [] (empty). The list below explicitly disables these modules.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
+BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "blk_iostat", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 | 字段 | 说明 |
 | --- | --- |
 | `BlackList` | 禁用的追踪器和指标采集器名称数组，内置默认值为 `[]`。启用模块需从黑名单移除对应名称，满足其依赖和开关条件，并重启以完成注册。 |
+
+升级时，将已有 `BlackList` 中的 `io_health`、`iolatency`、`iocost`、`diskio` 分别替换为 `blk_device_health`、`blk_iotrace`、`blk_iocost`、`blk_iostat`；旧名称不再生效。
 
 配置文件显式禁用以下模块：
 
@@ -47,7 +49,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_
 | `net_conntrack` | 连接跟踪统计 |
 | `metax_gpu` | Metax GPU 指标 |
 | `ascend_npu` | Ascend NPU 指标 |
-| `diskio` | 磁盘 I/O 指标 |
+| `blk_iostat` | 磁盘 I/O 指标 |
 | `tcp_retransmit` | TCP 重传追踪 |
 | `mthreads_gpu` | 摩尔线程 GPU 指标 |
 | `mthreads_xid` | 摩尔线程 GPU XID 事件 |
