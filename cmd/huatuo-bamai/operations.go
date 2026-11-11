@@ -30,11 +30,6 @@ import (
 
 func startOperations(d *Daemon) (func(context.Context) error, error) {
 	cfg := config.Get()
-	nodeAPIAddress, err := localAPIAddress(cfg.HTTPServer.ListenAddress)
-	if err != nil {
-		return nil, err
-	}
-
 	manager, err := operation.NewManager(operation.Config{
 		MaxConcurrent: cfg.Operations.MaxConcurrent,
 		Lifecycle: operation.LifecyclePolicy{
@@ -61,7 +56,6 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
 		ProfilerPath:         filepath.Join(d.opts.ToolBinDir, "profiler"),
 		ToolstreamSocketPath: toolstream.DefaultSockPath,
-		NodeAPIAddress:       nodeAPIAddress,
 		ToolDir:              cfg.Profiling.ToolDir,
 		AggregationInterval: time.Duration(cfg.Profiling.AggregationIntervalSeconds) *
 			time.Second,
