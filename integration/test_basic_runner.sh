@@ -28,7 +28,7 @@ export runner_parent_uts runner_parent_mount
 
 assert_runner_summary() {
 	local log=$1
-	# Diagnostic files can contain JSON before or after the summary.
+	# Diagnostic files can contain JSON before the summary.
 	awk '
 		/^\{/ {block = ""; collecting = 1}
 		collecting {block = block $0 ORS}
@@ -76,12 +76,12 @@ assert_runner_result() {
 		local report
 		report=$(jq -r .results_path <<< "${summary}")
 		[[ $(grep -Fc "\"results_path\": \"${report}\"" "${log}") == 1 ]] || fatal "${suite}/${label}: summary was printed more than once"
+		local summary_start
+		summary_start=$(grep -n '^{' "${log}" | tail -n 1)
+		[[ $(tail -n +"${summary_start%%:*}" "${log}") == "${summary}" ]] \
+			|| fatal "${suite}/${label}: output follows the final JSON summary; see ${log}"
 		if [[ ${invoked_suite} == integration && ${expected_status} == 0 ]] \
 			&& jq -e '.execution_counts.total == .execution_counts.passed' <<< "${summary}" > /dev/null; then
-			local summary_start
-			summary_start=$(grep -n '^{' "${log}" | tail -n 1)
-			[[ $(tail -n +"${summary_start%%:*}" "${log}") == "${summary}" ]] \
-				|| fatal "${suite}/${label}: output follows the successful JSON summary; see ${log}"
 			[[ ! -e ${report%/*} ]] || fatal "${suite}/${label}: successful integration directory was retained: ${report%/*}"
 			return 0
 		fi
@@ -329,6 +329,25 @@ EOF
 	assert_runner_result integration parallel_isolation 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' -j 2
 	[[ $(cat "${RUNNER_FIXTURE}/"*.address | sort -u | wc -l) == 2 ]] || fatal "parallel workers shared a daemon port"
 
+}
+
+assert_runner_parallel_failure_summary() {
+	rm -f "${RUNNER_FIXTURE}/integration/"test_*.sh
+	rm -f "${RUNNER_FIXTURE}/peer-started" "${RUNNER_FIXTURE}/peer-finished"
+	cat > "${RUNNER_FIXTURE}/integration/test_metrics.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+wait_until 5 0.05 test -f "${ROOT_DIR}/peer-started"
+false
+EOF
+	cat > "${RUNNER_FIXTURE}/integration/test_node_config_api.sh" << 'EOF'
+set -euo pipefail
+trap 'touch "${ROOT_DIR}/peer-finished"' EXIT
+touch "${ROOT_DIR}/peer-started"
+sleep 30
+EOF
+	assert_runner_result integration parallel_failure 1 '{"total":2,"passed":0,"skipped":1,"failed":1}' -j 2
+	[[ -f ${RUNNER_FIXTURE}/peer-finished ]] || fatal "parallel failure summary preceded peer cleanup"
 }
 
 assert_runner_storage_lifecycle() {
@@ -983,6 +1002,7 @@ assert_runner_report_write_failure scheduling
 assert_runner_report_write_failure cleanup
 assert_runner_prerequisites
 assert_runner_parallel_isolation
+assert_runner_parallel_failure_summary
 assert_runner_storage_lifecycle
 assert_runner_inherited_environment
 assert_runner_namespaces

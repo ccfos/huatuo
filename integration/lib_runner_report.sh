@@ -118,27 +118,13 @@ report_failure_logs() {
 
 report_summary() {
 	local workspace kind value path size diagnostics="${RUNNER_OUTPUT_DIR}/failed-logs.jsonl"
-	# Workers have exited; collect each failed execution's files without interleaving output.
+	# Workers have exited; collect each failed execution's files before final output.
 	: > "${diagnostics}"
 	while IFS= read -r workspace; do
 		report_failure_logs "${workspace}" >> "${diagnostics}" || return 1
 	done < <(jq -r '.test_executions[] | select(.result == "failed" and .logs != null) |
 		$output + "/" + (.logs.stdout | rtrimstr("/stdout.log"))' \
 		--arg output "${RUNNER_OUTPUT_DIR}" "${RUNNER_OUTPUT_DIR}/test_run_results.json")
-	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile diagnostics "${diagnostics}" '
-		def short_reason: if . == null then null else split("\n")[0] end;
-		.suite as $suite |
-		{status: (if .status == "completed" then "passed" elif .status == "aborted" then "failed" else .status end),
-		 output_dir: $output, results_path: ($output + "/test_run_results.json"),
-		 runs_per_test, started_at, finished_at, duration_seconds, execution_counts,
-		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
-			$suite + "/" + .test_name] | unique),
-		 failed_tests: [.test_executions[] | select(.result == "failed") |
-			(if .logs == null then null else
-			 $output + "/" + (.logs.stdout | rtrimstr("/stdout.log")) end) as $workspace |
-			{name: ($suite + "/" + .test_name), run_index, reason: (.reason | short_reason),
-			 logs: [$diagnostics[] | select(.workspace == $workspace) | .path]}]}
-	' "${RUNNER_OUTPUT_DIR}/test_run_results.json" || return 1
 	while IFS= read -r -d '' kind && IFS= read -r -d '' value; do
 		if [[ ${kind} == failed ]]; then
 			printf '\nFailed: %s\n' "${value}"
@@ -162,4 +148,18 @@ report_summary() {
 		 $diagnostics[] | select(.path | startswith($dir + "/")) |
 		 "log\u0000\(.path)\u0000\(.size)\u0000" end)
 	' "${RUNNER_OUTPUT_DIR}/test_run_results.json")
+	jq --arg output "${RUNNER_OUTPUT_DIR}" --slurpfile diagnostics "${diagnostics}" '
+		def short_reason: if . == null then null else split("\n")[0] end;
+		.suite as $suite |
+		{status: (if .status == "completed" then "passed" elif .status == "aborted" then "failed" else .status end),
+		 output_dir: $output, results_path: ($output + "/test_run_results.json"),
+		 runs_per_test, started_at, finished_at, duration_seconds, execution_counts,
+		 skipped_tests: ([.test_executions[] | select(.result == "skipped") |
+			$suite + "/" + .test_name] | unique),
+		 failed_tests: [.test_executions[] | select(.result == "failed") |
+			(if .logs == null then null else
+			 $output + "/" + (.logs.stdout | rtrimstr("/stdout.log")) end) as $workspace |
+			{name: ($suite + "/" + .test_name), run_index, reason: (.reason | short_reason),
+			 logs: [$diagnostics[] | select(.workspace == $workspace) | .path]}]}
+	' "${RUNNER_OUTPUT_DIR}/test_run_results.json" || return 1
 }

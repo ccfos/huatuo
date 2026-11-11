@@ -297,6 +297,10 @@ runner_cleanup() {
 		runner_cancel_executions "${reason}"
 		cancelled=true
 	fi
+	if [[ ${status} != 0 && ${cancelled} == false ]] && ((runner_report_failed == 0)); then
+		runner_cancel_executions "another test failed"
+		cancelled=true
+	fi
 	# Report failures can first occur while draining an ordinary test failure.
 	# Recheck before each wait so remaining cases still get bounded cancellation.
 	for slot in "${!runner_pids[@]}"; do
