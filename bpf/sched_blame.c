@@ -303,6 +303,8 @@ static __always_inline u32 resolve_target_dense_id(
 {
 	volatile u64 *cache_entry;
 	u64 cached;
+	u64 cached_addr;
+	u64 cached_id;
 	u8 dense_id;
 	struct sched_blame_target_ref *mapped;
 	u64 ref_cgroup_id = 0;
@@ -318,9 +320,13 @@ static __always_inline u32 resolve_target_dense_id(
 	if (cache_epoch(cached) == epoch) {
 		if (cache_dense_id(cached) == NON_TARGET)
 			return NON_TARGET;
-		if (cached_css_addr[css_index] == css_addr &&
-		    cgroup_css_matches_ref(css_addr, css_addr,
-					   cached_cgroup_id[css_index]))
+		// Old verifiers can lose the bound after the index is spilled.
+		asm volatile("%0 &= 4095" : "+r"(css_index));
+		cached_addr = cached_css_addr[css_index];
+		asm volatile("%0 &= 4095" : "+r"(css_index));
+		cached_id = cached_cgroup_id[css_index];
+		if (cached_addr == css_addr &&
+		    cgroup_css_matches_ref(css_addr, css_addr, cached_id))
 			return cache_dense_id(cached);
 	}
 
@@ -338,7 +344,9 @@ static __always_inline u32 resolve_target_dense_id(
 		ref_cgroup_id = mapped->cgroup_id;
 	}
 
+	asm volatile("%0 &= 4095" : "+r"(css_index));
 	cached_css_addr[css_index] = css_addr;
+	asm volatile("%0 &= 4095" : "+r"(css_index));
 	cached_cgroup_id[css_index] = ref_cgroup_id;
 	*cache_entry = pack_dense_id_cache(epoch, dense_id);
 	return dense_id;
