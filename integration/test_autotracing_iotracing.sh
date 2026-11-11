@@ -343,7 +343,7 @@ run_iotracing_case() {
 		--region dev \
 		--procfs-prefix "${IOTRACING_FIXTURE_ROOT}" \
 		--disable-kubelet \
-		--disable-tracing io_health,irqtracing,tcp_retransmit \
+		--disable-tracing blk_device_health,irqtracing,tcp_retransmit \
 		--log-debug
 	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
 	iotracing_case_phase_ready() {

@@ -9,6 +9,8 @@ weight: 3
 
 This guide covers container and host builds. Run all commands from the repository root. See `go.mod` for the required Go version.
 
+When updating from a version with `io_health`, `iolatency`, or `iocost` object names, run `make clean`, then `make gen-build`, before `make build`, `make check`, or `make unit`. This prevents stale objects and generated Go ABI files from mixing with the new names.
+
 ## Container Build
 
 Run the script to build in a container and perform static checks:

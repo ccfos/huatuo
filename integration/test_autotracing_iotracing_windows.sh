@@ -86,7 +86,7 @@ HUATUO_BAMAI_BIN="${WINDOW_ROOT}/bin/huatuo-bamai"
 
 write_config_bamai_iotracing_windows() {
 	write_config_bamai_iotracing_autotracing \
-		| sed -e 's/BlackList = \[/BlackList = ["diskio", /' \
+		| sed -e 's/BlackList = \[/BlackList = ["blk_iostat", /' \
 			-e 's/RunTracingToolTimeout = 1$/RunTracingToolTimeout = 25/'
 }
 
@@ -286,7 +286,7 @@ wait_until 5 0.1 test -f "${WINDOW_ROOT}/supplier.ready" \
 
 io_test_start_bamai write_config_bamai_iotracing_windows \
 	--region dev --procfs-prefix "${WINDOW_ROOT}" --disable-kubelet \
-	--disable-tracing blk_throtl,io_health,irqtracing,tcp_retransmit --log-debug
+	--disable-tracing blk_throtl,blk_device_health,irqtracing,tcp_retransmit --log-debug
 window_clock
 window_deadline_ms=$((window_now_ms + 240000))
 

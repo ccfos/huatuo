@@ -31,7 +31,7 @@ import (
 
 const (
 	blkThrotlDelayedCountName = "delayed_io_count"
-	blkThrotlAverageWaitName  = "average_wait_ms"
+	blkThrotlAverageWaitName  = "delayed_average_wait_ms"
 	blkThrotlDelayedCountHelp = "Number of blk-throttle delayed IO episodes " +
 		"released between consecutive successful blk_throtl collections."
 	blkThrotlAverageWaitHelp = "Average blk-throttle queue wait in milliseconds " +

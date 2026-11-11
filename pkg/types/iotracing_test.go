@@ -130,23 +130,23 @@ func TestIOTracingSnapshotJSON(t *testing.T) {
 
 // IO health event payloads.
 
-func TestIOHealthEventJSONFields(t *testing.T) {
+func TestBlkDeviceHealthEventJSONFields(t *testing.T) {
 	rawState := uint32(0)
 	for _, test := range []struct {
 		name    string
-		event   IOHealthEvent
+		event   BlkDeviceHealthEvent
 		fields  map[string]any
 		omitted []string
 	}{
 		{
 			name:    "block error",
-			event:   IOHealthEvent{Type: "block_error", Status: "ioerr"},
+			event:   BlkDeviceHealthEvent{Type: "block_error", Status: "ioerr"},
 			fields:  map[string]any{"io_error_status": "ioerr"},
 			omitted: []string{"status"},
 		},
 		{
 			name: "MD transition",
-			event: IOHealthEvent{
+			event: BlkDeviceHealthEvent{
 				Type: "md_member_state", Array: "md0", Member: "sdb",
 				OldState: "in_sync", NewState: "faulty",
 			},
@@ -157,7 +157,7 @@ func TestIOHealthEventJSONFields(t *testing.T) {
 		},
 		{
 			name: "NVMe raw state",
-			event: IOHealthEvent{
+			event: BlkDeviceHealthEvent{
 				Type: "nvme_state_change", Device: "nvme0", NewState: "new", NewStateRaw: &rawState,
 			},
 			fields: map[string]any{"new_state": "new", "new_state_raw": float64(0)},
@@ -186,12 +186,12 @@ func TestIOHealthEventJSONFields(t *testing.T) {
 	}
 }
 
-func TestIOHealthEventPreservesZeroValuesAndEmptyLists(t *testing.T) {
+func TestBlkDeviceHealthEventPreservesZeroValuesAndEmptyLists(t *testing.T) {
 	zeroWarning := uint8(0)
 	zeroMediaErrors := uint64(0)
 	emptyErrorLog := []NVMeErrorLogEntry{}
 	sector := uint64(0)
-	event := IOHealthEvent{
+	event := BlkDeviceHealthEvent{
 		Type:             "nvme_timeout",
 		Device:           "nvme0n1",
 		Sector:           &sector,
@@ -227,7 +227,7 @@ func TestIOHealthEventPreservesZeroValuesAndEmptyLists(t *testing.T) {
 		t.Fatalf("error_log = %#v, want []", nvme["error_log"])
 	}
 
-	var decoded IOHealthEvent
+	var decoded BlkDeviceHealthEvent
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("json.Unmarshal into struct failed: %v", err)
 	}
@@ -238,13 +238,13 @@ func TestIOHealthEventPreservesZeroValuesAndEmptyLists(t *testing.T) {
 	}
 }
 
-func TestIOHealthSCSIEventPreservesFalseZeroAndEmptyList(t *testing.T) {
+func TestBlkDeviceHealthSCSIEventPreservesFalseZeroAndEmptyList(t *testing.T) {
 	smartPassed := false
 	grownDefects := uint64(0)
 	processedGB := float64(0)
 	delayedCorrections := uint64(0)
 	emptyLBAs := []uint64{}
-	event := IOHealthEvent{
+	event := BlkDeviceHealthEvent{
 		Type:             "scsi_timeout",
 		Device:           "sda",
 		CollectionStatus: "ok",
@@ -293,7 +293,7 @@ func TestIOHealthSCSIEventPreservesFalseZeroAndEmptyList(t *testing.T) {
 		t.Fatalf("sample_lbas = %#v, want []", pending["sample_lbas"])
 	}
 
-	var decoded IOHealthEvent
+	var decoded BlkDeviceHealthEvent
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("json.Unmarshal into struct failed: %v", err)
 	}

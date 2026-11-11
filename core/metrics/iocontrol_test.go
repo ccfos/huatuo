@@ -115,11 +115,11 @@ func TestIOControlDeviceHookSelection(t *testing.T) {
 			attach func(bpf.BPF) error
 		}{
 			{name: "blk_throtl", attach: attachBlkThrotlHooks},
-			{name: "iocost", attach: attachIOCostPrograms},
-			{name: "iolatency", attach: attachIOLatencyHooks},
+			{name: "blk_iocost", attach: attachBlkIOCostPrograms},
+			{name: "blk_iotrace", attach: attachBlkIOTraceHooks},
 		} {
 			t.Run(test.name, func(t *testing.T) {
-				object := &fakeIOLatencyAttacher{}
+				object := &fakeBlkIOTraceAttacher{}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				state := os.Getenv(stateEnv)
@@ -188,7 +188,7 @@ func TestIOControlDeviceHookSelection(t *testing.T) {
 		{name: "lookup fails persistently", state: "exhaust"},
 		{name: "lookup retry canceled", state: "cancel"},
 	} {
-		for _, module := range []string{"blk_throtl", "iocost", "iolatency"} {
+		for _, module := range []string{"blk_throtl", "blk_iocost", "blk_iotrace"} {
 			t.Run(test.name+"/"+module, func(t *testing.T) {
 				root := t.TempDir()
 				directory := filepath.Join(root, "proc")
@@ -620,7 +620,7 @@ func TestIOControlWaitCounterDeltas(t *testing.T) {
 func ioControlWaitTestMetricDefinition() ioControlWaitMetrics {
 	return ioControlWaitMetrics{
 		countName: "delayed_io_count", countHelp: "Delayed IO count.",
-		averageName: "average_wait_ms", averageHelp: "Average wait in milliseconds.",
+		averageName: "delayed_average_wait_ms", averageHelp: "Average wait in milliseconds.",
 	}
 }
 

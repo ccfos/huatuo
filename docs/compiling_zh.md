@@ -9,6 +9,8 @@ weight: 3
 
 本文说明容器和宿主机上的构建方法。以下命令均在项目根目录执行；Go 版本要求以 `go.mod` 为准。
 
+从使用 `io_health`、`iolatency` 或 `iocost` 对象名的版本更新时，依次执行 `make clean`、`make gen-build`，再执行 `make build`、`make check` 或 `make unit`，避免残留对象及生成的 Go ABI 文件与新名称混用。
+
 ## 容器编译
 
 运行脚本，执行容器构建和静态检查：

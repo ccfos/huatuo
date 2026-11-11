@@ -438,9 +438,9 @@ netlink 还提供细分错误指标和 `receive_nohandler`，细分错误可能�
 
 ### 配置
 
-`iotracing`、`iolatency`、`blk_throtl`、`iocost` 和 `io_health` 默认启用。
+`iotracing`、`blk_iotrace`、`blk_throtl`、`blk_iocost` 和 `blk_device_health` 默认启用。
 向全局 `BlackList` 添加对应名称并重启 Huatuo 可关闭该功能。
-关闭 `iotracing` 会同时停止磁盘指标和自动诊断；关闭 `io_health` 会停止
+关闭 `iotracing` 会同时停止磁盘指标和自动诊断；关闭 `blk_device_health` 会停止
 健康事件、取证及其指标，不影响 `iotracing`。
 
 ### 磁盘性能
@@ -460,45 +460,45 @@ netlink 还提供细分错误指标和 `receive_nohandler`，细分错误可能�
 
 ### 延时与 IO 大小分布
 
-`iolatency` 统计 SCSI/SAS、NVMe、virtio 磁盘及容器读写 IO 的延时和大小分布。
+`blk_iotrace` 统计 SCSI/SAS、NVMe、virtio 磁盘及容器读写 IO 的延时和大小分布。
 仅采集启动时已开启 `iostats` 和请求时间统计的磁盘，运行中不支持关闭这些配置。
-启动时若软件 blk-crypto fallback 已初始化，整个 `iolatency` 不启动。
+启动时若软件 blk-crypto fallback 已初始化，整个 `blk_iotrace` 不启动。
 
 SCSI 下发大小沿用内核的 16 位扇区计数，达到 32 MiB 会回绕。
 跨 blkcg 合并 request 时，容器下发大小为近似归属，宿主机统计不受影响。
 
-块设备增删或重建时，`iolatency`、`blk_throtl` 和 `iocost` 重新开始统计，
+块设备增删或重建时，`blk_iotrace`、`blk_throtl` 和 `blk_iocost` 重新开始统计，
 过渡期间的所有磁盘数据可能缺失。
 
 桶值为采集区间内小于等于 `le` 上界的 IO 数量，`+Inf` 为总数；延时边界
 单位为秒，大小边界单位为字节。指标为区间 Gauge。
 
 ```text
-# TYPE huatuo_bamai_iolatency_q2d_seconds_bucket gauge
-huatuo_bamai_iolatency_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
-huatuo_bamai_iolatency_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
-# TYPE huatuo_bamai_iolatency_d2c_seconds_bucket gauge
-huatuo_bamai_iolatency_d2c_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
-# TYPE huatuo_bamai_iolatency_q2g_seconds_bucket gauge
-huatuo_bamai_iolatency_q2g_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
-# TYPE huatuo_bamai_iolatency_container_q2g_seconds_bucket gauge
-huatuo_bamai_iolatency_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
+# TYPE huatuo_bamai_blk_iotrace_q2d_seconds_bucket gauge
+huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_blk_iotrace_d2c_seconds_bucket gauge
+huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_blk_iotrace_q2g_seconds_bucket gauge
+huatuo_bamai_blk_iotrace_q2g_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+# TYPE huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket gauge
+huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
 ```
 
 |指标|意义|单位|对象|
 |---|---|---|---|
-|iolatency_q2d_seconds_bucket|入队到最后一次下发的延时分布|计数|宿主|
-|iolatency_d2c_seconds_bucket|最后一次下发到完成的延时分布|计数|宿主|
-|iolatency_q2g_seconds_bucket|入队到 request 起始时间的延时分布|计数|宿主|
-|iolatency_container_q2d_seconds_bucket|入队到最后一次下发的延时分布|计数|容器|
-|iolatency_container_d2c_seconds_bucket|最后一次下发到完成的延时分布|计数|容器|
-|iolatency_container_q2g_seconds_bucket|入队到 request 起始时间的延时分布|计数|容器|
-|iolatency_queued_io_size_bytes_bucket|入队 bio 大小分布|计数|宿主|
-|iolatency_issued_io_size_bytes_bucket|request 大小分布；SCSI 取最后一次下发的完整大小，NVMe/virtio 取完成字节数|计数|宿主|
-|iolatency_container_queued_io_size_bytes_bucket|入队 bio 大小分布|计数|容器|
-|iolatency_container_issued_io_size_bytes_bucket|request 大小分布；SCSI 取最后一次下发的完整大小，NVMe/virtio 取完成字节数|计数|容器|
-|iolatency_interval_start_timestamp_seconds|本区间开始时间|Unix 秒|宿主|
-|iolatency_interval_end_timestamp_seconds|本区间结束时间|Unix 秒|宿主|
+|blk_iotrace_q2d_seconds_bucket|入队到最后一次下发的延时分布|计数|宿主|
+|blk_iotrace_d2c_seconds_bucket|最后一次下发到完成的延时分布|计数|宿主|
+|blk_iotrace_q2g_seconds_bucket|入队到 request 起始时间的延时分布|计数|宿主|
+|blk_iotrace_container_q2d_seconds_bucket|入队到最后一次下发的延时分布|计数|容器|
+|blk_iotrace_container_d2c_seconds_bucket|最后一次下发到完成的延时分布|计数|容器|
+|blk_iotrace_container_q2g_seconds_bucket|入队到 request 起始时间的延时分布|计数|容器|
+|blk_iotrace_queued_io_size_bytes_bucket|入队 bio 大小分布|计数|宿主|
+|blk_iotrace_issued_io_size_bytes_bucket|request 大小分布；SCSI 取最后一次下发的完整大小，NVMe/virtio 取完成字节数|计数|宿主|
+|blk_iotrace_container_queued_io_size_bytes_bucket|入队 bio 大小分布|计数|容器|
+|blk_iotrace_container_issued_io_size_bytes_bucket|request 大小分布；SCSI 取最后一次下发的完整大小，NVMe/virtio 取完成字节数|计数|容器|
+|blk_iotrace_interval_start_timestamp_seconds|本区间开始时间|Unix 秒|宿主|
+|blk_iotrace_interval_end_timestamp_seconds|本区间结束时间|Unix 秒|宿主|
 
 17 个延时桶界（秒）为 `0.00005`、`0.0001`、`0.00025`、`0.0005`、
 `0.001`、`0.002`、`0.004`、`0.008`、`0.016`、`0.032`、`0.064`、`0.128`、
@@ -515,10 +515,10 @@ IO 总览展示各采集区间的延时分布和 IO 数量，点击柱状图可�
 
 |旧指标|替换方式|
 |---|---|
-|`iolatency_blkdisk_d2c`|`iolatency_d2c_seconds_bucket`|
-|`iolatency_container_blkdisk_d2c`|`iolatency_container_d2c_seconds_bucket`|
+|`iolatency_blkdisk_d2c`|`blk_iotrace_d2c_seconds_bucket`|
+|`iolatency_container_blkdisk_d2c`|`blk_iotrace_container_d2c_seconds_bucket`|
 |`iolatency_blkdisk_q2c`、`iolatency_container_blkdisk_q2c`|无直接等价指标，按所需阶段选择 Q2G、Q2D 或 D2C|
-|`iolatency_blkdisk_freeze`|`io_health_blkdisk_freeze`，仍为 Counter|
+|`iolatency_blkdisk_freeze`|`blk_device_health_freeze_total`，仍为 Counter|
 
 `disk` 从 `8:0` 等设备号改为 `sda` 等磁盘名，新增 `operation` 区分读写。
 旧 `zone` 编号改为以秒为单位的 `le` 累计上界；桶界见上文，不能按编号直接替换。
@@ -531,20 +531,20 @@ D2C 从最后一次下发计时。旧告警需按新的阶段和桶界调整，�
 单个采集区间直接查询；例如，统计最近五分钟某盘读 IO 的 D2C 样本总数：
 
 ```promql
-sum_over_time(huatuo_bamai_iolatency_d2c_seconds_bucket{disk="sda",operation="read",le="+Inf"}[5m])
+sum_over_time(huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="read",le="+Inf"}[5m])
 ```
 
 ### 硬件
 
 ```bash
-# HELP huatuo_bamai_io_health_blkdisk_freeze the disk freeze event count
-# TYPE huatuo_bamai_io_health_blkdisk_freeze counter
-huatuo_bamai_io_health_blkdisk_freeze{disk="sda",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_blk_device_health_freeze_total the disk freeze event count
+# TYPE huatuo_bamai_blk_device_health_freeze_total counter
+huatuo_bamai_blk_device_health_freeze_total{disk="sda",host="hostname",region="dev"} 0
 ```
 
 |指标|意义|单位|对象|标签|
 |---|---|---|---|---|
-|io_health_blkdisk_freeze|宿主机磁盘 freeze 次数，换盘清零|计数|宿主|host, region, disk|
+|blk_device_health_freeze_total|宿主机磁盘 freeze 次数，换盘清零|计数|宿主|host, region, disk|
 
 可在宿主机仪表盘的 `Overview → Selected Metric` 中选择此指标。
 
@@ -556,9 +556,9 @@ huatuo_bamai_io_health_blkdisk_freeze{disk="sda",host="hostname",region="dev"} 0
 |指标|含义|
 |---|---|
 |`blk_throtl_delayed_io_count`|采集区间内完成等待的 IO 数量|
-|`blk_throtl_average_wait_ms`|这些 IO 的平均排队时间，单位毫秒|
+|`blk_throtl_delayed_average_wait_ms`|这些 IO 的平均排队时间，单位毫秒|
 |`blk_throtl_container_delayed_io_count`|容器采集区间内完成等待的 IO 数量|
-|`blk_throtl_container_average_wait_ms`|容器 IO 的平均排队时间，单位毫秒|
+|`blk_throtl_container_delayed_average_wait_ms`|容器 IO 的平均排队时间，单位毫秒|
 
 指标按 `disk` 和 `operation`（`read` 或 `write`）区分，`scope=host`
 表示宿主机总量，`scope=other` 表示其中无法归属容器的部分。
@@ -573,17 +573,17 @@ cgroup 实际释放后，尚未采集的尾部等待增量归入 Host 和 Other�
 两次成功采集之间，同一统计项在单 CPU 上完成至少 67,108,864 次等待，或累计
 等待约 274.9 万秒时，计数回绕可能导致少计。
 
-### IOCOST 等待统计
+### blk_iocost 等待统计
 
-`iocost` 统计预算不足造成的等待。等待时间从 IO 进入等待队列算到最终被唤醒，
+`blk_iocost` 统计预算不足造成的等待。等待时间从 IO 进入等待队列算到最终被唤醒，
 计入等待结束所在的采集区间。
 
 |指标|含义|
 |---|---|
-|`iocost_waitq_io_count`|本轮完成等待的读写 IO 数量|
-|`iocost_average_wait_ms`|这些 IO 的平均等待时间，单位毫秒|
-|`iocost_container_waitq_io_count`|容器本轮完成等待的读写 IO 数量|
-|`iocost_container_average_wait_ms`|容器 IO 的平均等待时间，单位毫秒|
+|`blk_iocost_delayed_io_count`|本轮完成等待的读写 IO 数量|
+|`blk_iocost_delayed_average_wait_ms`|这些 IO 的平均等待时间，单位毫秒|
+|`blk_iocost_container_delayed_io_count`|容器本轮完成等待的读写 IO 数量|
+|`blk_iocost_container_delayed_average_wait_ms`|容器 IO 的平均等待时间，单位毫秒|
 
 这些区间 Gauge 按 `disk`（如 `sda`、`nvme0n1`）和 `operation`
 （`read`、`write`）分组。`scope=host` 表示设备总量，包含所有
@@ -604,7 +604,7 @@ kprobe 能力。
 
 ### 设备健康
 
-`io_health` 记录以下事件：
+`blk_device_health` 记录以下事件：
 
 |事件类型|触发条件|
 |---|---|
@@ -628,7 +628,7 @@ SCSI 使用 `smartctl`，结果随事件保存。无法唯一确定目标时仅�
 NVMe controller。
 同设备取证执行中及结束后的 60 秒冷却期内不重复取证，原始事件仍独立保存。
 
-`huatuo_bamai_io_health_` Counter 记录进程启动后观察到的事件：
+`huatuo_bamai_blk_device_health_` Counter 记录进程启动后观察到的事件：
 
 |指标后缀|标签|含义|
 |---|---|---|
@@ -663,25 +663,25 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 
 ### 磁盘统计
 
-`diskio` 读取 `/proc/diskstats` 和 `/proc/stat`，提供设备级请求数、吞吐量、累计耗时和宿主机 CPU iowait。
+`blk_iostat` 读取 `/proc/diskstats` 和 `/proc/stat`，提供设备级请求数、吞吐量、累计耗时和宿主机 CPU iowait。
 
-磁盘名标签由 `device` 改为 `disk`，自定义查询的筛选和图例需同步更新；
-指标名称和类型不变。
+原 `diskio_` 指标前缀改为 `blk_iostat_`，磁盘名标签由 `device` 改为 `disk`，
+自定义查询和图例需同步更新；指标类型和累计统计口径不变。
 
-仓库配置默认通过 `BlackList` 禁用 `diskio`。从黑名单移除并重启 `huatuo-bamai` 服务后启用。
+仓库配置默认通过 `BlackList` 禁用 `blk_iostat`。从黑名单移除并重启 `huatuo-bamai` 服务后启用。
 
 请求数、字节数和 I/O 耗时为累计 Counter，可用 `rate()` 计算 IOPS、吞吐量和耗时增长速率。平均请求耗时为耗时增长速率除以请求速率，计算时需排除请求速率为零的区间。`io_in_progress` 和 `disk_iowait_percent` 为 Gauge。
 
 | 指标 | 说明 | 单位 | 范围 | 附加标签 |
 | --- | --- | --- | --- | --- |
-| `diskio_read_requests_total` | 累积读请求完成数，使用 `rate()` 计算读 IOPS | 计数 | 宿主机 | disk |
-| `diskio_write_requests_total` | 累积写请求完成数，使用 `rate()` 计算写 IOPS | 计数 | 宿主机 | disk |
-| `diskio_read_bytes_total` | 累积读取字节数，使用 `rate()` 计算读吞吐量 | 字节 | 宿主机 | disk |
-| `diskio_written_bytes_total` | 累积写入字节数，使用 `rate()` 计算写吞吐量 | 字节 | 宿主机 | disk |
-| `diskio_read_time_seconds_total` | 已完成读请求的累积耗时 | 秒 | 宿主机 | disk |
-| `diskio_write_time_seconds_total` | 已完成写请求的累积耗时 | 秒 | 宿主机 | disk |
-| `diskio_io_in_progress` | 当前正在进行的 I/O 请求数，即队列深度 | 计数 | 宿主机 | disk |
-| `diskio_disk_iowait_percent` | 采集区间内 CPU 等待 I/O 完成的时间占比 | % | 宿主机 | — |
+| `blk_iostat_read_requests_total` | 累积读请求完成数，使用 `rate()` 计算读 IOPS | 计数 | 宿主机 | disk |
+| `blk_iostat_write_requests_total` | 累积写请求完成数，使用 `rate()` 计算写 IOPS | 计数 | 宿主机 | disk |
+| `blk_iostat_read_bytes_total` | 累积读取字节数，使用 `rate()` 计算读吞吐量 | 字节 | 宿主机 | disk |
+| `blk_iostat_written_bytes_total` | 累积写入字节数，使用 `rate()` 计算写吞吐量 | 字节 | 宿主机 | disk |
+| `blk_iostat_read_time_seconds_total` | 已完成读请求的累积耗时 | 秒 | 宿主机 | disk |
+| `blk_iostat_write_time_seconds_total` | 已完成写请求的累积耗时 | 秒 | 宿主机 | disk |
+| `blk_iostat_io_in_progress` | 当前正在进行的 I/O 请求数，即队列深度 | 计数 | 宿主机 | disk |
+| `blk_iostat_disk_iowait_percent` | 采集区间内 CPU 等待 I/O 完成的时间占比 | % | 宿主机 | — |
 
 ### XFS
 

@@ -309,7 +309,7 @@ func requireBlkThrotlHostAndOtherMetrics(
 		require.Contains(t, strings.ToLower(count.Help()), "blk-throttle")
 
 		average := blkThrotlMetricByNameAndScope(t, metrics,
-			"average_wait_ms", scope)
+			"delayed_average_wait_ms", scope)
 		require.Equal(t, metric.MetricTypeGauge, average.Type())
 		require.Equal(t, wantAverageMS, average.Value)
 		require.Equal(t, wantLabels, blkThrotlCustomLabels(average.Labels()))
@@ -715,10 +715,10 @@ func requireBlkThrotlHostAndOtherInterval(
 ) {
 	t.Helper()
 	require.Equal(t, map[string]float64{
-		"host/delayed_io_count":  count,
-		"host/average_wait_ms":   averageMS,
-		"other/delayed_io_count": count,
-		"other/average_wait_ms":  averageMS,
+		"host/delayed_io_count":         count,
+		"host/delayed_average_wait_ms":  averageMS,
+		"other/delayed_io_count":        count,
+		"other/delayed_average_wait_ms": averageMS,
 	}, blkThrotlAttributionMetricValues(t, metrics))
 }
 
@@ -730,10 +730,10 @@ func requireBlkThrotlHostAndContainerInterval(
 ) {
 	t.Helper()
 	require.Equal(t, map[string]float64{
-		"host/delayed_io_count":                count,
-		"host/average_wait_ms":                 averageMS,
-		"container/container_delayed_io_count": count,
-		"container/container_average_wait_ms":  averageMS,
+		"host/delayed_io_count":                       count,
+		"host/delayed_average_wait_ms":                averageMS,
+		"container/container_delayed_io_count":        count,
+		"container/container_delayed_average_wait_ms": averageMS,
 	}, blkThrotlAttributionMetricValues(t, metrics))
 }
 

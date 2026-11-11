@@ -114,7 +114,7 @@ assert_io_wait_metrics() {
 		def assert_value($condition; $message):
 			if $condition then . else error($message) end;
 		("huatuo_bamai_" + $collector + "_") as $prefix |
-		(if $collector == "blk_throtl" then "delayed_io_count" else "waitq_io_count" end) as $count |
+		"delayed_io_count" as $count |
 		["host", "region", "disk", "operation"] as $common |
 		["container_host", "container_hostnamespace", "container_name", "container_type", "container_level"] as $container |
 		map(. as $document |
@@ -124,8 +124,8 @@ assert_io_wait_metrics() {
 					field: (if .suffix == $count or .suffix == ("container_" + $count)
 						then "count" else "average" end)} |
 				assert_value(
-					(.suffix == $count or .suffix == "average_wait_ms" or
-					 .suffix == ("container_" + $count) or .suffix == "container_average_wait_ms") and
+					(.suffix == $count or .suffix == "delayed_average_wait_ms" or
+					 .suffix == ("container_" + $count) or .suffix == "container_delayed_average_wait_ms") and
 					.type == "gauge" and .type_count == 1; "unexpected wait metric or type: " + .name) |
 				assert_value(
 					(.labels | keys) == (($common + (if .is_container then $container else ["scope"] end)) | sort) and

@@ -120,7 +120,7 @@ integration_huatuo_bamai_start \
 	write_config_bamai_cpusys_profiler \
 	--region dev \
 	--procfs-prefix "${CPU_PROFILER_FIXTURE}" \
-	--disable-tracing diskio \
+	--disable-tracing blk_iostat \
 	--disable-tracing irqtracing \
 	--disable-tracing tcp_retransmit \
 	--disable-kubelet \

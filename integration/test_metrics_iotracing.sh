@@ -62,7 +62,7 @@ run_fixture_metrics() {
 
 	write_config_bamai_iotracing_metrics() {
 		# The public statistics fixture needs no tracing probes or capture process.
-		write_config_bamai_iotracing_autotracing | sed -e 's/^BlackList = \[/BlackList = ["blk_throtl", "io_health", "irqtracing", "tcp_retransmit", /' \
+		write_config_bamai_iotracing_autotracing | sed -e 's/^BlackList = \[/BlackList = ["blk_throtl", "blk_device_health", "irqtracing", "tcp_retransmit", /' \
 			-e 's/UtilThreshold = 1$/UtilThreshold = 1000000/'
 	}
 

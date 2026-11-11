@@ -48,7 +48,7 @@ HUATUO 采集宿主机和容器的 CPU、内存、网络、I/O、系统事件及
 
 ## I/O
 
-`iotracing` 提供磁盘吞吐量、IOPS、平均请求耗时、利用率和队列长度；`iolatency` 统计 Q2G、Q2D、D2C 延时及 IO 大小分布，`blk_throtl` 和 `iocost` 统计已完成的排队等待。`io_health` 记录 Block、NVMe、SCSI 和 MD 健康事件，并采集只读设备证据。XFS 指标补充文件系统日志及分配状态。
+`iotracing` 提供磁盘吞吐量、IOPS、平均请求耗时、利用率和队列长度；`blk_iotrace` 统计 Q2G、Q2D、D2C 延时及 IO 大小分布，`blk_throtl` 和 `blk_iocost` 统计已完成的排队等待。`blk_device_health` 记录 Block、NVMe、SCSI 和 MD 健康事件，并采集只读设备证据。XFS 指标补充文件系统日志及分配状态。
 
 延时、大小和等待指标对应各个采集区间。设备变化会重启相关采集，过渡期间的数据可能缺失。完整名称、单位、标签、启动条件和统计口径见[I/O 指标](/docs/reference/metrics_zh.md#io)。
 

@@ -11523,12 +11523,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:io_health AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "tracer_name:(blk_device_health OR io_health) AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_timestamp"
         }
       ],
-      "title": "io_health",
+      "title": "blk_device_health",
       "transparent": true,
       "type": "stat"
     },
@@ -11547,7 +11547,7 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
-          "description": "按 Block、NVMe、SCSI 和 MD 展示历史 IO health 事件；无数据仅表示筛选范围内没有已保存事件。",
+          "description": "按 Block、NVMe、SCSI 和 MD 展示历史 blk_device_health 事件；无数据仅表示筛选范围内没有已保存事件。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -11642,7 +11642,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:block_error AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:block_error AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             },
@@ -11668,7 +11668,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:(nvme_timeout OR nvme_reset OR nvme_state_change) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(nvme_timeout OR nvme_reset OR nvme_state_change) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "B",
               "timeField": "uploaded_timestamp"
             },
@@ -11694,7 +11694,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "C",
               "timeField": "uploaded_timestamp"
             },
@@ -11720,12 +11720,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:(md_sync_action OR md_degraded OR md_member_state) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(md_sync_action OR md_degraded OR md_member_state) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "D",
               "timeField": "uploaded_timestamp"
             }
           ],
-          "title": "IO health 事件趋势",
+          "title": "blk_device_health 事件趋势",
           "type": "timeseries"
         },
         {
@@ -11802,7 +11802,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:block_error AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:block_error AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
@@ -11928,7 +11928,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:(nvme_timeout OR nvme_reset OR nvme_state_change) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(nvme_timeout OR nvme_reset OR nvme_state_change) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
@@ -12052,7 +12052,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
@@ -12174,7 +12174,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:io_health AND tracer_data.type:(md_sync_action OR md_degraded OR md_member_state) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(md_sync_action OR md_degraded OR md_member_state) AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }
@@ -12229,7 +12229,7 @@
           "type": "table"
         }
       ],
-      "title": "io_health",
+      "title": "blk_device_health",
       "type": "row"
     }
   ],

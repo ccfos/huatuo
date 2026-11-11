@@ -45,9 +45,9 @@ container_wait_disk_lock=""
 passed=0
 container_wait_ready_dir=""
 case ${TEST_IO_WAIT_COLLECTOR:-all} in
-all) collectors=(iocost blk_throtl) ;;
-blk_throtl | iocost) collectors=("${TEST_IO_WAIT_COLLECTOR}") ;;
-*) fatal "TEST_IO_WAIT_COLLECTOR must be all, blk_throtl or iocost" ;;
+all) collectors=(blk_iocost blk_throtl) ;;
+blk_throtl | blk_iocost) collectors=("${TEST_IO_WAIT_COLLECTOR}") ;;
+*) fatal "TEST_IO_WAIT_COLLECTOR must be all, blk_throtl or blk_iocost" ;;
 esac
 
 container_wait_control() {
@@ -82,7 +82,7 @@ container_wait_control() {
 				fi
 			fi
 		done
-	elif [[ ${container_wait_collector} == iocost ]]; then
+	elif [[ ${container_wait_collector} == blk_iocost ]]; then
 		assert_io_test_disk_identity "${container_wait_disk}" || return 1
 		io_test_save_cost_settings "${container_wait_cgroup_root}" "${container_wait_control_prefix}" "${container_wait_device_number}" || return 1
 		if [[ ${enabled} == 1 ]]; then
@@ -343,7 +343,7 @@ assert_container_wait_inputs() {
 for container_wait_collector in "${collectors[@]}"; do
 	io_container_set_labels distinct
 	container_wait_refresh_groups
-	if [[ ${container_wait_collector} == iocost ]]; then
+	if [[ ${container_wait_collector} == blk_iocost ]]; then
 		if ((io_test_disk_exclusive == 0)) || [[ ! -w ${container_wait_cgroup_root}/${container_wait_control_prefix}.cost.model ||
 			! -w ${container_wait_cgroup_root}/${container_wait_control_prefix}.cost.qos ||
 			(-r /sys/kernel/realtime && $(< /sys/kernel/realtime) == 1) ]]; then

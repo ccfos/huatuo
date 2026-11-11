@@ -203,7 +203,7 @@ BPF/BTF support. Build as an ordinary user, then run the harness as root:
 ```bash
 make build test-build
 sudo bash integration/run.sh test_metrics_io_wait.sh
-sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_iolatency.sh
+sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_blk_iotrace.sh
 ```
 
 `TEST_IO_DISK` defaults to `/dev/disk/by-id/virtio-huatuo-ci-io`. It must be a
@@ -216,7 +216,7 @@ use this disk. Cases requiring SCSI driver controls create separate
 existing kubelet credentials.
 
 `make unit` checks Go configuration, compatibility selection, decoding and metric conversion.
-Host and container metric cases verify real IOLatency output; they do not
+Host and container metric cases verify real blk_iotrace output; they do not
 independently verify complete tracepoint argument counts on each kernel or
 exercise every remap path.
 

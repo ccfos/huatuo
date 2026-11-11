@@ -46,9 +46,9 @@ run_wait_metrics() {
 	wait_collector=""
 	passed=0
 	case ${TEST_IO_WAIT_COLLECTOR:-all} in
-	all) collectors=(blk_throtl iocost) ;;
-	blk_throtl | iocost) collectors=("${TEST_IO_WAIT_COLLECTOR}") ;;
-	*) fatal "TEST_IO_WAIT_COLLECTOR must be all, blk_throtl or iocost" ;;
+	all) collectors=(blk_throtl blk_iocost) ;;
+	blk_throtl | blk_iocost) collectors=("${TEST_IO_WAIT_COLLECTOR}") ;;
+	*) fatal "TEST_IO_WAIT_COLLECTOR must be all, blk_throtl or blk_iocost" ;;
 	esac
 
 	wait_control() {
@@ -265,7 +265,7 @@ run_wait_metrics() {
 	}
 
 	run_wait_discard() {
-		local directory="${WAIT_WORK}/iocost-discard" wait_operation
+		local directory="${WAIT_WORK}/blk_iocost-discard" wait_operation
 		local -a before after
 		if ! command -v blkdiscard > /dev/null \
 			|| [[ ! -r /sys/block/${wait_disk}/queue/discard_max_bytes ]] \
@@ -288,7 +288,7 @@ run_wait_metrics() {
 			|| fatal "successful discard did not increase the owned disk discard count"
 		huatuo_bamai_metrics > "${directory}/after.metrics"
 		for wait_operation in read write; do
-			assert_io_wait_metrics --collector iocost --disk "${wait_disk}" --operation "${wait_operation}" \
+			assert_io_wait_metrics --collector blk_iocost --disk "${wait_disk}" --operation "${wait_operation}" \
 				--container-groups 0 --idle "${directory}/after.metrics" \
 				> "${directory}/${wait_operation}-summary.json" \
 				|| fatal "discard produced ${wait_operation} waits or unhealthy IOCOST output"
@@ -510,7 +510,7 @@ run_wait_metrics() {
 			log_info "SKIP blk_throtl: throttle controls are unavailable in the owned cgroup"
 			continue
 		fi
-		if [[ ${wait_collector} == iocost ]]; then
+		if [[ ${wait_collector} == blk_iocost ]]; then
 			if ((io_test_disk_exclusive == 0)) || [[ ! -w ${wait_cgroup_root}/${wait_control_prefix}.cost.model ||
 				! -w ${wait_cgroup_root}/${wait_control_prefix}.cost.qos ||
 				(-r /sys/kernel/realtime && $(< /sys/kernel/realtime) == 1) ]]; then
@@ -537,7 +537,7 @@ run_wait_metrics() {
 			((SECONDS < deadline)) || fatal "${wait_collector} did not produce waits from completed IO within 30s"
 		done
 		wait_control 0 read
-		if [[ ${wait_collector} == iocost ]]; then
+		if [[ ${wait_collector} == blk_iocost ]]; then
 			run_wait_discard
 		else
 			run_wait_hierarchy
