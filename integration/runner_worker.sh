@@ -17,7 +17,7 @@
 # Called by the runner inside a per-case mount namespace.
 set -euo pipefail
 
-suite=$1 namespaces=$2 test_script=$3
+suite=$1 namespaces=$2 test_script=$3 bamai_startup=${4:-runner}
 source "$ROOT_DIR/integration/lib.sh"
 test_running=false test_exit_code=null e2e_service_ready=false worker_signal_code=0
 worker_finalize() {
@@ -25,7 +25,10 @@ worker_finalize() {
 	trap - EXIT
 	trap '' INT TERM
 	RUNNER_CLEANUP_REASON=""
-	if [[ $e2e_service_ready == true ]]; then
+	# A case-managed daemon still gets strict log checks if startup was attempted.
+	# An early skip has no daemon log and only needs resource cleanup.
+	if [[ $e2e_service_ready == true || ($suite == e2e && $bamai_startup == case &&
+		(-e $HUATUO_BAMAI_TEST_TMPDIR/huatuo.log || -e $HUATUO_BAMAI_TEST_TMPDIR/huatuo-bamai.pid)) ]]; then
 		e2e_test_teardown || cleanup_status=$?
 	else
 		# Preparation can exit before a service log exists; still stop partial starts.
@@ -76,7 +79,7 @@ fi
 prepare_execution_ports
 unset HUATUO_BAMAI_DEFAULT_ADDR
 huatuo_bamai_initialize_address
-if [[ $suite == e2e ]]; then
+if [[ $suite == e2e && $bamai_startup == runner ]]; then
 	e2e_huatuo_bamai_start
 	e2e_service_ready=true
 fi

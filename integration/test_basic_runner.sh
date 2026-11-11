@@ -132,7 +132,7 @@ runner_prepare_fixture() {
 	# Fixture cases have their own declarations; production entries name absent files.
 	printf '\nrunner_test_namespaces=()\n' >> "${RUNNER_FIXTURE}/integration/lib_runner.sh"
 	cat >> "${RUNNER_FIXTURE}/integration/lib_runner.sh" << 'METADATA'
-for table in runner_test_groups runner_shared_storage_tests; do
+for table in runner_test_groups runner_shared_storage_tests runner_test_bamai_startup; do
  declare -n fixture_entries=$table
  for key in "${!fixture_entries[@]}"; do
   [[ -f $ROOT_DIR/$key ]] || unset 'fixture_entries[$key]'
@@ -261,6 +261,43 @@ EOF
 		rm "${RUNNER_FIXTURE}/integration/test_limit_${index}.sh"
 	done
 
+}
+
+assert_runner_bamai_startup() {
+	cat > "${RUNNER_FIXTURE}/e2e/test_managed.sh" << 'EOF'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+[[ ! -e $HUATUO_BAMAI_TEST_TMPDIR/huatuo.log && ! -e $HUATUO_BAMAI_TEST_TMPDIR/bamai.conf ]] \
+ || fatal "runner started an unsolicited baseline"
+[[ -n $HUATUO_BAMAI_ADDR && -n $HUATUO_BAMAI_METRICS_API ]] || fatal "runner did not initialize service addresses"
+case $MANAGED_MODE in
+skip) skip "fixture dependency missing before daemon startup";;
+fail) fatal "fixture failure before daemon startup";;
+esac
+huatuo_bamai_start
+if [[ $MANAGED_MODE == missing_log ]]; then
+ rm "$HUATUO_BAMAI_TEST_TMPDIR/huatuo.log"
+ printf '%s\n' "$BASHPID" > "$HUATUO_BAMAI_TEST_TMPDIR/huatuo-bamai.pid"
+fi
+huatuo_bamai_stop
+EOF
+	printf '\nrunner_test_bamai_startup["e2e/test_managed.sh"]=case\n' >> "${RUNNER_FIXTURE}/integration/lib_runner.sh"
+	# An arbitrary new case exercises the declaration without production names.
+	MANAGED_MODE=pass assert_runner_result e2e managed_pass 0 '{"total":1,"passed":1,"skipped":0,"failed":0}' test_managed.sh 1
+	MANAGED_MODE=pass assert_runner_result e2e managed_repeat 0 '{"total":2,"passed":2,"skipped":0,"failed":0}' test_managed.sh 2
+	MANAGED_MODE=skip RUNNER_LOG_FAIL=1 assert_runner_result e2e managed_skip 0 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_managed.sh
+	MANAGED_MODE=fail assert_runner_result e2e managed_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_managed.sh
+	MANAGED_MODE=pass RUNNER_START_FAIL=1 assert_runner_result e2e managed_startup_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_managed.sh
+	MANAGED_MODE=pass RUNNER_STOP_FAIL=1 assert_runner_result e2e managed_cleanup_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_managed.sh
+	MANAGED_MODE=pass RUNNER_LOG_FAIL=1 assert_runner_result e2e managed_log_failure 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_managed.sh
+	MANAGED_MODE=missing_log assert_runner_result e2e managed_missing_log 1 '{"total":1,"passed":0,"skipped":0,"failed":1}' test_managed.sh
+	local report
+	report=$(assert_runner_summary "${HUATUO_BAMAI_TEST_TMPDIR}/e2e-managed_log_failure.log" | jq -r .results_path)
+	jq -e '.test_executions[0] | .exit_code == 0 and (.reason | contains("huatuo-bamai log verification failed"))' "${report}" > /dev/null \
+		|| fatal "case-managed daemon escaped strict log verification"
+	# Later checks clone this fixture without its E2E case files.
+	printf '\nunset "runner_test_bamai_startup[e2e/test_managed.sh]"\n' >> "${RUNNER_FIXTURE}/integration/lib_runner.sh"
+	rm "${RUNNER_FIXTURE}/e2e/test_managed.sh"
 }
 
 assert_runner_prerequisites() {
@@ -833,7 +870,7 @@ EOF
 	done
 	# Exercise all metadata registries, not just namespace declarations.
 	local table
-	for table in runner_test_groups runner_shared_storage_tests; do
+	for table in runner_test_groups runner_shared_storage_tests runner_test_bamai_startup; do
 		printf '\n%s["integration/test_metrics.sh"]=invalid\n' "$table" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
 		assert_runner_result integration "invalid-$table" 1 '{"total":1,"passed":0,"skipped":1,"failed":0}' test_metrics.sh
 		printf '\nunset "%s[integration/test_metrics.sh]"\n' "$table" >> "$RUNNER_FIXTURE/integration/lib_runner.sh"
@@ -975,6 +1012,7 @@ EOF
 
 runner_prepare_fixture
 assert_runner_suites
+assert_runner_bamai_startup
 assert_runner_reports
 assert_runner_launch_signal
 assert_runner_late_signal

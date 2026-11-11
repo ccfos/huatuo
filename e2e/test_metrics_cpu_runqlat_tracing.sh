@@ -92,12 +92,6 @@ runqlat_prepare() {
 	readonly RUNQLAT_NODE RUNQLAT_CPU RUNQLAT_CPU_ROOT RUNQLAT_CPUSET_ROOT RUNQLAT_V2
 	readonly RUNQLAT_PORT RUNQLAT_KUBELET_PORT
 	log_info "runqlat: cgroup_v2=${RUNQLAT_V2} workload_cpu=${RUNQLAT_CPU}"
-
-	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
-		huatuo_bamai_stop
-		assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
-		cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${RUNQLAT_DIR}/baseline.log"
-	fi
 }
 
 runqlat_restart() {

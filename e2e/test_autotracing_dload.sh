@@ -141,12 +141,6 @@ DLOAD_KUBELET_PORT=${KUBELET_PODS_API##*:}
 DLOAD_KUBELET_PORT=${DLOAD_KUBELET_PORT%%/*}
 readonly DLOAD_MODE DLOAD_FIXTURE_ISSUES DLOAD_PORT DLOAD_KUBELET_PORT
 
-if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
-	huatuo_bamai_stop
-	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
-	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${DLOAD_DIR}/baseline.log"
-fi
-
 dload_status() {
 	local enabled=1
 	[[ ${dload_disabled} != true ]] || enabled=0

@@ -75,12 +75,6 @@ else
 	log_info "softirq: NET_TX workload skipped; tc/netem is unavailable (NET_TX metrics are still validated)"
 fi
 
-if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
-	huatuo_bamai_stop
-	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
-	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${SOFTIRQ_DIR}/baseline.log"
-fi
-
 softirq_restart() {
 	local signal=${1:-TERM}
 	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then

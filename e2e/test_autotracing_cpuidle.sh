@@ -91,12 +91,6 @@ else
 fi
 readonly CPUIDLE_PORT CPUIDLE_KUBELET_PORT CPUIDLE_NODE CPUIDLE_CPU_ROOT CPUIDLE_USAGE_ROOT CPUIDLE_CPUSET_ROOT
 
-if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
-	huatuo_bamai_stop
-	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
-	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPUIDLE_DIR}/baseline.log"
-fi
-
 cpuidle_status() {
 	local enabled=1
 	[[ ${cpuidle_disabled} != true ]] || enabled=0

@@ -57,6 +57,8 @@ sudo env INTEGRATION_JOBS=2 make integration
 
 Some cases require exclusive execution, so actual concurrency may be lower. Run only one suite runner per host. E2E always runs serially and does not accept `-j` greater than 1.
 
+E2E cases use a runner-started default bamai unless declared otherwise in `integration/lib_runner.sh`. A case that needs its own blacklist or configuration can add `["e2e/test_example.sh"]=case` to `runner_test_bamai_startup` (`runner` is the default). The runner still initializes service addresses, but the case launches bamai with its own configuration and verifies each daemon's logs before replacement, including daemons in subdirectories. Cleanup retains strict checks for logs/PID files in the case workspace; skipping before startup does not require a daemon log. Integration tests continue to manage their own services.
+
 ## Environment Requirements
 
 Run `make build test-build` before invoking scripts; missing build artifacts cause failures. Reports require `jq`. The test environment also needs `unshare`, `mount`, `flock`, `ss`, and `stat`. Individual cases check their required commands, kernel capabilities, services, and input files.

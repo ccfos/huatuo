@@ -496,8 +496,6 @@ lifecycle_case() (
 )
 
 go build -mod=vendor -o "${GO_SNAPSHOT_BIN}" "${ROOT_DIR}/integration/testdata/test_memory_threshold_snapshot_golang.go"
-huatuo_bamai_stop
-assert_huatuo_bamai_log_clean || fatal "baseline daemon reported an error"
 export MEMSNAP_ACCEPTANCE_ARTIFACTS="${HUATUO_BAMAI_TEST_TMPDIR}/helpers"
 mkdir -p "${MEMSNAP_ACCEPTANCE_ARTIFACTS}"
 snapshot_build_read_barrier
