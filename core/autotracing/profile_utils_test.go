@@ -201,7 +201,6 @@ exit 2`,
 					t.Fatalf("profiler result = %+v", result)
 				}
 				wantArgs = []string{
-					"--huatuo-api-address", "127.0.0.1:29704",
 					"--type", "cpu", "--language", "c", "--cpu-mode", "oncpu",
 					"--duration", "3", "--aggr-interval", "3",
 					"--output-format", "remote-store", "--output-path", toolstream.DefaultSockPath,
