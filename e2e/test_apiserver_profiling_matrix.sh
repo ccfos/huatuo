@@ -50,10 +50,10 @@ done
 GO_WORKLOAD="$(cd "${ROOT_DIR}/_output/tests" && pwd)/apiserver-go-workload"
 [[ -x $GO_WORKLOAD ]] || fatal 'missing Go workload; run make test-build'
 for tool in "${PROFILER_TOOL_DIR}/bin/asprof" "${PROFILER_TOOL_DIR}/py-spy"; do
-	[[ -f $tool && -x $tool ]] || fatal "profiling tool missing or not executable: $tool; run make build"
+	[[ -f $tool && -x $tool ]] || fatal "profiling tool missing or not executable: $tool; run make install-tools"
 done
 [[ -f "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" && -r "${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so" ]] \
-	|| fatal "profiling library missing or not readable: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so; run make build"
+	|| fatal "profiling library missing or not readable: ${PROFILER_TOOL_DIR}/lib/libasyncProfiler.so; run make install-tools"
 POD_NAMESPACE="huatuo-apiserver-$(date +%s)-$$"
 kubectl --request-timeout=30s create namespace "$POD_NAMESPACE"
 kubectl --request-timeout=30s -n "$POD_NAMESPACE" create configmap workloads \
