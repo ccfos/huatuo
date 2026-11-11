@@ -39,7 +39,6 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 		"--output-format", "remote-store",
 		"--output-path", config.ToolstreamSocketPath,
 		"--task-id", request.RequestID,
-		"--huatuo-api-address", config.NodeAPIAddress,
 		"--tool-path", config.ToolDir,
 	}
 	if request.Scope == observation.ScopeContainer {

@@ -70,7 +70,6 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 		"--output-format", "remote-store",
 		"--output-path", "/var/run/huatuo-toolstream.sock",
 		"--task-id", "job-1",
-		"--huatuo-api-address", "127.0.0.1:19704",
 		"--tool-path", "/opt/huatuo/tools",
 		"--cpu-mode", "offcpu",
 		"--binary-match-path", "/usr/bin/service worker",
