@@ -57,6 +57,8 @@ sudo env INTEGRATION_JOBS=2 make integration
 
 部分用例需要独占运行，实际并发数可能低于设置值。每台主机同时只运行一个测试套件。E2E 始终串行运行，不支持 `-j` 大于 1。
 
+E2E 默认由 runner 启动使用默认配置的 bamai。需要自行管理黑名单或配置的用例，可在 `integration/lib_runner.sh` 的 `runner_test_bamai_startup` 中添加 `["e2e/test_example.sh"]=case`（默认值为 `runner`）。runner 仍初始化服务地址，用例负责使用自己的配置启动 bamai，并在每次替换前检查该 daemon 的日志，包括子目录中的 daemon。清理时仍严格检查用例工作目录中的日志/PID 文件；启动前提前跳过无需提供 daemon 日志。集成测试继续自行管理服务。
+
 ## 环境要求
 
 运行前需完成 `make build test-build`；缺失构建产物会导致失败。报告依赖 `jq`，测试环境还需提供 `unshare`、`mount`、`flock`、`ss`、`stat`。具体用例会检查其所需的外部命令、内核能力、服务和输入文件。

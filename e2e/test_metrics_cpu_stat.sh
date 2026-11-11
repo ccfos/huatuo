@@ -105,12 +105,6 @@ readonly CPU_STAT_NODE CPU_STAT_CPU CPU_STAT_CPUS CPU_STAT_V2 CPU_STAT_WEIGHT_FI
 readonly CPU_STAT_CPU_ROOT CPU_STAT_USAGE_ROOT CPU_STAT_CPUSET_ROOT CPU_STAT_PORT CPU_STAT_KUBELET_PORT
 log_info "cpu_stat: cgroup_v2=${CPU_STAT_V2} CPU=${CPU_STAT_CPU}"
 
-if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
-	huatuo_bamai_stop
-	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
-	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPU_STAT_DIR}/baseline.log"
-fi
-
 cpu_stat_restart_daemon() {
 	local signal=${1:-TERM}
 	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then

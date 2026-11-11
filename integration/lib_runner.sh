@@ -85,6 +85,20 @@ declare -A runner_test_namespaces=(
 	["integration/test_tcpshark_output_cancellation_timeout.sh"]="mount net"
 )
 
+# E2E defaults to a runner-owned baseline. Cases needing their own configuration
+# opt out before any daemon starts, including prerequisite/skip paths.
+declare -A runner_test_bamai_startup=(
+	["e2e/test_autotracing_cpuidle.sh"]=case
+	["e2e/test_autotracing_dload.sh"]=case
+	["e2e/test_autotracing_memburst.sh"]=case
+	["e2e/test_autotracing_memory_threshold_snapshot_lifecycle.sh"]=case
+	["e2e/test_autotracing_memory_threshold_snapshot_runtimes.sh"]=case
+	["e2e/test_metrics_cpu_runqlat_tracing.sh"]=case
+	["e2e/test_metrics_cpu_stat.sh"]=case
+	["e2e/test_metrics_cpu_util.sh"]=case
+	["e2e/test_metrics_system_softirq.sh"]=case
+)
+
 declare -A runner_shared_storage_tests=(
 	["integration/test_apiserver_continuous_profiling_api.sh"]=1
 	["integration/test_apiserver_continuous_profiling_concurrent_jobs.sh"]=1
@@ -97,13 +111,14 @@ declare -A runner_shared_storage_tests=(
 
 runner_validate_test_metadata() {
 	local table key value
-	for table in runner_test_groups runner_test_namespaces runner_shared_storage_tests; do
+	for table in runner_test_groups runner_test_namespaces runner_test_bamai_startup runner_shared_storage_tests; do
 		local -n entries=$table
 		for key in "${!entries[@]}"; do
 			[[ $key == integration/test_*.sh || $key == e2e/test_*.sh ]] && [[ ${key#*/} != */* && -f $ROOT_DIR/$key ]] \
 				|| fatal "$table references an unknown test: $key"
 			value=${entries[$key]}
 			case $table:$value in
+			runner_test_bamai_startup:runner | runner_test_bamai_startup:case) ;;
 			runner_test_groups:exclusive | runner_test_groups:independent | runner_test_groups:network | runner_test_groups:profiler | runner_test_groups:profiler-java | runner_test_namespaces:mount | "runner_test_namespaces:mount net" | "runner_test_namespaces:mount pid" | runner_shared_storage_tests:1) ;;
 			*) fatal "unsupported $table value for $key: $value" ;;
 			esac
@@ -123,6 +138,7 @@ runner_start_execution() {
 	local script=$1 slot=$2 group=$3 workspace name port_dir port_base
 	name=${script##*/}
 	local namespaces=${runner_test_namespaces["${runner_suite}/${name}"]:-mount}
+	local bamai_startup=${runner_test_bamai_startup["${runner_suite}/${name}"]:-runner}
 	case $namespaces in
 	"mount net") command+=(--net) ;;
 	"mount pid")
@@ -137,7 +153,7 @@ runner_start_execution() {
 		command+=(--pid --fork --kill-child=TERM --mount-proc "${signal_reset_launcher[@]}")
 		;;
 	esac
-	command+=(bash "${ROOT_DIR}/integration/runner_worker.sh" "$runner_suite" "$namespaces" "$script")
+	command+=(bash "${ROOT_DIR}/integration/runner_worker.sh" "$runner_suite" "$namespaces" "$script" "$bamai_startup")
 	workspace=$(mktemp -d "${RUNNER_OUTPUT_DIR}/${name%.sh}.${runner_run_index}.XXXXXX")
 	runner_pids[slot]=""
 	runner_scripts[slot]=${name}

@@ -83,13 +83,6 @@ CPU_UTIL_KUBELET_PORT=${KUBELET_PODS_API##*:}
 CPU_UTIL_KUBELET_PORT=${CPU_UTIL_KUBELET_PORT%%/*}
 readonly CPU_UTIL_PORT CPU_UTIL_KUBELET_PORT
 
-# Only the baseline PID recorded by the runner is stopped, not an existing service.
-if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
-	huatuo_bamai_stop
-	assert_huatuo_bamai_log_clean || fatal "runner baseline daemon has unexpected errors"
-	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${CPU_UTIL_DIR}/baseline.log"
-fi
-
 cpu_util_restart_daemon() {
 	local signal=${1:-TERM}
 	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid ]]; then
