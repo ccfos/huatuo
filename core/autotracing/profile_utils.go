@@ -68,7 +68,6 @@ func runPerfCommand(parent context.Context, request profileRequest) (profileResu
 	defer cancel()
 
 	args := []string{
-		"--huatuo-api-address", internalconfig.CoreAPIAddress,
 		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"),
 		"--duration", strconv.FormatInt(int64(request.duration/time.Second), 10),
 	}

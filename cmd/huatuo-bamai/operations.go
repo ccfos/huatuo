@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"path/filepath"
 	"time"
 
@@ -75,16 +74,4 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	d.tracingService = tracingService
 	initialized = true
 	return manager.Shutdown, nil
-}
-
-func localAPIAddress(listenAddress string) (string, error) {
-	host, port, err := net.SplitHostPort(listenAddress)
-	if err != nil {
-		return "", fmt.Errorf("derive local Node API address from %q: %w", listenAddress, err)
-	}
-	switch host {
-	case "", "0.0.0.0", "::":
-		host = "127.0.0.1"
-	}
-	return net.JoinHostPort(host, port), nil
 }

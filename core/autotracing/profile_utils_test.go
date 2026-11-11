@@ -33,12 +33,9 @@ import (
 
 func TestRunProfileCommand(t *testing.T) {
 	originalCoreBinDir := internalconfig.CoreBinDir
-	originalAPIAddress := internalconfig.CoreAPIAddress
 	t.Cleanup(func() {
 		internalconfig.CoreBinDir = originalCoreBinDir
-		internalconfig.CoreAPIAddress = originalAPIAddress
 	})
-	internalconfig.CoreAPIAddress = "127.0.0.1:29704"
 
 	tests := []struct {
 		name             string
@@ -179,7 +176,6 @@ exit 2`,
 			var wantArgs []string
 			if tt.tool == cpuToolPerf {
 				wantArgs = []string{
-					"--huatuo-api-address", "127.0.0.1:29704",
 					"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"), "--duration", "3",
 				}
 				wantFrames := []flamegraph.FrameData{
