@@ -484,6 +484,7 @@ fail)
  printf 'binary\0marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/binary.log"
  printf 'config marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/bamai.conf"
  printf 'tool error marker\n' > "$HUATUO_BAMAI_TEST_TMPDIR/tool.err"
+ printf 'residual;stack 4096\n' > "$HUATUO_BAMAI_TEST_TMPDIR/perf_residual.folded"
  fatal $'fixture failed: "runtime"\n诊断路径: C:\\tmp';;
 namespace) run_test_step unshare --pid --fork --mount-proc bash -c 'source "$ROOT_DIR/integration/lib.sh"; skip "namespace dependency missing"';;
 step_skip) run_test_step bash -euc 'source "$ROOT_DIR/integration/lib.sh"; skip "step dependency missing"';;
@@ -533,13 +534,14 @@ EOF
 				(.failed_tests[0].logs | any(endswith("/execution.log"))) and
 				(.failed_tests[0].logs | any(endswith("/response.json"))) and
 				(.failed_tests[0].logs | any(endswith("/large.log"))) and
+				(.failed_tests[0].logs | any(endswith("/perf_residual.folded"))) and
 				(.failed_tests[0].logs | all(test("/(reason\\.[^/]*|test_case.sh|binary.log|test_run_results.json)$") | not))
 			' > /dev/null || fatal "failure summary lost its identity or diagnostic paths"
 			local marker
 			grep -Fq 'Failed: integration/test_report.sh (run 1/1)' "${log}" || fatal "failure heading missing"
 			grep -Eq '^--- [^ ]+/large.log \(64KB\) ---$' "${log}" || fatal "truncated log heading missing"
 			for marker in 'stdout marker' 'stderr marker' 'fixture failed: "runtime"' '诊断路径: C:\tmp' \
-				'end marker' '"results_path": "diagnostic-only"' 'exit_code=1' 'output marker' 'config marker' 'tool error marker'; do
+				'end marker' '"results_path": "diagnostic-only"' 'exit_code=1' 'output marker' 'config marker' 'tool error marker' 'residual;stack 4096'; do
 				grep -Fq "$marker" "${log}" || fatal "failure diagnostics omitted $marker"
 			done
 			! grep -Fq -- '----- FILE (' "$log" || fatal "obsolete raw file diagnostics were printed"

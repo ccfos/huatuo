@@ -113,7 +113,7 @@ report_failure_logs() {
 			--argjson size "${size}" '{workspace: $workspace, path: $path, size: $size}' || return 1
 	done < <(find "${dir}" -type f -size +0c \
 		! -name 'test_run_results.json' ! -name 'reason.*.log' \
-		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' -o -name '*.out' \) -print0 | sort -z)
+		\( -name '*.log' -o -name '*.json' -o -name '*.conf' -o -name '*.err' -o -name '*.out' -o -name '*.folded' \) -print0 | sort -z)
 }
 
 report_summary() {
