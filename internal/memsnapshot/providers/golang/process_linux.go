@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 	"github.com/ccfos/huatuo/internal/utils/fileutil"
@@ -116,15 +117,12 @@ func resolveExecutableLoadBias(ctx context.Context, pid int, file *elf.File) (ui
 	if err != nil {
 		return 0, err
 	}
-	offset, vaddr, err := firstLoadSegment(file)
-	if err != nil {
-		return 0, err
-	}
-	return memsnapshot.FindLoadBias(mappings, mapping, offset, vaddr)
+	return memsnapshot.FindELFLoadBias(file, []memsnapshot.ProcMap{*mapping}, mapping)
 }
 
 // Use the executable pathname and inode to select its maps identity. Device
 // numbers come from maps because Btrfs may report a different device in stat.
+// A read-only data mapping of the same ELF does not identify its loaded code.
 func executableMapping(exePath string, inode uint64, mappings []memsnapshot.ProcMap) (*memsnapshot.ProcMap, error) {
 	path, err := os.Readlink(exePath)
 	if err != nil {
@@ -133,7 +131,7 @@ func executableMapping(exePath string, inode uint64, mappings []memsnapshot.Proc
 	var selected *memsnapshot.ProcMap
 	for index := range mappings {
 		mapping := &mappings[index]
-		if mapping.Inode != inode || mapping.Path != path {
+		if mapping.Inode != inode || mapping.Path != path || !strings.Contains(mapping.Perms, "x") {
 			continue
 		}
 		if selected != nil && (mapping.DevMajor != selected.DevMajor || mapping.DevMinor != selected.DevMinor) {
@@ -145,18 +143,4 @@ func executableMapping(exePath string, inode uint64, mappings []memsnapshot.Proc
 		return nil, errors.New("executable mapping not found")
 	}
 	return selected, nil
-}
-
-func firstLoadSegment(file *elf.File) (uint64, uint64, error) {
-	pageSize := uint64(os.Getpagesize())
-	for _, program := range file.Progs {
-		if program.Type == elf.PT_LOAD {
-			return alignDown(program.Off, pageSize), alignDown(program.Vaddr, pageSize), nil
-		}
-	}
-	return 0, 0, errors.New("ELF has no PT_LOAD segment")
-}
-
-func alignDown(value, alignment uint64) uint64 {
-	return value &^ (alignment - 1)
 }
