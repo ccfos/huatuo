@@ -60,6 +60,7 @@ declare -A runner_test_groups=(
 	["integration/test_profiler_native_cpu_rust_symbols.sh"]=profiler
 	["integration/test_profiler_native_cpu_thread_group.sh"]=profiler
 	["integration/test_profiler_native_memory_thread_group.sh"]=independent
+	["integration/test_profiler_native_memory_physical_usage.sh"]=exclusive
 	["integration/test_profiler_native_memory_virtual_alloc.sh"]=independent
 	["integration/test_profiler_output_flags.sh"]=independent
 	["integration/test_profiler_python_cpu_multi_pid.sh"]=profiler
