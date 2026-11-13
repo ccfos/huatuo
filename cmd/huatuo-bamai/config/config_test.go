@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
@@ -194,6 +196,73 @@ ExcludedOnContainer = "writeback"
 	}
 	if Get().Storage.Elasticsearch.Enabled() {
 		t.Error("Elasticsearch is enabled without connection settings")
+	}
+}
+
+func TestLoadLegacyBlacklist(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name: "previous default blacklist",
+			input: `[
+				"netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu",
+				"ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"
+			]`,
+			want: []string{
+				"netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu",
+				"ascend_npu", "blk_iostat", "tcp_retransmit", "mthreads_gpu", "mthreads_xid",
+			},
+		},
+		{
+			name:  "disk statistics",
+			input: `["diskio"]`,
+			want:  []string{"blk_iostat"},
+		},
+		{
+			name:  "block tracing",
+			input: `["iolatency"]`,
+			want:  []string{"blk_iotrace"},
+		},
+		{
+			name:  "device health",
+			input: `["io_health"]`,
+			want:  []string{"blk_device_health"},
+		},
+		{
+			name:  "io cost",
+			input: `["iocost"]`,
+			want:  []string{"blk_iocost"},
+		},
+		{
+			name:  "current names",
+			input: `["blk_iostat", "blk_iotrace", "blk_device_health", "blk_iocost"]`,
+			want:  []string{"blk_iostat", "blk_iotrace", "blk_device_health", "blk_iocost"},
+		},
+		{
+			name:  "mixed names",
+			input: `["diskio", "blk_iostat", "iotracing", "blk_throtl", "unknown"]`,
+			want:  []string{"blk_iostat", "blk_iostat", "iotracing", "blk_throtl", "unknown"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfigFile(
+				t,
+				t.TempDir(),
+				"huatuo-bamai.conf",
+				"BlackList = "+tt.input,
+			)
+			if err := Load(path); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got := Get().BlackList; !slices.Equal(got, tt.want) {
+				t.Fatalf("BlackList = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -578,6 +647,49 @@ ExcludedOnContainer = "writeback"
 	}
 	if strings.Contains(string(raw), "BeforeOOMMemsnap") {
 		t.Error("synced config contains the old memory threshold snapshot key")
+	}
+}
+
+func TestUpdateLegacyBlacklist(t *testing.T) {
+	for _, isPersistent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persist=%t", isPersistent), func(t *testing.T) {
+			path := writeConfigFile(
+				t,
+				t.TempDir(),
+				"huatuo-bamai.conf",
+				"",
+			)
+			if err := Load(path); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			blacklist := []string{"diskio", "iolatency", "io_health", "iocost"}
+			original := slices.Clone(blacklist)
+			updateConfig := Update
+			if isPersistent {
+				updateConfig = UpdateAndSync
+			}
+			if err := updateConfig(map[string]any{"BlackList": blacklist}); err != nil {
+				t.Fatalf("update config: %v", err)
+			}
+
+			want := []string{"blk_iostat", "blk_iotrace", "blk_device_health", "blk_iocost"}
+			if got := Get().BlackList; !slices.Equal(got, want) {
+				t.Fatalf("BlackList = %v, want %v", got, want)
+			}
+			if !slices.Equal(blacklist, original) {
+				t.Fatalf("caller blacklist changed to %v, want %v", blacklist, original)
+			}
+			if isPersistent {
+				var persisted Config
+				if err := internalconfig.Load(path, &persisted); err != nil {
+					t.Fatalf("load persisted config: %v", err)
+				}
+				if !slices.Equal(persisted.BlackList, want) {
+					t.Fatalf("persisted BlackList = %v, want %v", persisted.BlackList, want)
+				}
+			}
+		})
 	}
 }
 
