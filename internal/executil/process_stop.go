@@ -21,7 +21,7 @@ import (
 	"syscall"
 )
 
-// Stop sends SIGTERM to the process group, escalating to SIGKILL when the
+// Stop sends StopSignal (default SIGTERM), escalating to SIGKILL when the
 // context or StopGracePeriod expires. It returns only stopping failures; use
 // Wait for the lifecycle result. Signal failures return promptly and can be retried.
 // Concurrent callers stop independently. Stop preserves output and rejects
@@ -96,7 +96,7 @@ func (p *Process) Close() error {
 }
 
 func (p *Process) stopProcessGroup(ctx context.Context) error {
-	gracefulErr := p.signalProcessGroup(syscall.SIGTERM)
+	gracefulErr := p.signalProcessGroup(p.spec.StopSignal)
 	if gracefulErr != nil {
 		forceErr := p.forceStopAndWait()
 		if forceErr != nil {

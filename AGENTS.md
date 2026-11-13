@@ -18,7 +18,7 @@
 ## Guidelines
 
 - Think before coding.
-- Add unit tests. Add integration tests when the component has external dependencies.
+- Update existing unit tests only; do not create new unit test files. Add integration tests for components with external dependencies.
 - Update docs when changing storage schemas, config options, features, or APIs.
 - Surgical changes: touch what the task needs, match local style, don't refactor unrelated code.
 - Define verifiable success criteria for non-trivial work; iterate until checks pass or blockers are explicit.

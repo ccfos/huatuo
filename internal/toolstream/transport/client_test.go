@@ -18,26 +18,52 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	capnp "capnproto.org/go/capnp/v3"
 )
 
-func TestClientEndReturnsSendAndCloseErrors(t *testing.T) {
-	t.Parallel()
-
+func TestSendDoesNotOwnConnectionCleanup(t *testing.T) {
 	writeErr := errors.New("write failed")
 	closeErr := errors.New("close failed")
-	conn := &failingConn{writeErr: writeErr, closeErr: closeErr}
-	client := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
-
-	err := client.End()
-	if !errors.Is(err, writeErr) || !errors.Is(err, closeErr) {
-		t.Fatalf("End() error = %v, want write and close errors", err)
+	conn := &failingConn{
+		writeErr: writeErr,
+		closeErr: closeErr,
 	}
+	client := &Client{
+		encoder: capnp.NewEncoder(conn),
+		conn:    conn,
+	}
+	err := client.Send(nil, SendOptions{End: true})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("Send: %v", err)
+	}
+	if conn.closeCalls != 0 {
+		t.Fatal("Send closed caller-owned connection")
+	}
+	if err := client.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := client.Close(); !errors.Is(err, closeErr) {
+		t.Fatalf("repeated Close: %v", err)
+	}
+
+	var closers sync.WaitGroup
+	for range 20 {
+		closers.Add(1)
+		go func() {
+			defer closers.Done()
+			if err := client.Close(); !errors.Is(err, closeErr) {
+				t.Errorf("concurrent Close: %v", err)
+			}
+		}()
+	}
+	closers.Wait()
+
 	if conn.closeCalls != 1 {
-		t.Fatalf("Close() calls = %d, want 1", conn.closeCalls)
+		t.Fatalf("Close calls=%d", conn.closeCalls)
 	}
 }
 
@@ -78,4 +104,34 @@ func (*failingConn) SetReadDeadline(time.Time) error {
 
 func (*failingConn) SetWriteDeadline(time.Time) error {
 	return nil
+}
+
+func TestCloseInterruptsBlockedWrite(t *testing.T) {
+	local, remote := net.Pipe()
+	defer local.Close()
+	defer remote.Close()
+	client := &Client{
+		encoder: capnp.NewEncoder(local),
+		conn:    local,
+	}
+	done := make(chan error, 1)
+	go func() { done <- client.Send([]byte("payload"), SendOptions{}) }()
+	if err := remote.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	// Reading just one byte leaves the frame write blocked on the pipe.
+	if _, err := io.ReadFull(remote, make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("Send: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not unblock Send")
+	}
 }

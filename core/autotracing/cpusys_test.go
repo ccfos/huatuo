@@ -45,6 +45,14 @@ func TestNewCPUSysBindsConfig(t *testing.T) {
 	testConfig.CPUSys.Interval = 12
 	testConfig.CPUSys.IntervalTracing = 300
 	testConfig.CPUSys.RunTracingToolTimeout = 7
+	testConfig.CPUIdle.UserThreshold = 99
+	testConfig.CPUIdle.DeltaUserThreshold = 98
+	testConfig.CPUIdle.UsageThreshold = 97
+	testConfig.CPUIdle.DeltaUsageThreshold = 96
+	testConfig.CPUSys.UserThreshold = 75
+	testConfig.CPUSys.DeltaUserThreshold = 45
+	testConfig.CPUSys.UsageThreshold = 90
+	testConfig.CPUSys.DeltaUsageThreshold = 55
 	testConfig.CPUSys.SysThreshold = 50
 	testConfig.CPUSys.DeltaSysThreshold = 15
 	Set(testConfig)
@@ -63,11 +71,14 @@ func TestNewCPUSysBindsConfig(t *testing.T) {
 	if tracer.minTraceInterval != 300*time.Second {
 		t.Errorf("minTraceInterval = %s, want 5m0s", tracer.minTraceInterval)
 	}
-	if tracer.perfDuration != 7*time.Second {
-		t.Errorf("perfDuration = %s, want 7s", tracer.perfDuration)
+	if tracer.traceDuration != 7*time.Second {
+		t.Errorf("traceDuration = %s, want 7s", tracer.traceDuration)
 	}
 	if tracer.threshold != (cpuSysThreshold{usage: 50, delta: 15}) {
 		t.Errorf("threshold = %+v, want usage=50 delta=15", tracer.threshold)
+	}
+	if tracer.userThreshold != (cpuSysThreshold{usage: 75, delta: 45}) || tracer.totalThreshold != (cpuSysThreshold{usage: 90, delta: 55}) {
+		t.Fatalf("host thresholds must use CPUSys independently of CPUIdle: user=%+v total=%+v", tracer.userThreshold, tracer.totalThreshold)
 	}
 }
 
@@ -83,14 +94,24 @@ func TestParseCPUUsage(t *testing.T) {
 		wantError string
 	}{
 		{
-			name:     "all counters",
-			input:    "cpu 100 10 30 860 5 2 3 1 50 4\n",
-			expected: cpuUsage{system: 30, total: 1011},
+			name:  "all counters",
+			input: "cpu 100 10 30 860 5 2 3 1 50 4\n",
+			expected: cpuUsage{
+				system: 30,
+				total:  1011,
+				user:   110,
+				busy:   145,
+			},
 		},
 		{
-			name:     "minimum counters",
-			input:    "cpu 1 2 3 4\n",
-			expected: cpuUsage{system: 3, total: 10},
+			name:  "minimum counters",
+			input: "cpu 1 2 3 4\n",
+			expected: cpuUsage{
+				system: 3,
+				total:  10,
+				user:   3,
+				busy:   6,
+			},
 		},
 		{
 			name:      "empty input",
@@ -167,7 +188,12 @@ func TestReadCPUUsageUsesProcfsPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readCPUUsage() error = %v", err)
 	}
-	expected := cpuUsage{system: 30, total: 1000}
+	expected := cpuUsage{
+		system: 30,
+		total:  1000,
+		user:   110,
+		busy:   140,
+	}
 	if actual != expected {
 		t.Fatalf("readCPUUsage() = %+v, want %+v", actual, expected)
 	}
@@ -319,7 +345,7 @@ func TestCPUSysTracingShouldTrace(t *testing.T) {
 				threshold:        cpuSysThreshold{usage: 45, delta: 20},
 				lastTraceAt:      tt.lastTraceAt,
 			}
-			if actual := tracer.shouldTrace(state, sampledAt); actual != tt.expected {
+			if actual := tracer.shouldTrace(&state, sampledAt); actual != tt.expected {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, tt.expected)
 			}
 		})
@@ -367,6 +393,107 @@ func BenchmarkParseCPUUsage(b *testing.B) {
 	for b.Loop() {
 		if _, err := parseCPUUsage(strings.NewReader(input)); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestCPUAdditionalTriggersIndependently(t *testing.T) {
+	for _, kind := range []string{"user", "total"} {
+		for _, tc := range []struct {
+			name                          string
+			usage, delta                  int64
+			zeroThreshold, cooldown, want bool
+		}{
+			{
+				name:  "exceeds",
+				usage: 51,
+				delta: 21,
+				want:  true,
+			},
+			{
+				name:  "usage boundary",
+				usage: 50,
+				delta: 21,
+			},
+			{
+				name:  "delta boundary",
+				usage: 51,
+				delta: 20,
+			},
+			{
+				name:          "zero threshold",
+				usage:         51,
+				delta:         21,
+				zeroThreshold: true,
+				want:          true,
+			},
+			{
+				name:          "zero threshold boundary",
+				usage:         0,
+				delta:         21,
+				zeroThreshold: true,
+			},
+			{
+				name:     "cooldown",
+				usage:    51,
+				delta:    21,
+				cooldown: true,
+			},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				now := time.Unix(1000, 0)
+				c := cpuSysTracing{
+					threshold: cpuSysThreshold{
+						usage: 100,
+						delta: 100,
+					},
+					minTraceInterval: time.Minute,
+				}
+				state := cpuSysState{}
+				threshold := cpuSysThreshold{
+					usage: 50,
+					delta: 20,
+				}
+				if tc.zeroThreshold {
+					threshold.usage = 0
+				}
+				if kind == "user" {
+					c.userThreshold = threshold
+					state.userPercent = tc.usage
+					state.userPercentDelta = tc.delta
+				} else {
+					c.totalThreshold = threshold
+					state.totalPercent = tc.usage
+					state.totalPercentDelta = tc.delta
+				}
+				if tc.cooldown {
+					c.lastTraceAt = now.Add(-time.Second)
+				}
+				if got := c.shouldTrace(&state, now); got != tc.want {
+					t.Fatalf("trigger=%v want=%v", got, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestCPUSysAdditionalThresholdValidation(t *testing.T) {
+	for _, value := range []int64{-1, 101} {
+		for _, field := range []string{"UserThreshold", "DeltaUserThreshold", "UsageThreshold", "DeltaUsageThreshold"} {
+			cfg := &Config{}
+			switch field {
+			case "UserThreshold":
+				cfg.CPUSys.UserThreshold = value
+			case "DeltaUserThreshold":
+				cfg.CPUSys.DeltaUserThreshold = value
+			case "UsageThreshold":
+				cfg.CPUSys.UsageThreshold = value
+			case "DeltaUsageThreshold":
+				cfg.CPUSys.DeltaUsageThreshold = value
+			}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "CPUSys."+field) {
+				t.Fatalf("%s=%d: want scoped CPUSys error, got %v", field, value, err)
+			}
 		}
 	}
 }

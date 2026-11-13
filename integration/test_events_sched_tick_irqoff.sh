@@ -24,6 +24,7 @@ source "${ROOT_DIR}/integration/config.sh"
 readonly SCHED_TICK_REPORT_TIMEOUT=10
 readonly SCHED_TICK_REPORT_INTERVAL=0.1
 readonly SCHED_TICK_NO_EVENT_WINDOW=2
+readonly SCHED_TICK_FIXTURE_ROOT="${HUATUO_BAMAI_TEST_TMPDIR}/sched-tick-fixture"
 readonly SCHED_TICK_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/sched_tick"
 readonly VALID_SCHED_TICK_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/valid-sched-tick-event.json"
 
@@ -42,12 +43,12 @@ start_sched_tick_test() {
 	integration_huatuo_bamai_start \
 		"${config_writer}" \
 		--region dev \
-		--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
+		--procfs-prefix "${SCHED_TICK_FIXTURE_ROOT}" \
 		--disable-kubelet \
 		--log-debug
 }
 
-require_commands jq taskset
+require_commands awk jq taskset
 taskset -c 0 true > /dev/null 2>&1 \
 	|| skip "CPU 0 is not available to the test process"
 
@@ -62,8 +63,14 @@ fi
 tracepoint_available timer tick_stop \
 	|| skip "timer/tick_stop tracepoint is not available"
 
-# Kernel symbol resolution is covered by internal/symbol tests. This test verifies
-# that a captured BPF stack reaches persistent event storage.
+awk '$2 ~ /^[Tt]$/ && $1 ~ /[1-9a-fA-F]/ { found = 1; exit } END { exit !found }' /proc/kallsyms \
+	|| skip "/proc/kallsyms must expose nonzero kernel text addresses; check permissions and kernel.kptr_restrict"
+
+# Resolve live BPF addresses against the running kernel while retaining other fixtures.
+cp -a "${HUATUO_BAMAI_TEST_FIXTURES}" "${SCHED_TICK_FIXTURE_ROOT}"
+ln -sf /proc/kallsyms "${SCHED_TICK_FIXTURE_ROOT}/proc/kallsyms"
+
+# Verify that a captured BPF stack reaches persistent event storage.
 sched_tick_event_is_valid() {
 	[[ -s "${SCHED_TICK_EVENT}" ]] || return 1
 	jq -s -e '
@@ -89,14 +96,30 @@ sched_tick_event_is_valid() {
 		))
 	' "${SCHED_TICK_EVENT}" > "${VALID_SCHED_TICK_EVENT}" 2> /dev/null
 }
+
+assert_sched_tick_stack_symbols() {
+	log_info "valid sched_tick event:"
+	jq '.' "${VALID_SCHED_TICK_EVENT}"
+
+	# A string can still contain raw addresses or unresolved-frame placeholders.
+	jq -e '
+		.tracer_data.stack | ltrimstr("stack:\n") | split("\n") |
+		length > 0 and all(.[];
+			test("^[A-Za-z_][A-Za-z0-9_.$]*/\\+[0-9]+ \\[[^]\\s]+\\]$")
+			and (split("/")[0] | test("^(0[xX][0-9a-fA-F]+|[0-9a-fA-F]{8,16})$") | not)
+		)
+	' "${VALID_SCHED_TICK_EVENT}" > /dev/null \
+		|| fatal "sched_tick stack must contain resolved symbol names, not addresses or placeholders: $(jq -r '.tracer_data.stack' "${VALID_SCHED_TICK_EVENT}")"
+}
+
 # Attach while a pinned CPU is ticking so NO_HZ idle cannot hide samples.
 taskset -c 0 bash -c 'while :; do :; done' &
 workload_pid=$!
 
-start_sched_tick_test write_sched_tick_config
+start_sched_tick_test write_config_bamai_sched_tick
 
 huatuo_bamai_collect_metrics
-check_metrics "sched_tick high threshold" \
+assert_metrics "sched_tick high threshold" \
 	'tracing_status_running\{[^}]*\} 1$'
 
 sleep "${SCHED_TICK_NO_EVENT_WINDOW}"
@@ -109,7 +132,7 @@ assert_log_has_no_failure \
 
 huatuo_bamai_stop
 
-start_sched_tick_test write_sched_tick_irqoff_config
+start_sched_tick_test write_config_bamai_sched_tick_irqoff
 
 wait_until "${SCHED_TICK_REPORT_TIMEOUT}" "${SCHED_TICK_REPORT_INTERVAL}" \
 	test -s "${SCHED_TICK_EVENT}" \
@@ -119,6 +142,7 @@ wait_until "${SCHED_TICK_REPORT_TIMEOUT}" "${SCHED_TICK_REPORT_INTERVAL}" \
 huatuo_bamai_stop
 sched_tick_event_is_valid \
 	|| fatal "sched_tick did not persist a valid event"
+assert_sched_tick_stack_symbols
 
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
@@ -126,5 +150,3 @@ assert_log_has_no_failure \
 cleanup
 
 log_info "sched_tick irqoff simulation test passed"
-log_info "valid sched_tick event:"
-jq '.' "${VALID_SCHED_TICK_EVENT}"

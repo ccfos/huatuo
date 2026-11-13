@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
@@ -197,6 +199,73 @@ ExcludedOnContainer = "writeback"
 	}
 }
 
+func TestLoadLegacyBlacklist(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name: "previous default blacklist",
+			input: `[
+				"netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu",
+				"ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"
+			]`,
+			want: []string{
+				"netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu",
+				"ascend_npu", "blk_iostat", "tcp_retransmit", "mthreads_gpu", "mthreads_xid",
+			},
+		},
+		{
+			name:  "disk statistics",
+			input: `["diskio"]`,
+			want:  []string{"blk_iostat"},
+		},
+		{
+			name:  "block tracing",
+			input: `["iolatency"]`,
+			want:  []string{"blk_iotrace"},
+		},
+		{
+			name:  "device health",
+			input: `["io_health"]`,
+			want:  []string{"blk_device_health"},
+		},
+		{
+			name:  "io cost",
+			input: `["iocost"]`,
+			want:  []string{"blk_iocost"},
+		},
+		{
+			name:  "current names",
+			input: `["blk_iostat", "blk_iotrace", "blk_device_health", "blk_iocost"]`,
+			want:  []string{"blk_iostat", "blk_iotrace", "blk_device_health", "blk_iocost"},
+		},
+		{
+			name:  "mixed names",
+			input: `["diskio", "blk_iostat", "iotracing", "blk_throtl", "unknown"]`,
+			want:  []string{"blk_iostat", "blk_iostat", "iotracing", "blk_throtl", "unknown"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfigFile(
+				t,
+				t.TempDir(),
+				"huatuo-bamai.conf",
+				"BlackList = "+tt.input,
+			)
+			if err := Load(path); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got := Get().BlackList; !slices.Equal(got, tt.want) {
+				t.Fatalf("BlackList = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadAcceptsTCPRetransmitFilter(t *testing.T) {
 	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
 [EventTracing.TCPRetransmit]
@@ -228,6 +297,21 @@ func TestLoadRepositoryConfig(t *testing.T) {
 	}
 	if snapshot.MaxMemoryObjectEntries != 10 {
 		t.Errorf("MemoryThresholdSnapshot.MaxMemoryObjectEntries = %d, want default 10", snapshot.MaxMemoryObjectEntries)
+	}
+}
+
+func TestLoadSchedBlameDefaults(t *testing.T) {
+	config := loadConfigDefaults(t).AutoTracing.SchedBlame
+
+	if config.TargetContainerScope != "normal" ||
+		config.SliceDropPercent != 0 ||
+		config.ExternalAnomalyK != 1 ||
+		config.SliceBatchSize != 128 ||
+		config.PerfEventPerCPUBufferBytes != 524288 ||
+		config.PerfEventWatermarkBytes != 8192 ||
+		config.PerfEventQueueRecords != 8192 ||
+		config.PollIntervalMs != 100 {
+		t.Fatalf("unexpected SchedBlame defaults: %#v", config)
 	}
 }
 
@@ -382,6 +466,13 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "validating autotracing config: validating issues list",
 		},
 		{
+			name: "invalid sched-blame queue capacity",
+			mutate: func(cfg *Config) {
+				cfg.AutoTracing.SchedBlame.PerfEventQueueRecords = 0
+			},
+			wantErr: "validating sched-blame config: perf event queue records",
+		},
+		{
 			name: "invalid scheduler tick threshold",
 			mutate: func(cfg *Config) {
 				cfg.EventTracing.SchedTick.IntervalThreshold = 0
@@ -483,9 +574,11 @@ ExcludedOnContainer = "writeback"
 	}
 
 	if err := UpdateAndSync(map[string]any{
-		"BlackList":               []string{"netdev_hw", "metax_gpu"},
-		"AutoTracing.IssuesList":  [][]string{{"cpuidle", "perf"}},
-		"EventTracing.IssuesList": [][]string{{"dropwatch", "kfree_skb"}},
+		"BlackList":                []string{"netdev_hw", "metax_gpu"},
+		"AutoTracing.IssuesList":   [][]string{{"cpuidle", "perf"}},
+		"AutoTracing.CPUIdle.Tool": "profiler",
+		"AutoTracing.CPUSys.Tool":  "perf",
+		"EventTracing.IssuesList":  [][]string{{"dropwatch", "kfree_skb"}},
 		"AutoTracing.MemoryThresholdSnapshot.ThresholdPercent":       85,
 		"AutoTracing.MemoryThresholdSnapshot.IntervalTracing":        60,
 		"AutoTracing.MemoryThresholdSnapshot.RunTracingToolTimeout":  3,
@@ -502,6 +595,10 @@ ExcludedOnContainer = "writeback"
 
 	if len(Get().BlackList) != 2 {
 		t.Errorf("unexpected BlackList length after reload: %d", len(Get().BlackList))
+	}
+	if Get().AutoTracing.CPUIdle.Tool != "profiler" || Get().AutoTracing.CPUSys.Tool != "perf" {
+		t.Fatalf("CPU tools were not independently persisted: cpuidle=%q cpusys=%q",
+			Get().AutoTracing.CPUIdle.Tool, Get().AutoTracing.CPUSys.Tool)
 	}
 	if Get().MetricCollector.Vmstat.IncludedOnHost != "pgsteal_direct" {
 		t.Errorf("unexpected Vmstat.IncludedOnHost after reload: %q", Get().MetricCollector.Vmstat.IncludedOnHost)
@@ -553,6 +650,49 @@ ExcludedOnContainer = "writeback"
 	}
 }
 
+func TestUpdateLegacyBlacklist(t *testing.T) {
+	for _, isPersistent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persist=%t", isPersistent), func(t *testing.T) {
+			path := writeConfigFile(
+				t,
+				t.TempDir(),
+				"huatuo-bamai.conf",
+				"",
+			)
+			if err := Load(path); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			blacklist := []string{"diskio", "iolatency", "io_health", "iocost"}
+			original := slices.Clone(blacklist)
+			updateConfig := Update
+			if isPersistent {
+				updateConfig = UpdateAndSync
+			}
+			if err := updateConfig(map[string]any{"BlackList": blacklist}); err != nil {
+				t.Fatalf("update config: %v", err)
+			}
+
+			want := []string{"blk_iostat", "blk_iotrace", "blk_device_health", "blk_iocost"}
+			if got := Get().BlackList; !slices.Equal(got, want) {
+				t.Fatalf("BlackList = %v, want %v", got, want)
+			}
+			if !slices.Equal(blacklist, original) {
+				t.Fatalf("caller blacklist changed to %v, want %v", blacklist, original)
+			}
+			if isPersistent {
+				var persisted Config
+				if err := internalconfig.Load(path, &persisted); err != nil {
+					t.Fatalf("load persisted config: %v", err)
+				}
+				if !slices.Equal(persisted.BlackList, want) {
+					t.Fatalf("persisted BlackList = %v, want %v", persisted.BlackList, want)
+				}
+			}
+		})
+	}
+}
+
 func TestUpdateRollsBackInvalidBatch(t *testing.T) {
 	loadConfigDefaults(t)
 	before := Get()
@@ -566,6 +706,27 @@ func TestUpdateRollsBackInvalidBatch(t *testing.T) {
 	}
 	if Get() != before {
 		t.Fatal("Update() published a partial config")
+	}
+}
+
+func TestUpdateRejectsInvalidCPUProfileTool(t *testing.T) {
+	for _, key := range []string{"AutoTracing.CPUIdle.Tool", "AutoTracing.CPUSys.Tool"} {
+		for _, value := range []string{"", "unknown"} {
+			t.Run(key+"/"+value, func(t *testing.T) {
+				loadConfigDefaults(t)
+				before := Get()
+				err := Update(map[string]any{
+					"BlackList": []string{"dropwatch"},
+					key:         value,
+				})
+				if !errors.Is(err, ErrInvalidUpdate) || !strings.Contains(err.Error(), key) {
+					t.Fatalf("Update() error = %v, want invalid %s", err, key)
+				}
+				if Get() != before {
+					t.Fatal("invalid tool update published a partial config")
+				}
+			})
+		}
 	}
 }
 

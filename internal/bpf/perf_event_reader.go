@@ -17,6 +17,7 @@ package bpf
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // DefaultPerfEventBufferBytes is the requested per-CPU capacity in bytes.
@@ -24,6 +25,10 @@ const DefaultPerfEventBufferBytes = 8 * 1024
 
 // ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
 var ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
+
+// ErrPerfEventReaderFlushed indicates that a raw perf event reader has
+// returned every record which was pending when Flush was called.
+var ErrPerfEventReaderFlushed = errors.New("bpf: perf event reader flushed")
 
 // PerfEventSamplesLostError reports how many perf samples the kernel dropped.
 type PerfEventSamplesLostError struct {
@@ -45,6 +50,34 @@ type PerfEventBatch struct {
 	LostSamples uint64
 }
 
+// PerfEventReaderOptions configures a raw perf event reader.
+type PerfEventReaderOptions struct {
+	// PerCPUBufferBytes is the requested data-ring capacity for each CPU. The
+	// effective capacity is rounded up to a power-of-two number of pages.
+	PerCPUBufferBytes uint32
+
+	// WatermarkBytes is the unread-byte count which wakes the reader. It must be
+	// positive and smaller than the effective per-CPU data-ring capacity.
+	WatermarkBytes uint32
+}
+
+// PerfEventRawRecord contains one raw perf-ring record.
+type PerfEventRawRecord struct {
+	CPU int
+
+	// RawSample is the data submitted through bpf_perf_event_output. It is empty
+	// for a PERF_RECORD_LOST record and remains valid until the next read.
+	RawSample []byte
+
+	// LostSamples is nonzero for a PERF_RECORD_LOST record.
+	LostSamples uint64
+
+	// RemainingBytes is the unread data remaining in the source CPU's ring after
+	// this record. PerfRecordSize includes perf framing around this record.
+	RemainingBytes int
+	PerfRecordSize int
+}
+
 // PerfEventReader reads the eBPF perf_event.
 type PerfEventReader interface {
 	// ReadInto reads the next eBPF perf event into dst. Sample loss returns
@@ -52,10 +85,41 @@ type PerfEventReader interface {
 	ReadInto(dst any) error
 
 	// ReadBatch drains all per-CPU ring buffers currently available within a
-	// bounded deadline. newEvent must return a new event destination per call.
+	// bounded deadline (500 ms by default). Options apply only to this call. newEvent must return a new event destination per call.
 	// The returned batch may contain events and sample loss when err is non-nil.
-	ReadBatch(newEvent func() any) (PerfEventBatch, error)
+	ReadBatch(newEvent func() any, opts ...ReadBatchOption) (PerfEventBatch, error)
 
 	// Close is idempotent and unblocks active reads before returning.
+	Close() error
+}
+
+// ReadBatchOption configures one batch read without changing subsequent reads.
+type ReadBatchOption func(*readBatchOptions)
+
+type readBatchOptions struct {
+	deadline time.Time
+}
+
+// WithReadBatchDeadline sets an absolute deadline for this call. An expired
+// deadline drains available records without waiting. Zero disables the deadline.
+func WithReadBatchDeadline(deadline time.Time) ReadBatchOption {
+	return func(opts *readBatchOptions) { opts.deadline = deadline }
+}
+
+// PerfEventRawReader reads variable-size records without decoding them.
+type PerfEventRawReader interface {
+	// ReadRawInto blocks until one sample or loss record is available. Flush
+	// causes pending records to be returned before ErrPerfEventReaderFlushed.
+	ReadRawInto(dst *PerfEventRawRecord) error
+
+	// Flush wakes the reader and limits subsequent reads to records already
+	// pending when Flush was called.
+	Flush() error
+
+	// PerCPUBufferSize returns the effective data-ring capacity for each CPU. It
+	// excludes the perf metadata page.
+	PerCPUBufferSize() int
+
+	// Close the PerfEventRawReader.
 	Close() error
 }

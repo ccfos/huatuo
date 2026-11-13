@@ -19,6 +19,7 @@ set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-fast
 TCPSHARK_BIN=${TOOL_BIN}
@@ -35,12 +36,12 @@ if ! iptables -m connbytes -h 2>&1 | grep -q connbytes; then
 	skip "iptables connbytes module not available on this kernel"
 fi
 
-require_commands python3
+require_commands python3 jq
 
 cleanup() {
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
-	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2> /dev/null || true
-	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2> /dev/null || true
+	stop_and_wait_by_pid "${TCPSHARK_PID:-}" 2 || true
+	stop_and_wait_by_pid "${SRV_PID:-}" 2 || true
+	stop_and_wait_by_pid "${CLI_PID:-}" 2 || true
 	namespace_cleanup
 }
 trap cleanup EXIT
@@ -87,8 +88,9 @@ sleep 0.5
 ip netns exec "${NETNS_CLIENT}" timeout 8 bash -c "exec 3<>/dev/tcp/${NETNS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
 CLI_PID=$!
 
-# 6. Wait for data transfer + fast retransmit (3 dup ACKs are fast on veth).
-sleep 10
+# Only FAST ends collection early; inspect fallback classifications at the deadline.
+wait_until 10 0.1 fast_retransmit_is_stored \
+	|| log_info "FAST capture deadline reached; checking Recovery/RTO fallback"
 
 if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
 	TCPSHARK_STATUS=0
@@ -96,8 +98,7 @@ if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
 	TCPSHARK_PID=""
 	fatal "tcpshark exited during capture (status=${TCPSHARK_STATUS})"
 fi
-kill -TERM "${TCPSHARK_PID}"
-wait "${TCPSHARK_PID}" || true
+stop_and_wait_by_pid "${TCPSHARK_PID}" 5 || fatal "tcpshark failed during shutdown; see ${OUTPUT_DIR}/stderr.log"
 TCPSHARK_PID=""
 
 # Filter events for our test port (server-side tcp_sport).

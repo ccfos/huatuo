@@ -23,8 +23,8 @@ import (
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 	profilinghandler "github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/job"
-	"github.com/ccfos/huatuo/internal/server/response"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 

@@ -18,16 +18,21 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
-	"time"
+
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+	"github.com/ccfos/huatuo/internal/profiling/bpfmap"
+
+	"github.com/ccfos/huatuo/internal/profiling/pipeline"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	bpfabi "github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/profiler"
 	"github.com/ccfos/huatuo/internal/symbol"
 )
 
@@ -54,6 +59,7 @@ func (m *mockBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 	if !ok {
 		return nil, errors.New("mock: stack not found")
 	}
+
 	return val, nil
 }
 
@@ -61,6 +67,7 @@ func (m *mockBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 func stackKeyBytes(key *bpfabi.IrqtracingStackKey) []byte {
 	buf := &bytes.Buffer{}
 	_ = binary.Write(buf, binary.LittleEndian, key)
+
 	return buf.Bytes()
 }
 
@@ -68,7 +75,11 @@ func stackKeyBytes(key *bpfabi.IrqtracingStackKey) []byte {
 func mapItem(key *bpfabi.IrqtracingStackKey, counts ...uint64) bpf.MapItem {
 	val := &bytes.Buffer{}
 	_ = binary.Write(val, binary.LittleEndian, counts)
-	return bpf.MapItem{Key: stackKeyBytes(key), Value: val.Bytes()}
+
+	return bpf.MapItem{
+		Key:   stackKeyBytes(key),
+		Value: val.Bytes(),
+	}
 }
 
 // stackBytes serializes a u64 frame slice into the raw stack_traces value.
@@ -77,86 +88,108 @@ func stackBytes(frames ...uint64) []byte {
 	copy(arr[:], frames)
 	buf := &bytes.Buffer{}
 	_ = binary.Write(buf, binary.LittleEndian, &arr)
+
 	return buf.Bytes()
 }
 
-// TestProcessStackMapFrameCount guards the stack frame resolution: only the
+// TestEnqueueStackMapFrameCount guards the stack frame resolution: only the
 // frames stored in the stack_traces map are resolved (zero-filled tail is
 // dropped), stack id 0 is a valid id, and a stack id without a map entry is
 // an error instead of a silently stackless entry.
-func TestProcessStackMapFrameCount(t *testing.T) {
+func TestEnqueueStackMapFrameCount(t *testing.T) {
 	t.Run("resolves ustack and kstack frames", func(t *testing.T) {
-		key := &bpfabi.IrqtracingStackKey{PID: 123, Vec: 3, UstackID: 1, KstackID: 2}
+		key := &bpfabi.IrqtracingStackKey{
+			PID:      123,
+			Vec:      3,
+			UstackID: 1,
+			KstackID: 2,
+		}
 		b := &mockBPF{
-			items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
-			stacks:     map[uint32][]byte{1: stackBytes(0xaaaa0001, 0xaaaa0002), 2: stackBytes(0xbbbb0001, 0xbbbb0002, 0xbbbb0003)},
+			items: map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
+			stacks: map[uint32][]byte{
+				1: stackBytes(0xaaaa0001, 0xaaaa0002),
+				2: stackBytes(0xbbbb0001, 0xbbbb0002, 0xbbbb0003),
+			},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(
-			b, "source_counts", symbol.NewUsymResolver(), nil,
-			func(key bpfabi.IrqtracingStackKey) string { return "label" },
-			"source",
-		)
+		items, err := collectStackSamples(b)
 		assert.NoError(t, err)
 		require.Len(t, items, 1)
-		// root + label + 2 ustack + 3 kstack frames.
-		assert.Len(t, items[0].Stack, 7)
+		assert.Equal(t, 5, len(items[0].UserFrames)+len(items[0].KernelFrames))
 	})
 
 	t.Run("zero stack id is a valid id", func(t *testing.T) {
-		key := &bpfabi.IrqtracingStackKey{PID: 123, Vec: 3, UstackID: 0, KstackID: 1}
+		key := &bpfabi.IrqtracingStackKey{
+			PID:      123,
+			Vec:      3,
+			UstackID: 0,
+			KstackID: 1,
+		}
 		b := &mockBPF{
 			items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
 			stacks:     map[uint32][]byte{0: stackBytes(0xaaaa0001), 1: stackBytes(0xbbbb0001)},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(
-			b, "source_counts", symbol.NewUsymResolver(), nil,
-			func(key bpfabi.IrqtracingStackKey) string { return "label" },
-			"source",
-		)
+		items, err := collectStackSamples(b)
 		assert.NoError(t, err)
 		require.Len(t, items, 1)
-		// root + label + 1 ustack + 1 kstack frames.
-		assert.Len(t, items[0].Stack, 4)
+		assert.Equal(t, 2, len(items[0].UserFrames)+len(items[0].KernelFrames))
 	})
 
 	t.Run("missing stack id propagates an error", func(t *testing.T) {
-		key := &bpfabi.IrqtracingStackKey{PID: 123, Vec: 3, UstackID: 7, KstackID: 8}
+		key := &bpfabi.IrqtracingStackKey{
+			PID:      123,
+			Vec:      3,
+			UstackID: 7,
+			KstackID: 8,
+		}
 		b := &mockBPF{
 			items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
 			stackMapID: 99,
 		}
-		_, err := processStackMap(
-			b, "source_counts", symbol.NewUsymResolver(), nil,
-			func(key bpfabi.IrqtracingStackKey) string { return "label" },
-			"source",
-		)
+		_, err := collectStackSamples(b)
 		assert.Error(t, err)
 	})
 
 	t.Run("zero-filled tail is dropped", func(t *testing.T) {
-		key := &bpfabi.IrqtracingStackKey{PID: 123, Vec: 3, UstackID: 1, KstackID: 2}
+		key := &bpfabi.IrqtracingStackKey{
+			PID:      123,
+			Vec:      3,
+			UstackID: 1,
+			KstackID: 2,
+		}
 		b := &mockBPF{
-			items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
-			stacks:     map[uint32][]byte{1: stackBytes(0xaaaa0001, 0xaaaa0002, 0, 0xaaaa0004), 2: stackBytes(0xbbbb0001, 0, 0xbbbb0003)},
+			items: map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
+			stacks: map[uint32][]byte{
+				1: stackBytes(
+					0xaaaa0001,
+					0xaaaa0002,
+					0,
+					0xaaaa0004,
+				),
+				2: stackBytes(0xbbbb0001, 0, 0xbbbb0003),
+			},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(
-			b, "source_counts", symbol.NewUsymResolver(), nil,
-			func(key bpfabi.IrqtracingStackKey) string { return "label" },
-			"source",
-		)
+		items, err := collectStackSamples(b)
 		assert.NoError(t, err)
 		require.Len(t, items, 1)
-		// Root+label + ustack[2] (frame at 0xaaaa0004 after a zero is dropped
-		// by resolveStack stopping at first zero) + kstack[1].
-		assert.Len(t, items[0].Stack, 5)
+		assert.Equal(t, 3, len(items[0].UserFrames)+len(items[0].KernelFrames))
 	})
 
 	t.Run("multiple entries accumulate", func(t *testing.T) {
-		key1 := &bpfabi.IrqtracingStackKey{PID: 123, Vec: 3, UstackID: 1, KstackID: 2}
-		key2 := &bpfabi.IrqtracingStackKey{PID: 456, Vec: 3, UstackID: 1, KstackID: 0}
+		key1 := &bpfabi.IrqtracingStackKey{
+			PID:      123,
+			Vec:      3,
+			UstackID: 1,
+			KstackID: 2,
+		}
+		key2 := &bpfabi.IrqtracingStackKey{
+			PID:      456,
+			Vec:      3,
+			UstackID: 1,
+			KstackID: 0,
+		}
 		b := &mockBPF{
 			items: map[string][]bpf.MapItem{
 				"source_counts": {mapItem(key1, 1), mapItem(key2, 2)},
@@ -168,20 +201,14 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			},
 			stackMapID: 99,
 		}
-		items, err := processStackMap(
-			b, "source_counts", symbol.NewUsymResolver(), nil,
-			func(key bpfabi.IrqtracingStackKey) string { return "label" },
-			"source",
-		)
+		items, err := collectStackSamples(b)
 		assert.NoError(t, err)
 		assert.Len(t, items, 2)
-		// First: root+label+2u+3k = 7. Second: root+label+2u (kstack 0 is
-		// empty) = 4.
-		assert.Len(t, items[0].Stack, 7)
-		assert.Len(t, items[1].Stack, 4)
+		assert.Equal(t, 5, len(items[0].UserFrames)+len(items[0].KernelFrames))
+		assert.Len(t, items[1].UserFrames, 2)
 	})
 
-	t.Run("keeps prefixes when stack capture fails", func(t *testing.T) {
+	t.Run("keeps labels when stack capture fails", func(t *testing.T) {
 		key := &bpfabi.IrqtracingStackKey{
 			UstackID: uint32(bpfabi.IrqtracingStackIDNone),
 			KstackID: uint32(bpfabi.IrqtracingStackIDNone),
@@ -191,15 +218,17 @@ func TestProcessStackMapFrameCount(t *testing.T) {
 			stackMapID: 99,
 		}
 
-		items, err := processStackMap(
-			b, "source_counts", symbol.NewUsymResolver(), nil,
-			func(key bpfabi.IrqtracingStackKey) string { return "label" },
-			"source",
-		)
+		items, err := collectStackSamples(b)
 		assert.NoError(t, err)
-		require.Len(t, items, 1)
-		assert.Equal(t, [][]byte{[]byte("source"), []byte("label")}, items[0].Stack)
-		assert.Equal(t, uint64(3), items[0].Value)
+		require.Len(t, items, 2)
+		for i := range items {
+			assert.Empty(t, items[i].UserFrames)
+			assert.Empty(t, items[i].KernelFrames)
+			assert.Contains(t, items[i].Labels, types.ProfileCPULabel(uint32(i)))
+			assert.Contains(t, items[i].Labels, types.ProfileStringLabel("irq", "source"))
+		}
+
+		assert.Equal(t, int64(3), items[0].Value+items[1].Value)
 	})
 }
 
@@ -246,14 +275,17 @@ func (m *mapMockBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 	if err, ok := m.errs[mapID]; ok {
 		return nil, err
 	}
+
 	keys, ok := m.vals[mapID]
 	if !ok {
 		return nil, errMissingKey
 	}
+
 	v, ok := keys[binary.LittleEndian.Uint32(key)]
 	if !ok {
 		return nil, errMissingKey
 	}
+
 	return v, nil
 }
 
@@ -264,6 +296,7 @@ func TestReadDroppedSamples(t *testing.T) {
 	u64Bytes := func(values ...uint64) []byte {
 		buf := &bytes.Buffer{}
 		_ = binary.Write(buf, binary.LittleEndian, values)
+
 		return buf.Bytes()
 	}
 
@@ -325,6 +358,7 @@ func TestDetachAndReadDroppedSamplesDetachBeforeReads(t *testing.T) {
 	u64Bytes := func(v uint64) []byte {
 		buf := &bytes.Buffer{}
 		_ = binary.Write(buf, binary.LittleEndian, v)
+
 		return buf.Bytes()
 	}
 
@@ -360,51 +394,35 @@ func TestDetachAndReadDroppedSamplesDetachFailureStopsReads(t *testing.T) {
 	assert.Equal(t, []string{"detach"}, m.calls)
 }
 
-func TestVecName(t *testing.T) {
-	tests := []struct {
-		vec  uint32
-		want string
-	}{
-		{0, "HI"},
-		{1, "TIMER"},
-		{2, "NET_TX"},
-		{3, "NET_RX"},
-		{4, "BLOCK"},
-		{5, "IRQ_POLL"},
-		{6, "TASKLET"},
-		{7, "SCHED"},
-		{8, "HRTIMER"},
-		{9, "RCU"},
-		{10, "VEC10"},
-		{99, "VEC99"},
-	}
-	for _, tt := range tests {
-		assert.Equal(t, tt.want, vecName(tt.vec), "vecName(%d)", tt.vec)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// buildFlameGraph
-// ---------------------------------------------------------------------------
-
-func TestBuildFlameGraph(t *testing.T) {
-	startedAt := time.Unix(123, 456)
-
-	t.Run("empty maps return nil", func(t *testing.T) {
+func TestEnqueueIRQStacks(t *testing.T) {
+	t.Run("empty maps submit no samples", func(t *testing.T) {
 		b := &mockBPF{
 			items:      map[string][]bpf.MapItem{},
 			stacks:     map[uint32][]byte{},
 			stackMapID: 99,
 		}
-		data, stacks, err := buildFlameGraph(b, startedAt)
+		var samples []aggregation.Sample
+		err := enqueueIRQStacks(
+			b,
+			func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
+		)
 		assert.NoError(t, err)
-		assert.Nil(t, data)
-		assert.Nil(t, stacks)
+		assert.Empty(t, samples)
 	})
 
-	t.Run("merges source and victim entries into one profile", func(t *testing.T) {
-		srcKey := &bpfabi.IrqtracingStackKey{PID: 11, Vec: 3, UstackID: 1, KstackID: 2}
-		victimKey := &bpfabi.IrqtracingStackKey{PID: 22, Vec: 3, UstackID: 0, KstackID: 3}
+	t.Run("submits source and victim samples", func(t *testing.T) {
+		srcKey := &bpfabi.IrqtracingStackKey{
+			PID:      11,
+			Vec:      3,
+			UstackID: 1,
+			KstackID: 2,
+		}
+		victimKey := &bpfabi.IrqtracingStackKey{
+			PID:      22,
+			Vec:      3,
+			UstackID: 0,
+			KstackID: 3,
+		}
 		copy(srcKey.Comm[:], "raiser")
 		copy(victimKey.Comm[:], "worker")
 		b := &mockBPF{
@@ -421,26 +439,55 @@ func TestBuildFlameGraph(t *testing.T) {
 			stackMapID: 99,
 		}
 
-		data, stacks, err := buildFlameGraph(b, startedAt)
+		var samples []aggregation.Sample
+		err := enqueueIRQStacks(
+			b,
+			func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
+		)
 		assert.NoError(t, err)
-		assert.NotNil(t, data)
-		assert.Len(t, stacks, 2)
-		assert.Equal(t, profiler.ProfileTypeIRQTracingSample, data.ProfileType)
-		assert.Equal(t, startedAt.UnixNano(), data.Profile.TimeNanos)
-		for _, frame := range []string{
-			"source",
-			"source[raiser,NET_RX]",
-			"victim",
-			"victim[worker(22),NET_RX]",
-		} {
-			assert.Contains(t, data.Profile.StringTable, frame)
-		}
-		require.Len(t, data.Profile.Sample, 2)
-		values := []int64{
-			data.Profile.Sample[0].Value[0],
-			data.Profile.Sample[1].Value[0],
-		}
+		require.Len(t, samples, 2)
+		assert.Contains(t, samples[0].Labels, types.ProfileStringLabel("irq", "source"))
+		assert.Contains(t, samples[0].Labels, types.ProfileStringLabel("comm", "raiser"))
+		assert.Contains(t, samples[1].Labels, types.ProfileStringLabel("irq", "victim"))
+		assert.Contains(t, samples[1].Labels, types.ProfilePIDLabel(22))
+		values := []int64{samples[0].Value, samples[1].Value}
 		slices.Sort(values)
 		assert.Equal(t, []int64{1, 2}, values)
 	})
+}
+
+func collectStackSamples(b bpf.BPF) ([]aggregation.Sample, error) {
+	var samples []aggregation.Sample
+	err := enqueueStackMap(
+		b,
+		"source_counts",
+		"source",
+		symbol.NewUsymResolver(),
+		func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
+	)
+
+	return samples, err
+}
+
+func TestEnqueueStackMapRejectsInvalidStackData(t *testing.T) {
+	for _, user := range []bool{false, true} {
+		t.Run(fmt.Sprintf("user=%t", user), func(t *testing.T) {
+			key := &bpfabi.IrqtracingStackKey{
+				UstackID: uint32(bpfabi.IrqtracingStackIDNone),
+				KstackID: 0,
+			}
+			if user {
+				key.UstackID, key.KstackID = 0, uint32(bpfabi.IrqtracingStackIDNone)
+			}
+			obj := &mockBPF{
+				items:      map[string][]bpf.MapItem{"source_counts": {mapItem(key, 1)}},
+				stacks:     map[uint32][]byte{0: {1}},
+				stackMapID: 99,
+			}
+			_, err := collectStackSamples(obj)
+			if !errors.Is(err, bpfmap.ErrInvalidStackData) {
+				t.Fatalf("error = %v, want ErrInvalidStackData", err)
+			}
+		})
+	}
 }

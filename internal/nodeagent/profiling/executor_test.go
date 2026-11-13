@@ -17,9 +17,11 @@ package profiling
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,69 +29,21 @@ import (
 	"github.com/ccfos/huatuo/internal/executil"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/pkg/types"
+	profilingapi "github.com/ccfos/huatuo/pkg/profiling"
 )
 
-type fakeResultPublisher struct {
-	publishCalls int
-}
-
-func (p *fakeResultPublisher) Publish(context.Context, string) error {
-	p.publishCalls++
-	return nil
-}
-
-func TestExecutorClearsExpectedSessionWhenProcessStartFails(t *testing.T) {
-	stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
+func TestExecutorClosesProcessWhenStartFails(t *testing.T) {
+	process, err := executil.New(executil.Spec{Path: filepath.Join(t.TempDir(), "missing-profiler")}, executil.WithMemfdOutput(64, func(string) []string { return nil }))
 	if err != nil {
-		t.Fatalf("toolstream.NewServer() error = %v", err)
+		t.Fatal(err)
 	}
-	process, err := executil.New(executil.Spec{
-		Path: filepath.Join(t.TempDir(), "missing-profiler"),
-	})
-	if err != nil {
-		t.Fatalf("executil.New() error = %v", err)
-	}
-	publisher := &fakeResultPublisher{}
-	executor := newExecutor(process, stream, publisher, "job-1")
-
+	executor := newExecutor(process)
 	if err := executor.Start(t.Context()); err == nil {
-		t.Fatal("Start() error = nil")
+		t.Fatal("Start() succeeded")
 	}
-	if publisher.publishCalls != 0 {
-		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
+	if _, err := process.MemfdOutput(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("process was not closed: %v", err)
 	}
-	if err := stream.ExpectSession(types.ProfilingToolName, "job-1"); err != nil {
-		t.Fatalf("ExpectSession() after failed Start error = %v", err)
-	}
-	stream.CancelSession(types.ProfilingToolName, "job-1")
-}
-
-func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
-	stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
-	if err != nil {
-		t.Fatalf("toolstream.NewServer() error = %v", err)
-	}
-	process, err := executil.New(executil.Spec{Path: "/bin/true"})
-	if err != nil {
-		t.Fatalf("executil.New() error = %v", err)
-	}
-	publisher := &fakeResultPublisher{}
-	executor := newExecutor(process, stream, publisher, "job-1")
-	if err := stream.ExpectSession(types.ProfilingToolName, "job-1"); err != nil {
-		t.Fatalf("ExpectSession() error = %v", err)
-	}
-
-	if err := executor.Finalize(t.Context(), operation.FinalizeDiscard); err != nil {
-		t.Fatalf("Finalize() error = %v", err)
-	}
-	if publisher.publishCalls != 0 {
-		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
-	}
-	if err := stream.ExpectSession(types.ProfilingToolName, "job-1"); err != nil {
-		t.Fatalf("ExpectSession() after Finalize error = %v", err)
-	}
-	stream.CancelSession(types.ProfilingToolName, "job-1")
 }
 
 func TestExecutorFinalizeAlwaysClosesProcess(t *testing.T) {
@@ -101,15 +55,11 @@ func TestExecutorFinalizeAlwaysClosesProcess(t *testing.T) {
 	}{
 		{"discard", operation.FinalizeDiscard, false, false},
 		{"canceled finalization", operation.FinalizePublish, true, true},
-		{"stream failure", operation.FinalizePublish, false, true},
+		{"published", operation.FinalizePublish, false, false},
 		{"invalid mode", operation.FinalizeMode(255), false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
-			if err != nil {
-				t.Fatal(err)
-			}
 			process, err := executil.New(executil.Spec{Path: "/bin/true"}, executil.WithMemfdOutput(64, func(string) []string { return nil }))
 			if err != nil {
 				t.Fatal(err)
@@ -120,8 +70,7 @@ func TestExecutorFinalizeAlwaysClosesProcess(t *testing.T) {
 			if err := process.Wait(); err != nil {
 				t.Fatal(err)
 			}
-			publisher := &fakeResultPublisher{}
-			executor := newExecutor(process, stream, publisher, "job-1")
+			executor := newExecutor(process)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tt.cancel {
@@ -134,24 +83,7 @@ func TestExecutorFinalizeAlwaysClosesProcess(t *testing.T) {
 			if _, err := process.MemfdOutput(); !errors.Is(err, os.ErrClosed) {
 				t.Fatalf("MemfdOutput(): %v", err)
 			}
-			if publisher.publishCalls != 0 {
-				t.Fatal("unexpected publication")
-			}
 		})
-	}
-}
-
-func TestExecutorClosesProcessWhenSessionRegistrationFails(t *testing.T) {
-	process, err := executil.New(executil.Spec{Path: "/bin/true"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	executor := newExecutor(process, nil, &fakeResultPublisher{}, "job-1")
-	if err := executor.Start(t.Context()); !errors.Is(err, toolstream.ErrNotInitialized) {
-		t.Fatalf("Start(): %v", err)
-	}
-	if err := process.Start(t.Context()); !errors.Is(err, executil.ErrProcessClosed) {
-		t.Fatalf("process was not closed: %v", err)
 	}
 }
 
@@ -168,10 +100,6 @@ func (w *readySignalWriter) Write(data []byte) (int, error) {
 func TestExecutorStopAndFinalizeKeepExecutionSeparate(t *testing.T) {
 	for _, trap := range []string{"", "trap 'exit 7' TERM; "} {
 		t.Run(trap, func(t *testing.T) {
-			stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
-			if err != nil {
-				t.Fatal(err)
-			}
 			ready := &readySignalWriter{ready: make(chan struct{})}
 			process, err := executil.New(executil.Spec{
 				Path: "/bin/sh", Args: []string{"-c", trap + "printf ready; while :; do :; done"},
@@ -185,7 +113,7 @@ func TestExecutorStopAndFinalizeKeepExecutionSeparate(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			executor := newExecutor(process, stream, &fakeResultPublisher{}, "stopped-job")
+			executor := newExecutor(process)
 			if err := executor.Start(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -210,6 +138,91 @@ func TestExecutorStopAndFinalizeKeepExecutionSeparate(t *testing.T) {
 			}
 			if err := executor.Finalize(t.Context(), operation.FinalizeDiscard); err != nil {
 				t.Fatalf("Finalize repeated execution failure: %v", err)
+			}
+		})
+	}
+}
+
+func TestExecutorCommitClient(t *testing.T) {
+	socket := os.Getenv("HUATUO_TEST_COMMIT_SOCKET")
+	if socket == "" {
+		return
+	}
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{ServiceName: profilingapi.StoreServiceName, SockPath: socket, ToolName: "profiler", Version: "test", TaskID: "job"})
+	if err == nil {
+		defer client.Close()
+		err = client.Send(t.Context(), nil, toolstream.SendOptions{End: true, Commit: true})
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func TestExecutorWaitIncludesCommitResult(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			socket := filepath.Join(t.TempDir(), "commit.sock")
+			server, err := toolstream.NewServer(socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			toolstream.Register(server, profilingapi.StoreServiceName, func(_ context.Context, request *toolstream.Request[int]) error {
+				if !request.Commit {
+					return nil
+				}
+				close(entered)
+				<-release
+				if fail {
+					return errors.New("publication unavailable")
+				}
+				return nil
+			})
+			if err := server.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = server.Close() })
+			t.Cleanup(unblock)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			process, err := executil.New(executil.Spec{
+				Path: os.Args[0], Args: []string{"-test.run=^TestExecutorCommitClient$"},
+				Env:            append(os.Environ(), "HUATUO_TEST_COMMIT_SOCKET="+socket),
+				MaxStderrBytes: 1024,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = process.Close() })
+			executor := newExecutor(process)
+			if err := executor.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-entered:
+			case <-process.Done():
+				t.Fatalf("process exited before commit: %v", executor.Wait())
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			select {
+			case <-process.Done():
+				t.Fatal("process exited before commit completed")
+			default:
+			}
+			unblock()
+			err = executor.Wait()
+			if (err != nil) != fail {
+				t.Fatalf("Wait(): %v", err)
+			}
+			if fail && !strings.Contains(err.Error(), "publication unavailable") {
+				t.Fatalf("Wait() lost commit error: %v", err)
+			}
+			if err := executor.Finalize(ctx, operation.FinalizePublish); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

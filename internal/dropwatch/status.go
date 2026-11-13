@@ -69,6 +69,15 @@ func (s *Tracer) ReadStatus() (status types.DropwatchStatus, returnErr error) {
 		)
 	}
 
+	if len(raw) != abi.BPFRatelimitEventSize {
+		return types.DropwatchStatus{}, fmt.Errorf(
+			"decode dropwatch BPF map %q: value size %d, want %d",
+			rateLimitStateMapName,
+			len(raw),
+			abi.BPFRatelimitEventSize,
+		)
+	}
+
 	var state abi.BPFRatelimitEvent
 	if _, err := binary.Decode(raw, binary.NativeEndian, &state); err != nil {
 		return types.DropwatchStatus{}, fmt.Errorf(

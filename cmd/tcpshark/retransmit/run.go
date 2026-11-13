@@ -35,9 +35,10 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	group, groupCtx := errgroup.WithContext(ctx)
 
 	// Establish output before attaching probes; deferred cleanup ends it last.
-	sink, sinkCleanup, err := newWriter(cfg.Output, &writerOptions{
+	sink, sinkCleanup, err := newWriter(groupCtx, cfg.Output, &writerOptions{
 		outputFormat: cfg.OutputFormat,
 		socketPath:   cfg.OutputStorage,
 		toolName:     cfg.ToolName,
@@ -48,7 +49,7 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 		return err
 	}
 	defer func() {
-		if err := sinkCleanup(); err != nil {
+		if err := sinkCleanup(); err != nil && !errors.Is(returnErr, err) {
 			returnErr = errors.Join(returnErr, fmt.Errorf("close output: %w", err))
 		}
 	}()
@@ -61,7 +62,6 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 		}
 	}
 
-	group, groupCtx := errgroup.WithContext(ctx)
 	retransmitTracer, err := Open(groupCtx, &cfg.Tracing)
 	if err != nil {
 		return err

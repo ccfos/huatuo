@@ -14,12 +14,15 @@
 
 package provider
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
-func validatePythonAggregationWindow(duration, interval int) error {
+func validatePythonAggregationWindow(duration, interval time.Duration) error {
 	if duration != interval {
 		return fmt.Errorf(
-			"Python CPU profiler does not support continuous profiling: aggregation interval (%ds) must equal duration (%ds)",
+			"Python CPU profiler does not support continuous profiling: aggregation interval (%s) must equal duration (%s)",
 			interval,
 			duration,
 		)

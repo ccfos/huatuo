@@ -25,12 +25,12 @@ import (
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/pod"
-	"github.com/ccfos/huatuo/internal/server/response"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
@@ -38,14 +38,15 @@ import (
 
 // NodeAPIHandler implements the generated Node Agent Strict Server.
 type NodeAPIHandler struct {
-	operationManager  *operation.Manager
-	profiling         *nodeprofiling.Service
-	tracing           *nodetracing.Service
-	cloudEvents       *nodecloudevents.Service
-	keepAliveInterval time.Duration
-	updateConfig      func(map[string]any) error
-	containerByID     func(string) (*pod.Container, error)
-	openAPI           nodeapi.GetOpenAPI200JSONResponse
+	operationManager     *operation.Manager
+	profiling            *nodeprofiling.Service
+	tracing              *nodetracing.Service
+	cloudEvents          *nodecloudevents.Service
+	keepAliveInterval    time.Duration
+	updateConfig         func(map[string]any) error
+	containerByID        func(string) (*pod.Container, error)
+	containerCSSBySubsys func(string, string) (pod.CgroupCSSRef, error)
+	openAPI              nodeapi.GetOpenAPI200JSONResponse
 }
 
 // NodeAPIHandlerOptions groups the services required by the Node API adapter.
@@ -184,14 +185,15 @@ func NewNodeAPIHandler(options *NodeAPIHandlerOptions) (*NodeAPIHandler, error) 
 		return nil, fmt.Errorf("create Node API handler: decode bundled OpenAPI: %w", err)
 	}
 	return &NodeAPIHandler{
-		operationManager:  options.OperationManager,
-		profiling:         options.ProfilingService,
-		tracing:           options.TracingService,
-		cloudEvents:       options.CloudEventsService,
-		keepAliveInterval: options.EventStreamKeepAliveInterval,
-		updateConfig:      config.UpdateAndSync,
-		containerByID:     pod.ContainerByID,
-		openAPI:           specification,
+		operationManager:     options.OperationManager,
+		profiling:            options.ProfilingService,
+		tracing:              options.TracingService,
+		cloudEvents:          options.CloudEventsService,
+		keepAliveInterval:    options.EventStreamKeepAliveInterval,
+		updateConfig:         config.UpdateAndSync,
+		containerByID:        pod.ContainerByID,
+		containerCSSBySubsys: pod.ContainerCSSBySubsys,
+		openAPI:              specification,
 	}, nil
 }
 

@@ -151,6 +151,47 @@ func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
+func TestPerfEventRawReader_Flush_ProgTest(t *testing.T) {
+	requireBPFPermission(t)
+
+	events := perfEventArray(t)
+	reader, err := newPerfEventRawReader(
+		t.Context(),
+		events,
+		PerfEventReaderOptions{
+			PerCPUBufferBytes: 4097,
+			WatermarkBytes:    4096,
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	require.Equal(t, 8192, reader.PerCPUBufferSize())
+
+	const sampleSize = 8
+	prog := outputSamplesProg(t, events, sampleSize)
+	ret, _, err := prog.Test(emptyBpfContext)
+	if errors.Is(err, ebpf.ErrNotSupported) {
+		t.Skipf("skipping: ebpf not supported: %v", err)
+	}
+	require.NoError(t, err)
+	require.Zero(t, ret)
+
+	require.NoError(t, reader.Flush())
+	var record PerfEventRawRecord
+	require.NoError(t, reader.ReadRawInto(&record))
+	require.GreaterOrEqual(t, len(record.RawSample), sampleSize)
+	require.Equal(t, byte(sampleSize), record.RawSample[0])
+	require.Equal(t, byte(0), record.RawSample[1])
+	require.Zero(t, record.LostSamples)
+	require.GreaterOrEqual(t, record.RemainingBytes, 0)
+	require.Equal(
+		t,
+		perfEventHeaderSize+perfEventRawSizeFieldSize+len(record.RawSample),
+		record.PerfRecordSize,
+	)
+	require.ErrorIs(t, reader.ReadRawInto(&record), ErrPerfEventReaderFlushed)
+}
+
 func newTestPerfEventReader(t *testing.T, ctx context.Context) PerfEventReader {
 	t.Helper()
 
@@ -286,4 +327,149 @@ func outputSamplesProg(tb testing.TB, events *ebpf.Map, sampleSizes ...byte) *eb
 		}
 	})
 	return prog
+}
+
+func TestPerfEventReaderReadBatchDoesNotWaitForMoreEvents(t *testing.T) {
+	requireBPFPermission(t)
+	for _, populated := range []bool{false, true} {
+		name := "empty"
+		if populated {
+			name = "populated"
+		}
+		t.Run(name, func(t *testing.T) {
+			events := perfEventArray(t)
+			reader, err := newPerfEventReader(t.Context(), events, 4096)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reader.Close()) })
+			if populated {
+				prog := outputSamplesProg(t, events, 8, 8)
+				ret, _, err := prog.Test(emptyBpfContext)
+				require.NoError(t, err)
+				require.Zero(t, ret)
+			}
+			batch, err := readAvailableForTest(t, reader, func() any { return new([8]byte) })
+			require.NoError(t, err)
+			require.Zero(t, batch.LostSamples)
+			if populated {
+				require.Len(t, batch.Events, 2)
+				require.Equal(t, byte(0), batch.Events[0].(*[8]byte)[1])
+				require.Equal(t, byte(1), batch.Events[1].(*[8]byte)[1])
+			} else {
+				require.Empty(t, batch.Events)
+			}
+			batch, err = readAvailableForTest(t, reader, func() any { return new([8]byte) })
+			require.NoError(t, err)
+			require.Empty(t, batch.Events)
+		})
+	}
+}
+
+func TestPerfEventReaderReadBatchHonorsCancellation(t *testing.T) {
+	requireBPFPermission(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	reader, err := newPerfEventReader(ctx, perfEventArray(t), 4096)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	cancel()
+	batch, err := readAvailableForTest(t, reader, func() any { return new([8]byte) })
+	require.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	require.Empty(t, batch.Events)
+}
+
+func TestPerfEventReaderReadBatchBelowWatermark(t *testing.T) {
+	requireBPFPermission(t)
+	events := perfEventArray(t)
+	rd, err := perf.NewReaderWithOptions(events, 4096, perf.ReaderOptions{Watermark: 2048})
+	require.NoError(t, err)
+	reader := newPerfEventReaderFromReader(t.Context(), rd)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	prog := outputSamplesProg(t, events, 8)
+	ret, _, err := prog.Test(emptyBpfContext)
+	require.NoError(t, err)
+	require.Zero(t, ret)
+	batch, err := readAvailableForTest(t, reader, func() any { return new([8]byte) })
+	require.NoError(t, err)
+	require.Len(t, batch.Events, 1)
+	require.Equal(t, byte(8), batch.Events[0].(*[8]byte)[0])
+}
+
+func TestPerfEventReaderReadBatchDrainsMultipleCPUs(t *testing.T) {
+	requireBPFPermission(t)
+	runtime.LockOSThread()
+	var original unix.CPUSet
+	if err := unix.SchedGetaffinity(0, &original); err != nil {
+		runtime.UnlockOSThread()
+		t.Fatal(err)
+	}
+	defer func() { require.NoError(t, unix.SchedSetaffinity(0, &original)); runtime.UnlockOSThread() }()
+	if original.Count() < 2 {
+		t.Skip("requires two allowed CPUs")
+	}
+	events := perfEventArray(t)
+	reader, err := newPerfEventReader(t.Context(), events, 4096)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	prog := outputSamplesProg(t, events, 8)
+	emitted := 0
+	for cpu := 0; cpu < 1024 && emitted < 2; cpu++ {
+		if !original.IsSet(cpu) {
+			continue
+		}
+		var mask unix.CPUSet
+		mask.Set(cpu)
+		require.NoError(t, unix.SchedSetaffinity(0, &mask))
+		ret, _, err := prog.Test(emptyBpfContext)
+		require.NoError(t, err)
+		require.Zero(t, ret)
+		emitted++
+	}
+	require.Equal(t, 2, emitted)
+	batch, err := readAvailableForTest(t, reader, func() any { return new([8]byte) })
+	require.NoError(t, err)
+	require.Len(t, batch.Events, 2)
+	require.Zero(t, batch.LostSamples)
+}
+
+func readAvailableForTest(t *testing.T, reader PerfEventReader, factory func() any) (PerfEventBatch, error) {
+	t.Helper()
+	return reader.ReadBatch(factory, WithReadBatchDeadline(time.Now()))
+}
+
+func TestPerfEventReaderReadBatchPreservesBlockingWait(t *testing.T) {
+	requireBPFPermission(t)
+	reader, err := newPerfEventReader(t.Context(), perfEventArray(t), 4096)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	// A preceding available-only call must not change the next call's default.
+	_, err = reader.ReadBatch(func() any { return new([8]byte) }, WithReadBatchDeadline(time.Now()))
+	require.NoError(t, err)
+	start := time.Now()
+	batch, err := reader.ReadBatch(func() any { return new([8]byte) })
+	require.NoError(t, err)
+	require.Empty(t, batch.Events)
+	require.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond, "off-CPU readers must retain an idle wait")
+}
+
+func TestPerfEventReaderReadBatchZeroDeadline(t *testing.T) {
+	requireBPFPermission(t)
+	reader, err := newPerfEventReader(t.Context(), perfEventArray(t), 4096)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	done := make(chan error, 1)
+	go func() {
+		_, err := reader.ReadBatch(func() any { return new([8]byte) }, WithReadBatchDeadline(time.Time{}))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("unbounded empty read returned before close: %v", err)
+	case <-time.After(2 * readBatchDeadline):
+	}
+	require.NoError(t, reader.Close())
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not unblock ReadBatch with zero deadline")
+	}
 }

@@ -33,8 +33,8 @@
 // Use New and Start for asynchronous execution. Start's context only controls
 // launch. Wait or Done observes completion; canceling Start's context after it
 // returns does not stop the command. Run controls the entire lifetime.
-// Stop sends SIGTERM, then SIGKILL at the earlier of StopGracePeriod (five seconds
-// by default) and its context's cancellation. Run cancellation uses the configured
+// Stop sends StopSignal (default SIGTERM), then SIGKILL at the earlier of
+// StopGracePeriod (five seconds by default) and its context's cancellation. Run cancellation uses the configured
 // grace period independently of the canceled run context. Close immediately
 // forces termination. Neither cancellation nor Close can impose a hard return
 // deadline on kernel reaping or a blocked caller-provided writer.

@@ -23,7 +23,7 @@ source "${ROOT_DIR}/integration/config.sh"
 
 integration_huatuo_bamai_start
 
-if ! huatuo_bamai_log_check; then
+if ! assert_huatuo_bamai_log_clean; then
 	fatal "startup log contains an error, panic, or fatal message"
 fi
 
@@ -32,10 +32,10 @@ mkdir -p "${STARTUP_LOG_FIXTURE}"
 for startup_log_line in 'level=error msg="failure"' 'level="error" msg="failure"' \
 	'level=panic msg="failure"' 'level=fatal msg="failure"' 'panic: runtime failure'; do
 	printf '%s\n' "${startup_log_line}" > "${STARTUP_LOG_FIXTURE}/huatuo.log"
-	if HUATUO_BAMAI_TEST_TMPDIR="${STARTUP_LOG_FIXTURE}" huatuo_bamai_log_check > /dev/null 2>&1; then
+	if HUATUO_BAMAI_TEST_TMPDIR="${STARTUP_LOG_FIXTURE}" assert_huatuo_bamai_log_clean > /dev/null 2>&1; then
 		fatal "log checker accepted a failure: ${startup_log_line}"
 	fi
 done
 printf '%s\n' 'level=info msg="error and panic fields are available"' > "${STARTUP_LOG_FIXTURE}/huatuo.log"
-HUATUO_BAMAI_TEST_TMPDIR="${STARTUP_LOG_FIXTURE}" huatuo_bamai_log_check \
+HUATUO_BAMAI_TEST_TMPDIR="${STARTUP_LOG_FIXTURE}" assert_huatuo_bamai_log_clean \
 	|| fatal "log checker rejected an ordinary info message"

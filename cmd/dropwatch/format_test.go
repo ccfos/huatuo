@@ -16,12 +16,20 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"capnproto.org/go/capnp/v3"
+
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
@@ -289,5 +297,141 @@ func TestFormatSoftwareReason(t *testing.T) {
 	}
 	if got.DropSource != "software" || got.DropReason != "SKB_DROP_REASON_TCP_CSUM" || got.DropReasonGroup != "" {
 		t.Fatalf("software drop = %+v", got)
+	}
+}
+
+func TestSocketOutputCancellation(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "test",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sink.(*socketWriter).client.Close() }()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	message, err := capnp.NewDecoder(peer).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.Release()
+	done := make(chan error, 1)
+	go func() { done <- sink.Write(&types.DropWatchTracing{Stack: strings.Repeat("x", 1<<20)}) }()
+	var first [1]byte
+	if _, err := io.ReadFull(peer, first[:]); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, toolstream.ErrOutputTimeout) || errors.Is(err, toolstream.ErrOutputCanceled) {
+			t.Fatalf("Write = %v, want send timeout", err)
+		}
+	case <-time.After(toolstream.DefaultSendTimeout + time.Second):
+		_ = peer.Close()
+		<-done
+		t.Fatal("blocked output exceeded send timeout")
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup after cancellation: %v", err)
+	}
+}
+
+func TestSocketOutputCancellationKeepsFinalFrames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "test",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sink.(*socketWriter).client.Close() }()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if err := peer.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	decoder := capnp.NewDecoder(peer)
+	message, err := decoder.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.Release()
+	done := make(chan error, 1)
+	go func() { done <- sink.Write(&types.DropWatchTracing{Stack: strings.Repeat("x", 1<<20)}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("large write completed without a reader: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	message, err = decoder.Decode()
+	if err != nil {
+		_ = peer.Close()
+		<-done
+		t.Fatal(err)
+	}
+	message.Release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Write(&types.DropWatchTracing{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	for _, wantEnd := range []bool{false, true} {
+		message, err := decoder.Decode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err := transport.ReadRootMessage(message)
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+		chunk, err := root.Chunk()
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+		gotEnd := chunk.End()
+		message.Release()
+		if gotEnd != wantEnd {
+			t.Fatalf("End = %v, want %v", gotEnd, wantEnd)
+		}
+	}
+	if _, err := decoder.Decode(); !errors.Is(err, io.EOF) {
+		t.Fatalf("after End = %v, want EOF", err)
 	}
 }

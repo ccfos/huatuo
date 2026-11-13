@@ -6,119 +6,129 @@ type: docs
 weight: 1
 ---
 
->为帮助大家快速体验、部署 HUATUO, 该文档分别从 [极速体验](#1-极速体验)，[容器启动](#2-容器启动)，[编译部署](#3-编译部署) 三部分说明。
+本文提供三条使用路径：[查看示例](#查看示例)、[运行容器](#运行容器)和[源码构建](#源码构建)。在本机运行采集器需要 Linux 环境；容器方式还需安装 Docker，并具备示例所需的权限。
 
-### 1. 极速体验
+## 查看示例
 
-你可以直接登陆[示例网站](http://console.huatuo.tech)访问前端监控大盘示例，如内核指标、异常事件、火焰图等（账户：huatuo 密码：huatuo1024）。
+登录[示例网站](http://console.huatuo.tech)查看内核指标、异常事件和火焰图。示例账户为 `huatuo`，密码为 `huatuo1024`。
 
-- [Events, AutoTracing 大盘（持续完善）](http://console.huatuo.tech/d/autotracing-event)
+- [事件与自动追踪](http://console.huatuo.tech/d/autotracing-event)
 
-    ![autotracing-event demo diagram​](/docs/img/quickstart-autotracing-event.png)
+  ![事件与自动追踪仪表盘](/docs/img/quickstart-autotracing-event.png)
 
-- [宿主机 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-host)
+- [宿主机指标](http://console.huatuo.tech/d/metrics-host)
 
-    ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)
+  ![宿主机指标仪表盘](/docs/img/quickstart-metrics-host.png)
 
-- [容器 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-container)
-    
-    ![metrics-container demo diagram](/docs/img/quickstart-metrics-container.png)
+- [容器指标](http://console.huatuo.tech/d/metrics-container)
 
-### 2. 容器启动
+  ![容器指标仪表盘](/docs/img/quickstart-metrics-container.png)
 
-![HUATUO 组件数据流示意图](/docs/img/quickstart-data-flow.png)
+## 运行容器
 
-#### 2.1 Docker 启动
+![HUATUO 组件数据流](/docs/img/quickstart-data-flow.png)
 
-通过 docker 启动已经编译好的容器镜像（注意：该方式默认关闭了获取容器信息功能，和 ES 存储功能）。
+### Docker
 
-1. 启动容器：
+以下镜像默认关闭容器信息获取和 Elasticsearch 存储。启动采集器：
+
 ```bash
 $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
-2. 获取指标：打开另外一个终端，通过 curl 获取。
+在另一个终端获取指标：
+
 ```bash
 $ curl -s localhost:19704/metrics
 ```
 
-3. 查看异常事件 (Events, AutoTracing)：HUATUO 会将采集到的内核异常事件信息在 ES （已关闭），和本地目录 `huatuo-local` 分别存储。注意：通常该路径下没有任何文件（正常状态的系统不会触发事件采集），你可以通过构造异常场景或者修改配置文件阈值产生事件。
+接口返回 Prometheus 格式的指标时，说明指标服务可访问。事件和自动追踪结果写入容器内的 `huatuo-local` 目录；未触发采集时，目录可能没有记录。可在测试环境构造目标活动或调整对应阈值，再检查记录。
 
+### Docker Compose
 
-#### 2.2 Docker Compose 启动
-
-通过 docker compose，可以快速地在本地搭建部署一套完整的环境。该命令拉取最新镜像，启动 [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai 等组件。命令执行成功后，打开浏览器访问 [http://localhost:3000](http://localhost:3000) 即可浏览监控大盘（grafana 默认管理员账户：admin 密码：admin； 系统正常状态不会触发 Events, AutoTracing）。
+在仓库根目录执行以下命令，启动 [Elasticsearch](https://www.elastic.co)、[Prometheus](https://prometheus.io)、[Grafana](https://grafana.com) 和 HUATUO 组件：
 
 ```bash
 $ docker compose --project-directory ./build/docker up
 ```
 
-![HUATUO 组件之 huatuo-bamai 运行示意图](/docs/img/quickstart-components.png)
+服务启动后访问 [Grafana](http://localhost:3000)，默认管理员账户和密码均为 `admin`。事件与自动追踪面板仅在有对应采集结果时显示数据。数据源和仪表盘配置见[数据源配置](/docs/best-practice/datasource_zh.md)。
 
+![huatuo-bamai 运行流程](/docs/img/quickstart-components.png)
 
-### 3. 编译部署
-#### 3.1 编译
-为隔离开发者本地环境和简化编译流程，我们提供容器化编译，你可以直接通过 docker build，构建完成的镜像（包含底层采集器 huatuo-bamai、bpf obj、工具等）。在项目根目录运行：
+## 源码构建
+
+### 构建镜像
+
+在项目根目录构建包含 `huatuo-bamai`、BPF 对象及工具的镜像：
 
 ```bash
 $ docker build --network host -t huatuo/huatuo-bamai:latest .
 ```
 
-#### 3.2 运行
+### 运行采集器
 
-运行容器：
+运行构建出的镜像：
+
 ```bash
 $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
-或从容器 `/home/huatuo-bamai` 路径下拷贝出所有文件后本地手动运行：
+也可复制容器 `/home/huatuo-bamai` 下的文件后，在本地运行：
+
 ```bash
 $ ./huatuo-bamai --region example --config huatuo-bamai.conf
 ```
 
-注意：可使用 systemd/supervisord/k8s-DaemonSet 等方式托管运行。
+长期运行时，按环境选择 [systemd](/docs/deployment/systemd_zh.md) 或 [Kubernetes](/docs/deployment/kubernetes_zh.md) 部署。
 
-#### 3.3 配置
-1. 配置容器信息
-    HUATUO 通过调用 kubelet 接口获取POD/容器信息。你可以根据实际环境配置访问接口和证书，KubeletAuthorizedPort = 0, KubeletReadOnlyPort = 0 表示禁用该功能。
-    ```yml
-      [Pod]
-        KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
-    ```
+## 配置
 
-2. 配置存储
-    - **指标存储 (Metric)**: 所有的指标都存储在 prometheus，你可以通过访问 :19704/metrics 接口获取指标。 
-    - **异常事件存储 (Events, AutoTracing)**: 所有的内核事件，和 Autotracing 事件都存储在 ES。注意：如果配置为空表示不启动 ES 存储，只在本地目录 `huatuo-local` 存储事件。
+完整字段、默认值和生效条件见[节点配置](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
-        ES 存储配置如下：
-        ```yaml
-        [Storage.Elasticsearch]
-            Address = "http://127.0.0.1:9200"
-            Username = "elastic"
-            Password = "huatuo-bamai"
-            Index = "huatuo_bamai"
-        ```
+### 容器信息
 
-        本地存储配置如下：
-        ```yaml
-        # tracer's record data
-        # Path: all but the last element of path for per tracer
-        # RotationSizeMiB：单个记录文件轮转前的最大容量
-        # MaxRotatedFiles：保留的轮转文件数量上限
-        [Storage.LocalFile]
-            Path = "huatuo-local"
-            RotationSizeMiB = 100
-            MaxRotatedFiles = 10
-        ```
+HUATUO 通过 kubelet 接口获取 Pod 和容器信息。按实际环境设置端口与证书；`KubeletAuthorizedPort` 和 `KubeletReadOnlyPort` 均为 `0` 时关闭该功能。
 
-3. 事件阈值
-    所有的内核事件采集 Events 和 AutoTracing 都可以配置触发阈值。默认的阈值都是在实际生产环境反复验证后的经验数据，你可以根据自身需求，在 huatuo-bamai.conf 中修改阈值。
+```toml
+  [Pod]
+    KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
+```
 
-4. 资源限制
-    Kubernetes 和 systemd 部署默认由 kubelet 或 systemd 管理 Huatuo 的 cgroup，Huatuo 不会迁移自身 PID。只有直接运行且没有外部管理器时，才使用 `--enable-cgroup` 并配置：
-    ```toml
-    [Runtime]
-        StartupCPULimitCores = 0.5
-        CPULimitCores = 2.0
-        MemoryLimitMiB = 2048
-    ```
+### 存储
+
+指标由 `:19704/metrics` 暴露，需配置 Prometheus 抓取和保存。事件与自动追踪结果按已启用的存储后端写入。以下分别为 Elasticsearch 和本地文件配置示例：
+
+```toml
+[Storage.Elasticsearch]
+    Address = "http://127.0.0.1:9200"
+    Username = "elastic"
+    Password = "huatuo-bamai"
+    Index = "huatuo_bamai"
+```
+
+```toml
+# tracer's record data
+# Path: all but the last element of path for per tracer
+# RotationSizeMiB：单个记录文件轮转前的最大容量
+# MaxRotatedFiles：保留的轮转文件数量上限
+[Storage.LocalFile]
+    Path = "huatuo-local"
+    RotationSizeMiB = 100
+    MaxRotatedFiles = 10
+```
+
+### 事件阈值
+
+按业务负载调整 `huatuo-bamai.conf` 中支持配置的事件和自动追踪阈值。触发条件、适用范围及默认值因采集器而异，应在目标环境验证。
+
+### 资源限制
+
+Kubernetes 和 systemd 部署默认由 kubelet 或 systemd 管理 HUATUO 的 cgroup，HUATUO 不会迁移自身 PID。只有直接运行且没有外部管理器时，才使用 `--enable-cgroup` 并配置：
+
+```toml
+[Runtime]
+    StartupCPULimitCores = 0.5
+    CPULimitCores = 2.0
+    MemoryLimitMiB = 2048
+```

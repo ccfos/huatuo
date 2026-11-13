@@ -28,7 +28,7 @@ func validateIRQTracingConfig(config IRQTracingConfig) error {
 	if err := validateTimerSeconds(config.IntervalTracing); err != nil {
 		return fmt.Errorf("minimum trace interval: %w", err)
 	}
-	if err := validatePerfDurationSeconds(config.RunTracingToolTimeout); err != nil {
+	if err := validateProfileDurationSeconds(config.RunTracingToolTimeout); err != nil {
 		return err
 	}
 	if config.MaxEventsPerSecond < 2 {

@@ -21,8 +21,8 @@ import (
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/server/response"
 )
 
 // UpdateConfig applies one validated configuration batch and persists it.

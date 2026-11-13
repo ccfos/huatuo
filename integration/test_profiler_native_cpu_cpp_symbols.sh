@@ -20,9 +20,13 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
+
+require_native_pid_profiling
+
+require_readable /sys/kernel/btf/vmlinux
 
 require_commands clang
-is_container && skip "native CPU profiler requires the host PID namespace"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-cpp-symbols
 readonly CPP_SYMBOL_FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_cpp_symbols.user.cc"

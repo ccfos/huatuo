@@ -21,13 +21,15 @@ typedef enum {
 } profiler_state_idx;
 
 /*
- * Filter configuration injected via RewriteConstants at load time.
+ * Filter configuration injected by the loader at load time.
+ * Keep rewritten constants global so cilium/ebpf exposes them as variables.
  * Naming follows skb_filter convention for consistency.
  */
-static volatile const u64 profiler_filter_css = 0;
-static volatile const u32 profiler_filter_pid = 0;
-static volatile const bool profiler_filter_threads = false;
-static volatile const u8 profiler_sampling_prob = 100;
+volatile const u64 profiler_filter_css_addr = 0;
+volatile const u64 profiler_filter_cgroup_id = 0;
+volatile const u32 profiler_filter_pid = 0;
+volatile const bool profiler_filter_threads = false;
+volatile const u8 profiler_sampling_prob = 100;
 static volatile const u64 profiler_idle_class_addr = 0;
 
 /*
@@ -39,16 +41,17 @@ static __always_inline bool profiler_should_trace(u64 pid_tgid, u64 css)
 	u32 tgid = pid_tgid >> 32;
 	u32 pid = pid_tgid & 0xffffffffUL;
 
-	if (profiler_filter_css != 0 && css != profiler_filter_css)
+	if (profiler_filter_pid != 0) {
+		if (profiler_filter_threads && tgid != profiler_filter_pid)
+			return false;
+		if (!profiler_filter_threads && pid != profiler_filter_pid)
+			return false;
+	}
+	if (profiler_filter_css_addr != 0 &&
+	    !cgroup_css_matches_ref(css, profiler_filter_css_addr,
+				   profiler_filter_cgroup_id))
 		return false;
-
-	if (profiler_filter_pid == 0)
-		return true;
-
-	if (profiler_filter_threads)
-		return tgid == profiler_filter_pid;
-
-	return pid == profiler_filter_pid;
+	return true;
 }
 
 /*

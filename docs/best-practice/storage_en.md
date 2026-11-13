@@ -1,5 +1,5 @@
 ---
-title: Storage Service
+title: Storage Services
 type: docs
 description: ""
 author: HUATUO Team
@@ -7,68 +7,28 @@ date: 2026-07-27
 weight: 1
 ---
 
-{{% alert color="info" title="🎯 About HUATUO" %}}
-<div style="text-align: center;">
-HUATUO is an open-source OS-level deep observability project initiated by DiDi and incubated by the CCF (China Computer Federation). It provides kernel-level observability for cloud-native computing, AI computing, cloud services, and foundational infrastructure.
-</div>
-{{% /alert %}}
+## Overview
 
-## 📖 Overview
+This guide shows how to write kernel events and AutoTracing results to Elasticsearch or OpenSearch and verify remote records. Examples use specific Docker image versions; protocol, authentication, and index settings must match the target service.
 
-HUATUO supports persisting Linux kernel events collected by the Tracer and AutoTracing data to external storage backends. Both Elasticsearch and OpenSearch are supported.
+Events are written to enabled backends. `[Storage.LocalFile]` controls local files; `[Storage.Elasticsearch]` controls remote storage. They are configured independently. The local directory is not an automatic fallback queue for failed remote writes.
 
-After serialization to JSON, collected events are written concurrently to the local node directory (`huatuo-local/`) and the configured remote storage backend. The local directory retains a local copy of events; the remote backend provides durable storage and structured query capabilities.
+## Choose a Backend
 
-This document covers configuration and verification for both Elasticsearch and OpenSearch. Examples use Docker deployments. In production, replace the addresses with your actual service endpoints — the configuration format is the same.
+Choose one backend for your environment. Before starting the collector, confirm the storage service is accessible and set its address, authentication, and index using [Node Configuration](/docs/configuration/huatuo-bamai-configuration_en.md). For Grafana integration, see [Data Sources](/docs/best-practice/datasource_en.md).
 
----
+## OpenSearch 2.x
 
-## 🎯 Use Cases
-
-### Kubernetes Cloud-Native Fault Tracing
-
-In containerized environments, kernel events such as Pod OOM and node Hung Task are transient — logs are often purged shortly after the event occurs. By writing events to Elasticsearch or OpenSearch, operations teams can query the historical timeline of anomalies by time range and precisely identify the root cause of intermittent failures during post-incident reviews.
-
-### AI Compute Cluster Stability Auditing
-
-During long-running GPU training workloads, the historical distribution of events such as `ras` hardware errors and `iotracing` I/O latency is critical for capacity planning and hardware health assessment. Persisting collected data enables aggregate queries to establish node stability baselines and supports proactive maintenance decisions.
-
-### Compliance and Event Retention
-
-Security compliance standards require that system anomaly events be traceable. Writing HUATUO-captured kernel events to OpenSearch and configuring an index lifecycle policy satisfies compliance requirements for event retention periods and query capabilities.
-
-### Observability Platform Integration
-
-Both Elasticsearch and OpenSearch provide native data source integrations with Grafana. Once HUATUO events are written to storage, you can build kernel event trend dashboards in Grafana, overlaid with application-layer metrics for historical analysis and alert review.
-
----
-
-## 💎 Value
-
-| Dimension | Local Storage Only | With External Storage Backend |
-|---|---|---|
-| Data Durability | Limited by node disk capacity; may be lost on restart | Persisted to distributed storage; supports long-term retention |
-| Query Capability | No structured queries; relies on file search | Full-text search, field filtering, time-range aggregation |
-| Visualization | Not supported | Direct integration with Grafana, Kibana, and similar platforms |
-| Multi-node Aggregation | Data scattered across individual nodes | Centralized storage; supports cross-node queries |
-| Compliance Retention | Difficult to meet retention requirements | Configurable index lifecycle policies; meets compliance retention requirements |
-
----
-
-## 🚀 Usage
-
-### OpenSearch V2
-
-#### 1. Deploy OpenSearch
+### 1. Deploy OpenSearch
 
 ```bash
 docker pull opensearchproject/opensearch:2.6.0
 docker run -d --name opensearch --network host \
-  -e "discovery.type=single-node" \
-  opensearchproject/opensearch:2.6.0
+    -e "discovery.type=single-node" \
+    opensearchproject/opensearch:2.6.0
 ```
 
-#### 2. Verify Service Status
+### 2. Verify Service Status
 
 ```bash
 curl -k -u admin:admin https://localhost:9200
@@ -96,15 +56,15 @@ Example response:
 }
 ```
 
-If verification fails, check the container logs:
+If verification fails, inspect the container logs:
 
 ```bash
 docker logs opensearch
 ```
 
-#### 3. Configure huatuo-bamai
+### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
+Add the following settings to `huatuo-bamai.conf`. This example uses the OpenSearch 2.6.0 image with `admin` as both username and password. See the [configuration guide](/docs/configuration/huatuo-bamai-configuration_en.md) for storage settings.
 
 ```toml
 [Storage.Elasticsearch]
@@ -114,21 +74,21 @@ Add the following configuration to `huatuo-bamai.conf`. The default username and
     Password = "admin"
 ```
 
-#### 4. Start huatuo-bamai
+### 4. Start huatuo-bamai
 
-Use `--config-dir` to specify the directory containing the configuration file:
+Use `--config-dir` to specify the directory containing the configuration:
 
 ```bash
 ./_output/bin/huatuo-bamai --region dev --config-dir .
 ```
 
-When files (e.g., `net_rx_latency`) appear in the local storage directory `huatuo-local/`, kernel events have been successfully captured. Query data from OpenSearch with:
+Generate the target event in a test environment, then query records for the corresponding node and time. A local file confirms only a local write; verify remote writes by querying OpenSearch:
 
 ```bash
 curl -k -u admin:admin \
-  -X GET "https://localhost:9200/huatuo_bamai/_search?pretty" \
-  -H "Content-Type: application/json" \
-  -d '{"query": {"match_all": {}}}'
+    -X GET "https://localhost:9200/huatuo_bamai/_search?pretty" \
+    -H "Content-Type: application/json" \
+    -d '{"query": {"match_all": {}}}'
 ```
 
 Example response:
@@ -162,14 +122,13 @@ Example response:
 }
 ```
 
-To get the total document count without listing individual records:
+The following command counts records only:
 
 ```bash
 curl -k -u admin:admin -X GET "https://localhost:9200/huatuo_bamai/_count?pretty"
 ```
 
-Example response: the `count` value equals the total number of written records.
-
+In the response, `count` is the number of matching records:
 ```json
 {
   "count" : 2680,
@@ -182,22 +141,20 @@ Example response: the `count` value equals the total number of written records.
 }
 ```
 
----
+## Elasticsearch 8.x
 
-### Elasticsearch V8
-
-#### 1. Deploy Elasticsearch
+### 1. Deploy Elasticsearch
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:8.15.5
 docker run -d --name elasticsearch --network host \
-  -e "discovery.type=single-node" \
-  -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
-  -e "ELASTIC_PASSWORD=123456" \
-  docker.elastic.co/elasticsearch/elasticsearch:8.15.5
+    -e "discovery.type=single-node" \
+    -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
+    -e "ELASTIC_PASSWORD=123456" \
+    docker.elastic.co/elasticsearch/elasticsearch:8.15.5
 ```
 
-#### 2. Verify Service Status
+### 2. Verify Service Status
 
 ```bash
 curl -k -u elastic:123456 https://localhost:9200
@@ -225,9 +182,9 @@ Example response:
 }
 ```
 
-#### 3. Configure huatuo-bamai
+### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
+Add the following settings to `huatuo-bamai.conf`. The Elasticsearch image uses the default username `elastic`; set the password through `ELASTIC_PASSWORD`. See the [configuration guide](/docs/configuration/huatuo-bamai-configuration_en.md) for storage settings.
 
 ```toml
 [Storage.Elasticsearch]
@@ -237,21 +194,21 @@ Add the following configuration to `huatuo-bamai.conf`. The default username for
     Password = "123456"
 ```
 
-#### 4. Start huatuo-bamai
+### 4. Start huatuo-bamai
 
-Use `--config-dir` to specify the directory containing the configuration file:
+Use `--config-dir` to specify the directory containing the configuration:
 
 ```bash
 ./_output/bin/huatuo-bamai --region dev --config-dir .
 ```
 
-When files (e.g., `net_rx_latency`) appear in the local storage directory `huatuo-local/`, kernel events have been successfully captured. Query data from Elasticsearch with:
+Generate the target event in a test environment, then query records for the corresponding node and time. A local file confirms only a local write; verify remote writes by querying Elasticsearch:
 
 ```bash
 curl -k -u elastic:123456 \
-  -X GET "https://localhost:9200/huatuo_bamai/_search?pretty" \
-  -H "Content-Type: application/json" \
-  -d '{"query": {"match_all": {}}}'
+    -X GET "https://localhost:9200/huatuo_bamai/_search?pretty" \
+    -H "Content-Type: application/json" \
+    -d '{"query": {"match_all": {}}}'
 ```
 
 Example response:
@@ -285,14 +242,13 @@ Example response:
 }
 ```
 
-To get the total document count without listing individual records:
+The following command counts records only:
 
 ```bash
 curl -k -u elastic:123456 -X GET "https://localhost:9200/huatuo_bamai/_count?pretty"
 ```
 
-Example response: the `count` value equals the total number of written records.
-
+In the response, `count` is the number of matching records:
 ```json
 {
   "count" : 2680,
@@ -305,22 +261,22 @@ Example response: the `count` value equals the total number of written records.
 }
 ```
 
-### Elasticsearch V7
+## Elasticsearch 7.x
 
-Elasticsearch V7 uses HTTP by default. Replace `https` with `http` in all commands.
+This section uses HTTP. Match the address, protocol, and credentials to the actual service configuration.
 
-#### 1. Deploy Elasticsearch
+### 1. Deploy Elasticsearch
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:7.10.1
 docker run -d --name elasticsearch --network host \
-  -e "discovery.type=single-node" \
-  -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
-  -e "ELASTIC_PASSWORD=123456" \
-  docker.elastic.co/elasticsearch/elasticsearch:7.10.1
+    -e "discovery.type=single-node" \
+    -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
+    -e "ELASTIC_PASSWORD=123456" \
+    docker.elastic.co/elasticsearch/elasticsearch:7.10.1
 ```
 
-#### 2. Verify Service Status
+### 2. Verify Service Status
 
 ```bash
 curl -k -u elastic:123456 http://localhost:9200
@@ -348,7 +304,7 @@ Example response:
 }
 ```
 
-#### 3. Configure huatuo-bamai
+### 3. Configure huatuo-bamai
 
 ```toml
 [Storage.Elasticsearch]
@@ -358,253 +314,32 @@ Example response:
     Password = "123456"
 ```
 
-#### 4. Start huatuo-bamai
+### 4. Start huatuo-bamai
 
-Use `--config-dir` to specify the directory containing the configuration file:
+Use `--config-dir` to specify the directory containing the configuration:
 
 ```bash
 ./_output/bin/huatuo-bamai --region dev --config-dir .
 ```
 
-When files (e.g., `net_rx_latency`) appear in the local storage directory `huatuo-local/`, kernel events have been successfully captured. Query data from Elasticsearch with:
+Generate the target event in a test environment, then query records for the corresponding node and time. A local file confirms only a local write; verify remote writes by querying Elasticsearch:
 
 ```bash
 curl -k -u elastic:123456 \
-  -X GET "http://localhost:9200/huatuo_bamai/_search?pretty" \
-  -H "Content-Type: application/json" \
-  -d '{"query": {"match_all": {}}}'
+    -X GET "http://localhost:9200/huatuo_bamai/_search?pretty" \
+    -H "Content-Type: application/json" \
+    -d '{"query": {"match_all": {}}}'
+
+Or:
+curl -k -u elastic:123456 \
+    -X GET "http://localhost:9200/huatuo_bamai/_count?pretty"
 ```
 
-To get the total document count:
+## Verification and Troubleshooting
 
-```bash
-curl -k -u elastic:123456 -X GET "http://localhost:9200/huatuo_bamai/_count?pretty"
-```
+- Check service health first, then query event records for the target node and time range.
+- A higher index count does not necessarily come from the current collection. Check `hostname`, `tracer_name`, and time fields.
+- No records may exist until the target event occurs. Check collection conditions before storage logs.
+- Both local and remote writes can fail. Local records are also subject to rotation and retention limits and are not guaranteed to persist indefinitely.
 
----
-
-## ⚙️ How It Works
-
-### System Architecture
-
-The HUATUO Storage module runs on each node. It writes kernel events captured by the Tracer to the local directory and to Elasticsearch or OpenSearch. Both backends share the same `[Storage.Elasticsearch]` configuration interface and are differentiated by address.
-
-The remote write path uses the ES/OpenSearch **Bulk API** (`_bulk`): events are queued in an in-memory buffer and submitted in batches by background workers based on size and time thresholds, with transport-layer retries on transient failures.
-
-```mermaid
-graph TB
-    subgraph kernel["Linux Kernel"]
-        K1[Kernel Events]
-        K2[AutoTracing]
-    end
-
-    subgraph huatuo["HUATUO Agent (node-level)"]
-        T["Tracer Layer"]
-        L["Local Directory\nhuatuo-local/"]
-        S["Storage Module\nBulkIndexer Buffer"]
-    end
-
-    subgraph backends["Storage Backends"]
-        ES[Elasticsearch]
-        OS[OpenSearch]
-    end
-
-    kernel --> T
-    T --> L
-    T --> S
-    S -->|Bulk API + auto retry| ES
-    S -->|Bulk API + auto retry| OS
-```
-
-### Filter semantics
-
-The internal storage query API combines filters with AND. SQLite and
-Elasticsearch share the following contract for non-null scalar values:
-
-| Operator | Meaning |
-| --- | --- |
-| `OpEq`, `OpNe` | Equal / not equal; missing and null values do not match |
-| `OpGt`, `OpGte`, `OpLt`, `OpLte` | Strict / inclusive range bounds |
-| `OpIn` | Membership in a non-empty slice or array of scalar values |
-| `OpExists`, `OpNotExists` | Has / lacks a non-null queryable value; omit `Value` |
-
-Empty strings are literal values: `OpEq("")` matches an empty string, while
-`OpNe("")` requires an existing, non-null, non-empty string. To query missing
-fields, use `OpNotExists`; `OpEq("")` no longer means field absence. Host profiling
-queries use `OpNotExists` on `container_hostname` to preserve their selection.
-
-Operands accept built-in string, boolean, integer, and finite floating-point
-types. Range comparisons exclude booleans. `time.Time` and `timeutil.Timestamp`
-are normalized to UTC strings with nine fractional digits, including in `OpIn`.
-Nil, pointers, objects, nested collections, and non-finite numbers return
-`driver.ErrInvalidQuery`. Integer range bounds retain their original JSON
-precision; each backend's supported numeric domain and field mapping still apply.
-
-For Elasticsearch, callers must supply the exact indexed field: use the original
-field for a `keyword` mapping, or an explicitly configured keyword subfield such
-as `hostname.keyword` for a `text` mapping. The backend neither guesses subfields
-nor combines text and keyword queries. `OpNe` applies `exists` and `must_not term`
-to the same field. Full-text matching and array equality are outside this scalar
-comparison contract.
-
-Elasticsearch existence refers to indexed values, not `_source` key presence.
-Mapping options such as `ignore_above`, `null_value`, and normalizers can change
-existence or equality behavior. Use mappings that preserve the intended scalar
-values when requiring equivalence with SQLite. A date field cannot be compared
-to an empty string; use an existence operator when the intent is a populated date.
-
-### Write Flow
-
-`Save` returns immediately after the event is buffered. Background workers flush the buffer to the remote backend when **any** of the following triggers fire: byte threshold, time threshold, or process shutdown. The local directory write is synchronous and independent of the remote Bulk path.
-
-```mermaid
-sequenceDiagram
-    participant T as Tracer Layer
-    participant L as Local Directory (huatuo-local/)
-    participant S as Storage Module (BulkIndexer)
-    participant B as ES / OpenSearch
-
-    T->>S: Kernel event captured, serialized to JSON
-    par Local path (sync)
-        S->>L: Write to local file
-    and Remote path (async batch)
-        S->>S: Enqueue into bulk buffer, return immediately
-        Note over S: Flush on 5 MB / 1 s / shutdown
-        S->>B: POST /_bulk (multiple records)
-        B-->>S: 200 OK + per-item results
-        Note over S: Failed items reported via OnFailure callback
-    end
-```
-
-### Bulk Write Mechanism
-
-#### Buffering and Flush Triggers
-
-| Parameter         | Value               | Meaning                                         |
-|-------------------|---------------------|-------------------------------------------------|
-| `FlushBytes`      | 5 MB                | Flush when accumulated bytes reach the threshold |
-| `FlushInterval`   | 1 s                 | Force-flush 1 second after the previous flush    |
-| `NumWorkers`      | 4                   | Concurrent workers submitting Bulk requests      |
-| Process shutdown  | `Close(ctx)`        | SIGTERM/SIGINT triggers a 10 s bounded drain     |
-
-#### Two-Tier Retry Policy
-
-Bulk failures are split into two layers with different retry semantics:
-
-| Layer                | Trigger                                                                       | Behavior                                                                                                  | Retried? |
-|----------------------|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|----------|
-| **Whole-batch retry** | Transport error (connect / timeout / TLS)<br>HTTP status: `429 / 502 / 503 / 504` | Client retries with exponential backoff: 100 ms → 200 ms → 400 ms → 800 ms, up to **3 attempts**            | ✅ auto |
-| **Whole-batch reject**| HTTP status: `400 / 401 / 403 / 404 / 413`, etc.                              | Not retried; all records in the batch are dropped, an error is logged via `OnError`                        | ❌ drop |
-| **Per-item failure**  | 200 OK with per-item error: version conflict, mapping error, document too large| Not retried; only the failed item is dropped, `OnFailure` logs `index/id/status/type/reason`               | ❌ drop |
-| **Per-item success**  | 200 OK with per-item success                                                  | Primary write succeeded; replica failures produce a warning with index, document ID, and failed shard count | —        |
-
-**Why this design**: 429/5xx and transport errors signal transient remote unavailability where retries are effective; 4xx (except 429) and per-item errors are client-side semantic issues (data shape, permissions) where retries would only amplify the failure — they should be surfaced via logs for human investigation.
-
-### Batched Reads
-
-`Query(ctx, query, consume)` calls the consumer synchronously for each nonempty
-batch. `Limit` caps the total records delivered after `Offset` matching records
-are skipped. `storage.Store.Query` requires a positive Limit and non-negative
-Offset and BatchSize before calling a backend; backends consume validated input.
-`BatchSize` controls each batch, defaults to 100 when zero, and is capped by the
-remaining total. Callers must supply a positive total limit when they need data.
-`Count` and `Values` use only `Filters` from the query and ignore `Sorts`, `Limit`,
-`Offset`, and `BatchSize`, including zero and negative pagination values. `Count`
-counts all matching records. `Values` uses its separate `size` argument, whose
-non-negative constraint is checked by `storage.Store.Values` before dispatch;
-backends do not repeat pagination or size validation for these operations.
-Local file storage remains write-only.
-
-SQLite streams one `SELECT ... LIMIT ... OFFSET ...` through rows. A consumer
-must not query the same SQLite backend synchronously while rows hold its single
-connection. Job recovery reads 1000 Jobs at a time using ascending IDs, then
-starts their supervisors after the read closes; status changes cannot shift the
-next page. Elasticsearch 7/8 and OpenSearch use Scroll snapshots, including for
-offsets beyond the result window. Deep offsets still require reading and
-skipping earlier records. Separate API calls do not share a snapshot.
-
-Each batch has independent ownership. Callback errors, decoding errors, backend
-errors, and cancellation stop the query immediately; earlier callback effects
-are not rolled back. Scroll cleanup uses a separate bounded context even after
-cancellation. Query requests are not retried because a lost Scroll response may
-already have advanced the cursor. Write retry behavior is unchanged.
-
-API defaults apply only when `limit` is omitted: Job lists default to 100 with a
-maximum of 1000; raw Profile pages default to 20 with a maximum of 100 and retain
-the 64 MiB response budget. Explicit zero, negative, or oversized limits are rejected. One additional
-record is fetched to determine `has_more`.
-
-Profile flamegraphs merge batches as they arrive, with a total budget of 100000
-windows. One extra record detects overflow and rejects the query with an
-instruction to narrow its time range or filters. Read or merge failure never
-returns a partial flamegraph. Input batches can be released as processing
-advances; the merged profile still grows with distinct stacks.
-
-#### Response Errors
-
-HTTP success does not guarantee a complete result. `Query` and `Values` return
-an error when a search times out or a shard fails. `Query` stops before
-delivering the failing page; already consumed batches remain consumed. `Values`
-does not return partial results.
-`Count` returns zero and an error on shard failure. A search timeout takes
-precedence over shard failures. Shard errors include the failed shard count and
-the first failure's available type, reason, and nested causes.
-
-After an HTTP success response, `DeleteByQuery` checks for timeouts and failures
-in that order and returns the first error with the reported deleted count. HTTP errors
-return zero and an error, except that a missing index returns zero without an error.
-Any completed deletions are not rolled back.
-Direct writes and deletes retain primary-operation success when replicas fail;
-they log a warning with the available failure details. Bulk writes also report
-replica failures through warnings, without retrying the successful primary write.
-
-HTTP errors include the response status and available Elasticsearch error details.
-Unrecognized or oversized error bodies are reported as text, limited to 4 KiB
-plus a truncation marker.
-
-#### Data-Loss Scenarios
-
-In all three scenarios below, `Save` returns `nil` but the event never reaches the index:
-
-1. **Abnormal process exit**: `SIGKILL` or host power loss drops whatever is still buffered in the BulkIndexer (the local directory still keeps a copy).
-   - Mitigation: SIGTERM/SIGINT trigger graceful shutdown; `Close` force-flushes the buffer with a 10 s deadline.
-2. **Whole-batch permanent rejection**: 4xx (non-429) errors discard every record in the batch. Common causes: disabled index, expired credentials, document exceeding the cluster's `http.max_content_length`.
-   - Diagnosis: `OnError` log includes ES's `type` and `reason`.
-3. **Permanent per-item failure**: mapping conflict, version conflict, malformed document.
-   - Diagnosis: `OnFailure` log identifies the record by `index/id`.
-
-> **The local directory is always a fallback**: even if remote writes are lost, events remain available in `huatuo-local/` as the eventual-consistency safety net.
-
-#### Problems This Solves
-
-Replacing per-event Index API calls with a buffered BulkIndexer + auto-retry addresses four classes of problems:
-
-| Problem                                  | Old approach bottleneck                                 | Bulk approach improvement                                            |
-|------------------------------------------|---------------------------------------------------------|----------------------------------------------------------------------|
-| **TLS handshake CPU cost**               | One HTTPS handshake per event saturated CPU under FIPS/RSA-PSS | Many events share one connection and one handshake; TLS PSK tickets cached |
-| **Remote RTT throughput ceiling**        | One round-trip per event capped node-level write rate    | One Bulk request carries up to 5 MB; throughput scales with batch size |
-| **Transient remote jitter / 429 throttle** | A single failure dropped the event with no retry         | Client-level retry absorbs short-lived faults                         |
-| **Decoupling tracer layer from backend** | Slow remote backed pressure into capture, delaying tracing | Async buffer decouples capture from network — capture is no longer blocked on remote latency |
-
----
-
-## 🌟 Stay Connected
-
-{{% alert color="info" %}}
-<div style="text-align: center;">
-🌟 Star us on GitHub: <a href="https://github.com/ccfos/huatuo" target="_blank">https://github.com/ccfos/huatuo</a>
-<br><br>
-👀 Follow our official WeChat public account<br>
-<img src="/img/contact-weixin.png" alt="WeChat QR code" style="max-width: 200px; margin-top: 10px;">
-</div>
-{{% /alert %}}
-
-### Kernel observation time
-
-Event documents can include a top-level `kernel_observed_timestamp` containing
-a UTC date-time. `observed_timestamp` is userspace observation time, and
-`uploaded_timestamp` is storage write time. These fields do not fill one
-another. Older documents and events without kernel timestamps omit the new
-field; historical data is not migrated automatically. The raw
-`kernel_observed_ns` stays in process for correlation and is not
-written to new documents.
+See [Storage Interfaces](/docs/development/storage_en.md) for bulk writes, retries, queries, and failure semantics.

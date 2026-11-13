@@ -76,19 +76,23 @@ if ! "${TOOL_BIN}" \
 	--aggr-interval "${PROFILER_DURATION}" \
 	--freq 99 \
 	--output-format collapsed \
-	--output-path "${WORK_DIR}" \
+	--output-path "${WORK_DIR}/python.folded" \
 	> "${WORK_DIR}/profiler.out" 2> "${WORK_DIR}/profiler.err"; then
 	fatal "profiler exited non-zero (see ${WORK_DIR}/profiler.err)"
 fi
 
-mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
-[[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal "no perf_*.folded file produced"
+# A nonexistent destination without a trailing slash is an explicit file.
+assert_profiler_output_file() {
+	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
+}
+assert_profiler_output_file "${WORK_DIR}/python.folded"
+FOLDED_FILES=("${WORK_DIR}/python.folded")
 
-grep -qh "process ${PROFILER_PARENT_PID}.*parent_hot_method" "${FOLDED_FILES[@]}" \
+grep -qh "pid=\"${PROFILER_PARENT_PID}\";.*parent_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "parent workload stack not found for PID ${PROFILER_PARENT_PID}"
-grep -qh "process ${PROFILER_CHILD_PID}.*child_hot_method" "${FOLDED_FILES[@]}" \
+grep -qh "pid=\"${PROFILER_CHILD_PID}\";.*child_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
-grep -qh "process ${PROFILER_INDEPENDENT_PID}.*independent_hot_method" "${FOLDED_FILES[@]}" \
+grep -qh "pid=\"${PROFILER_INDEPENDENT_PID}\";.*independent_hot_method" "${FOLDED_FILES[@]}" \
 	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
 
 if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a second|You can use the flamegraph\.pl' "${FOLDED_FILES[@]}"; then

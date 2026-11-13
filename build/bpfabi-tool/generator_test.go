@@ -16,6 +16,11 @@ package main
 
 import (
 	"bytes"
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,7 +68,7 @@ func TestGenerateDomainExportsEnum(t *testing.T) {
 			{Name: "value", Type: u32, Offset: 32},
 		},
 	}
-	types, err := mergeCandidates([]candidate{
+	domainTypes, err := mergeCandidates([]candidate{
 		{cName: kind.Name, typ: kind, objectPath: "sample.o"},
 		{cName: event.Name, typ: event, objectPath: "sample.o"},
 	})
@@ -71,10 +76,22 @@ func TestGenerateDomainExportsEnum(t *testing.T) {
 		t.Fatalf("merge enum candidates: %v", err)
 	}
 
-	output, err := generateDomain(types)
+	output, err := generateDomain(domainTypes)
 	if err != nil {
 		t.Fatalf("generate enum domain: %v", err)
 	}
+
+	files := token.NewFileSet()
+	file, err := parser.ParseFile(files, "sample_generated.go", output, 0)
+	if err != nil {
+		t.Fatalf("parse generated domain: %v", err)
+	}
+
+	config := types.Config{Importer: importer.Default()}
+	if _, err := config.Check("abi", files, []*ast.File{file}, nil); err != nil {
+		t.Fatalf("type-check generated domain: %v", err)
+	}
+
 	for _, fragment := range []string{
 		"type SampleEventKind int32",
 		"SampleEventUnknown SampleEventKind = 0",

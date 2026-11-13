@@ -17,25 +17,19 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/log"
-	"github.com/ccfos/huatuo/internal/profiling/publication"
-	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/strutil"
 	"github.com/ccfos/huatuo/internal/tracing"
-	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 )
 
 func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	var (
-		tracingStore     *tracingstore.Store
-		profileStore     *profilingstore.Store
-		publicationStore *publication.Store
-		err              error
+		tracingStore *tracingstore.Store
+		err          error
 	)
 
 	if d.opts.DisableStorage {
@@ -45,7 +39,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 			tracingstore.Config{},
 		)
 	} else {
-		tracingStore, profileStore, publicationStore, err = initStorage(config.Get())
+		tracingStore, err = initStorage(config.Get())
 	}
 
 	if err != nil {
@@ -57,15 +51,13 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	); err != nil {
 		return nil, errors.Join(
 			err,
-			closeStores(context.Background(), tracingStore, profileStore, publicationStore),
+			tracingStore.Close(context.Background()),
 		)
 	}
 	d.tracingStore = tracingStore
-	d.profileStore = profileStore
-	d.publications = publicationStore
 	return func(ctx context.Context) error {
 		tracing.DisableDocumentWriter()
-		return closeStores(ctx, tracingStore, profileStore, publicationStore)
+		return tracingStore.Close(ctx)
 	}, nil
 }
 
@@ -73,24 +65,8 @@ func initStorage(
 	cfg *config.Config,
 ) (
 	tracingStore *tracingstore.Store,
-	profileStore *profilingstore.Store,
-	publicationStore *publication.Store,
 	returnedErr error,
 ) {
-	defer func() {
-		if returnedErr != nil {
-			returnedErr = errors.Join(
-				returnedErr,
-				closeStores(
-					context.Background(),
-					tracingStore,
-					profileStore,
-					publicationStore,
-				),
-			)
-		}
-	}()
-
 	tracingConfig := tracingstore.Config{}
 	if cfg.Storage.Elasticsearch.Enabled() {
 		tracingConfig.Elasticsearch = &tracingstore.ElasticsearchConfig{
@@ -112,65 +88,9 @@ func initStorage(
 		tracingConfig,
 	)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	tracingStore = initializedTracingStore
 
-	if cfg.Storage.Elasticsearch.Enabled() {
-		storeConfig := &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			ESUsername:  cfg.Storage.Elasticsearch.Username,
-			ESPassword:  cfg.Storage.Elasticsearch.Password,
-			ESIndex:     cfg.Storage.Elasticsearch.Index,
-		}
-		initializedProfileStore, err := profilingstore.NewFromConfig(
-			context.Background(),
-			profilingstore.Config{
-				Addresses: storeConfig.ESAddresses,
-				Username:  storeConfig.ESUsername,
-				Password:  storeConfig.ESPassword,
-				Index:     storeConfig.ESIndex,
-			},
-		)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("new profiling document store (elasticsearch): %w", err)
-		}
-		profileStore = initializedProfileStore
-		publicationStore, err = publication.NewFromConfig(context.Background(), storeConfig)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-	}
-
-	return tracingStore, profileStore, publicationStore, nil
-}
-
-func closeStores(
-	ctx context.Context,
-	tracingStore *tracingstore.Store,
-	profileStore *profilingstore.Store,
-	publicationStore *publication.Store,
-) error {
-	var errs []error
-	if tracingStore != nil {
-		errs = append(errs, wrapCloseError("tracing store", tracingStore.Close(ctx)))
-	}
-	if profileStore != nil {
-		errs = append(errs, wrapCloseError("profiling store", profileStore.Close(ctx)))
-	}
-	if publicationStore != nil {
-		errs = append(
-			errs,
-			wrapCloseError("profiling publication store", publicationStore.Close(ctx)),
-		)
-	}
-	return errors.Join(errs...)
-}
-
-func wrapCloseError(name string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("close %s: %w", name, err)
+	return tracingStore, nil
 }

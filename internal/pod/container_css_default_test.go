@@ -27,6 +27,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/internal/cgroups"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -142,6 +143,52 @@ func TestExtractContainerID(t *testing.T) {
 	}
 }
 
+func TestCgroupMembershipForSubsystem(t *testing.T) {
+	paths := &cgroups.ProcessPaths{
+		Controllers: map[string]string{"cpu": "/cpu/container", "memory": "/memory/container"},
+		Unified:     "/unified/container",
+	}
+	tests := []struct {
+		name          string
+		paths         *cgroups.ProcessPaths
+		mode          cgroups.Mode
+		subsystem     string
+		expectedPath  string
+		expectedError string
+	}{
+		{name: "v1 memory uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "memory", expectedPath: "/memory/container"},
+		{name: "v1 CPU uses its own hierarchy", paths: paths, mode: cgroups.Legacy, subsystem: "cpu", expectedPath: "/cpu/container"},
+		{name: "hybrid memory ignores unified membership", paths: paths, mode: cgroups.Hybrid, subsystem: "memory", expectedPath: "/memory/container"},
+		{name: "v2 uses unified membership", paths: paths, mode: cgroups.Unified, subsystem: "memory", expectedPath: "/unified/container"},
+		{
+			name:  "missing v1 memory does not fall back to CPU or v2",
+			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"cpu": "/cpu/container"}, Unified: "/unified/container"},
+			mode:  cgroups.Legacy, subsystem: "memory", expectedError: "no memory cgroup v1 membership",
+		},
+		{
+			name:  "missing v2 membership does not fall back to v1",
+			paths: &cgroups.ProcessPaths{Controllers: map[string]string{"memory": "/memory/container"}},
+			mode:  cgroups.Unified, subsystem: "memory", expectedError: "no cgroup v2 membership",
+		},
+		{name: "missing paths", mode: cgroups.Legacy, subsystem: "memory", expectedError: "missing process cgroup membership"},
+		{name: "unsupported mode", paths: paths, mode: cgroups.Mode(255), subsystem: "memory", expectedError: "unsupported cgroup mode"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actualPath, actualErr := cgroupMembershipForSubsystem(test.paths, test.mode, test.subsystem)
+			if test.expectedError != "" {
+				if actualErr == nil || !strings.Contains(actualErr.Error(), test.expectedError) {
+					t.Fatalf("expected error %q, got path %q and error %v", test.expectedError, actualPath, actualErr)
+				}
+				return
+			}
+			if actualErr != nil || actualPath != test.expectedPath {
+				t.Fatalf("expected path %q, got %q and error %v", test.expectedPath, actualPath, actualErr)
+			}
+		})
+	}
+}
+
 func TestResolveCgroupFilesystemPath(t *testing.T) {
 	realRoot := t.TempDir()
 	symlinkParent := t.TempDir()
@@ -204,15 +251,20 @@ func TestCgroupSubsystemInitializationRetries(t *testing.T) {
 
 type lifecycleReaderTest struct {
 	bpf.PerfEventReader
-	event  *containerCssPerfEvent
-	closed chan struct{}
-	once   sync.Once
-	fail   bool
+	event    *containerCssPerfEvent
+	closed   chan struct{}
+	once     sync.Once
+	fail     bool
+	lostOnce bool
 }
 
 func (r *lifecycleReaderTest) ReadInto(dst any) error {
 	if r.fail {
 		return errors.New("reader failed")
+	}
+	if r.lostOnce {
+		r.lostOnce = false
+		return bpf.ErrPerfEventSamplesLost
 	}
 	if r.event != nil {
 		*dst.(*containerCssPerfEvent) = *r.event
@@ -221,6 +273,28 @@ func (r *lifecycleReaderTest) ReadInto(dst any) error {
 	}
 	<-r.closed
 	return context.Canceled
+}
+
+func TestCgroupCSSSyncReportsLostSamples(t *testing.T) {
+	reader := &lifecycleReaderTest{closed: make(chan struct{}), lostOnce: true}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	lost := make(chan struct{}, 1)
+	done := cgroupCssEventSyncHandler(ctx, reader, false, func() {
+		lost <- struct{}{}
+	})
+	select {
+	case <-lost:
+	case <-time.After(time.Second):
+		t.Fatal("CSS sync did not report lost perf event samples")
+	}
+	cancel()
+	_ = reader.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("CSS sync reader did not stop")
+	}
 }
 
 func (r *lifecycleReaderTest) Close() error {
@@ -270,5 +344,55 @@ func TestCgroupReaderRecoversAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("reader did not stop")
+	}
+}
+
+func TestContainerCSSCachePairsHierarchyAndRejectsStaleRemoval(t *testing.T) {
+	oldIDs := cgroupCssID2SubSysNameMap
+	cgroupCssID2SubSysNameMap = map[int]string{0: "cpu", 1: "memory"}
+	t.Cleanup(func() { cgroupCssID2SubSysNameMap = oldIDs })
+	const containerID = "container"
+	first := &containerCssPerfEvent{CgroupID: 11}
+	first.CSS[0] = 0x100
+	second := &containerCssPerfEvent{CgroupID: 22}
+	second.CSS[1] = 0x200
+	t.Cleanup(func() {
+		cgroupCssMetaDataMap.Delete(uint64(0x100))
+		cgroupCssMetaDataMap.Delete(uint64(0x200))
+	})
+	if err := cgroupUpdateOrCreateCssData(first, containerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cgroupUpdateOrCreateCssData(second, containerID); err != nil {
+		t.Fatal(err)
+	}
+	for subsystem, want := range map[string]CgroupCSSRef{
+		"cpu":    {CSSAddr: 0x100, CgroupID: 11},
+		"memory": {CSSAddr: 0x200, CgroupID: 22},
+	} {
+		for _, css := range cgroupListCssDataByKnode(containerID) {
+			if css.SubSys != subsystem {
+				continue
+			}
+			got, err := containerCSSRef(css, containerID)
+			if err != nil || got != want {
+				t.Fatalf("%s CSS = %+v, %v; want %+v", subsystem, got, err, want)
+			}
+		}
+	}
+	newInstance := &containerCssPerfEvent{CgroupID: 33}
+	newInstance.CSS[0] = 0x100
+	if err := cgroupUpdateOrCreateCssData(newInstance, containerID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cgroupDeleteCssData(first, containerID); err != nil {
+		t.Fatal(err)
+	}
+	value, exists := cgroupCssMetaDataMap.Load(uint64(0x100))
+	if !exists || value.(*containerCssMetaData).CgroupID != 33 {
+		t.Fatalf("stale deletion removed replacement CSS: %v, %v", value, exists)
+	}
+	if _, err := containerCSSRef(&containerCssMetaData{CSS: 0x100, SubSys: "cpu"}, containerID); err == nil {
+		t.Fatal("zero cgroup ID accepted")
 	}
 }

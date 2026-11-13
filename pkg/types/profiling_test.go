@@ -23,10 +23,10 @@ import (
 
 func TestProfilingWindowJSONRoundTrip(t *testing.T) {
 	want := &ProfilingWindow{
-		ContainerID:              "container-1",
-		ProfileType:              "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-		Profile:                  &profilev1.Profile{TimeNanos: 123},
-		AggregationOverflowCount: 7,
+		ContainerID:    "container-1",
+		ProfileType:    "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+		Profile:        &profilev1.Profile{TimeNanos: 123},
+		DroppedSamples: map[string]uint64{DropReasonAggregationQueue: 7},
 	}
 	data, err := json.Marshal(want)
 	if err != nil {
@@ -49,11 +49,11 @@ func TestProfilingWindowJSONRoundTrip(t *testing.T) {
 	if got.Profile == nil || got.Profile.TimeNanos != want.Profile.TimeNanos {
 		t.Fatalf("profiling window profile time = %v, want %d", got.Profile, want.Profile.TimeNanos)
 	}
-	if got.AggregationOverflowCount != want.AggregationOverflowCount {
+	if got.DroppedSamples[DropReasonAggregationQueue] != want.DroppedSamples[DropReasonAggregationQueue] {
 		t.Fatalf(
 			"profiling window aggregation overflow count = %d, want %d",
-			got.AggregationOverflowCount,
-			want.AggregationOverflowCount,
+			got.DroppedSamples[DropReasonAggregationQueue],
+			want.DroppedSamples[DropReasonAggregationQueue],
 		)
 	}
 }

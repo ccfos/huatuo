@@ -17,6 +17,7 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -113,15 +114,10 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 	deltaSysTime := stat.System - cache.lastUsage.System
 	deltaRealWorldTime := numCores * float64(now.Sub(cache.lastTimestamp).Microseconds())
 
-	if (float64(deltaTotalTime) > deltaRealWorldTime) || (float64(deltaUsrTime+deltaSysTime) > deltaRealWorldTime) {
-		cache.lastUsage = *stat
-		cache.lastTimestamp = now
-		return nil
-	}
-
-	totalUtil = float64(deltaTotalTime) * 100 / deltaRealWorldTime
-	usrUtil = float64(deltaUsrTime) * 100 / deltaRealWorldTime
-	sysUtil = float64(deltaSysTime) * 100 / deltaRealWorldTime
+	// Cap short-window quota overshoots without retaining the previous workload.
+	totalUtil = math.Min(float64(deltaTotalTime)*100/deltaRealWorldTime, 100)
+	usrUtil = math.Min(float64(deltaUsrTime)*100/deltaRealWorldTime, 100)
+	sysUtil = math.Min(float64(deltaSysTime)*100/deltaRealWorldTime, 100)
 
 	cache.lastUsage = *stat
 	cache.totalUtil = totalUtil

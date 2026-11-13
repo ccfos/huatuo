@@ -245,9 +245,17 @@ func patchPacketLoads(insts asm.Instructions, resultLabel string) (asm.Instructi
 	return insts, nil
 }
 
-// compileCBPF compiles expr to cBPF via go-pcap (pure Go, no libpcap dependency).
-// When l3 is true, packet offsets are retargeted from Ethernet-relative to raw-IP.
-func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
+// compileGoPcap compiles expr with go-pcap's parser and compiler. The upstream
+// compiler dereferences a nil network for a malformed net operand inside a
+// composite expression, so recover and report that input as an invalid filter.
+func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			insns = nil
+			err = fmt.Errorf("%w: %q: %v", ErrInvalidFilter, expr, r)
+		}
+	}()
+
 	e := filter.NewExpression(expr)
 	if e == nil {
 		return nil, ErrEmptyFilter
@@ -256,10 +264,21 @@ func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
 	if f == nil {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidFilter, expr)
 	}
-	insns, err := f.Compile()
+	return f.Compile()
+}
+
+// compileCBPF compiles expr to cBPF via go-pcap (pure Go, no libpcap dependency).
+// When l3 is true, packet offsets are retargeted from Ethernet-relative to raw-IP.
+func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
+	insns, err := compileGoPcap(expr)
 	if err != nil {
+		if errors.Is(err, ErrEmptyFilter) || errors.Is(err, ErrInvalidFilter) {
+			return nil, err
+		}
+
 		return nil, fmt.Errorf("go-pcap compile: %w", err)
 	}
+
 	if l3 {
 		insns, err = retargetToL3(insns)
 		if err != nil {
