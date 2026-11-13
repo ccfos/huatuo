@@ -195,7 +195,8 @@ func TestScanProcessPIDs(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			count := 0
-			err := scanProcessPIDs(t.Context(), strings.NewReader(test.input), func(int) error { count++; return nil })
+			budget := processScanBudget{bytes: maxCgroupProcessListBytes}
+			err := budget.scan(t.Context(), strings.NewReader(test.input), func(int) error { count++; return nil })
 			if (err != nil) != test.wantErr || (!test.wantErr && count != test.wantCount) {
 				t.Fatalf("count=%d err=%v, want count=%d failure=%t", count, err, test.wantCount, test.wantErr)
 			}
