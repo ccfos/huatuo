@@ -42,7 +42,7 @@ memory_threshold_snapshot_setup() {
 # Handle TERM in PID 1 so successful cases do not spend the Pod grace period.
 snapshot_create_pod() {
 	kubectl run "${go_snapshot_pod}" --namespace "${GO_SNAPSHOT_NAMESPACE}" \
-		--image="${BUSINESS_POD_IMAGE}" --image-pull-policy=Never \
+		--image="${BUSINESS_POD_IMAGE}" --image-pull-policy=IfNotPresent \
 		--restart=Never -l "${go_snapshot_pod_label}" --dry-run=client -o json --command -- sh -c '
 		sleep infinity &
 		child=$!

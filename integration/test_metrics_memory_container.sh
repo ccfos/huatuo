@@ -149,7 +149,7 @@ if jq -e '(.items | length > 0) and all(.items[];
 fi
 pod_created=1
 kubectl run "${pod_name}" --namespace "${BUSINESS_POD_NS}" --image="${BUSINESS_POD_IMAGE}" \
-	--image-pull-policy=Never --restart=Never -l "app=${pod_name}" --dry-run=client -o json -- sleep infinity \
+	--image-pull-policy=IfNotPresent --restart=Never -l "app=${pod_name}" --dry-run=client -o json -- sleep infinity \
 	| jq '.spec.terminationGracePeriodSeconds=1 | .spec.containers[0].resources={requests:{memory:"64Mi"},limits:{memory:"128Mi"}}' \
 	| kubectl --request-timeout=10s create -f -
 assert_kubelet_pod_count "${BUSINESS_POD_NS}" "^${pod_name}$" 1
