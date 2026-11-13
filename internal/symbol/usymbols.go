@@ -161,12 +161,11 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		path := r.processes[pid].path
 		module := strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
 		if cache.typ == elf.ET_DYN && module != "" {
-			if err = r.loadProcMaps(pid); err == nil {
-				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
-					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
-					addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
-					continue
-				}
+			if m, mapErr := r.procMapForAddr(pid, addr); mapErr == nil &&
+				m != nil && m.Pathname == module {
+				baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
+				addPendingELFPC(groups, path, &cache.symbols, addr-baseAddr, index, failFrame("elf-no-sym", ""))
+				continue
 			}
 		}
 		if cache.sections.find(addr) != nil {
@@ -174,11 +173,11 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			continue
 		}
 
-		if err = r.loadProcMaps(pid); err != nil {
+		m, mapErr := r.procMapForAddr(pid, addr)
+		if mapErr != nil {
 			result[index] = failFrame("procmap-fail", "")
 			continue
 		}
-		m := r.procmaps[pid].find(addr)
 		if m == nil {
 			result[index] = failFrame("proc-unmapped", "")
 			continue
@@ -354,6 +353,22 @@ func (r *UsymResolver) loadProcMaps(pid uint32) error {
 	}
 	r.procmaps[pid] = maps
 	return nil
+}
+
+func (r *UsymResolver) procMapForAddr(pid uint32, addr uint64) (*procfs.ProcMap, error) {
+	if err := r.loadProcMaps(pid); err != nil {
+		return nil, err
+	}
+	if m := r.procmaps[pid].find(addr); m != nil {
+		return m, nil
+	}
+
+	maps, err := parseMaps(pid)
+	if err != nil {
+		return nil, nil
+	}
+	r.procmaps[pid] = maps
+	return maps.find(addr), nil
 }
 
 func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*elfSymbolCache, error) {
