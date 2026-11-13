@@ -172,6 +172,13 @@ require_readable() {
 	done
 }
 
+require_writable() {
+	local path
+	for path in "$@"; do
+		[[ -w "${path}" ]] || skip "file is not writable: ${path}"
+	done
+}
+
 require_toml_reader() {
 	require_commands python3 jq
 	python3 -c 'import importlib.util; __import__(next(name for name in ("tomllib", "tomli", "toml") if importlib.util.find_spec(name)))' \

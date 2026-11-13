@@ -317,6 +317,27 @@ assert_runner_prerequisites() {
 	(ROOT_DIR="${RUNNER_FIXTURE}/missing" require_build_output) > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-output.log" 2>&1 || runner_status=$?
 	[[ ${runner_status} == 1 ]] || fatal "missing build output did not fail: exit=${runner_status}"
 
+	local writable_path="${RUNNER_FIXTURE}/writable file" missing_path="${RUNNER_FIXTURE}/missing file"
+	: > "${writable_path}"
+	require_writable "${writable_path}" "${runner_tool}"
+	runner_status=0
+	(require_writable "${writable_path}" "${missing_path}") > "${HUATUO_BAMAI_TEST_TMPDIR}/missing-writable.log" 2>&1 || runner_status=$?
+	assert_eq "${runner_status}" 77 "missing writable path skips"
+	grep -Fq "file is not writable: ${missing_path}" "${HUATUO_BAMAI_TEST_TMPDIR}/missing-writable.log" \
+		|| fatal "missing writable path diagnosis omitted the path"
+	runner_status=0
+	# A read-only mount tests writability even when the suite runs as root.
+	"${RUNNER_UNSHARE}" --mount bash -euc '
+		mount --make-rprivate /
+		mount --bind "$1" "$1"
+		mount -o remount,bind,ro "$1"
+		source "$ROOT_DIR/integration/lib.sh"
+		require_writable "$1"
+	' writable-prerequisite "${writable_path}" > "${HUATUO_BAMAI_TEST_TMPDIR}/readonly-writable.log" 2>&1 || runner_status=$?
+	assert_eq "${runner_status}" 77 "read-only path skips"
+	grep -Fq "file is not writable: ${writable_path}" "${HUATUO_BAMAI_TEST_TMPDIR}/readonly-writable.log" \
+		|| fatal "read-only path diagnosis omitted the path"
+
 }
 
 assert_runner_parallel_isolation() {
