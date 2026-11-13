@@ -90,7 +90,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	if filter.Scope == observation.ScopeUnknown {
 		return nil, fmt.Errorf("%w: scope must be host or container", ErrInvalidQuery)
 	}
-	if filter.Scope == observation.ScopeHost && (filter.ContainerID != "" || filter.ContainerHostname != "") {
+	if filter.Scope == observation.ScopeHost && (filter.ContainerID != "" || filter.ContainerHostname != "" || filter.ContainerHostNamespace != "") {
 		return nil, fmt.Errorf("%w: host scope cannot include a container filter", ErrInvalidQuery)
 	}
 	if filter.Scope == observation.ScopeContainer && filter.ContainerID == "" && filter.ID == "" {
@@ -285,6 +285,8 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 		filter.ContainerID = matcher.Value
 	case "container_hostname":
 		filter.ContainerHostname = matcher.Value
+	case "container_host_namespace":
+		filter.ContainerHostNamespace = matcher.Value
 	case "__profile_type__":
 		filter.ProfileType = matcher.Value
 	default:
