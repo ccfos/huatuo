@@ -17,6 +17,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -30,7 +31,32 @@ func openDB(dsn string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(time.Hour)
-	db.SetConnMaxIdleTime(30 * time.Minute)
+	if isMemoryDSN(dsn) {
+		// SQLite memory databases belong to one connection. Evicting the only
+		// connection creates a new, empty database.
+		db.SetConnMaxLifetime(0)
+		db.SetConnMaxIdleTime(0)
+	} else {
+		db.SetConnMaxLifetime(time.Hour)
+		db.SetConnMaxIdleTime(30 * time.Minute)
+	}
 	return db, nil
+}
+
+func isMemoryDSN(dsn string) bool {
+	if dsn == ":memory:" || strings.HasPrefix(dsn, "file::memory:") {
+		return true
+	}
+
+	queryStart := strings.IndexByte(dsn, '?')
+	if queryStart < 0 {
+		return false
+	}
+	for _, parameter := range strings.Split(dsn[queryStart+1:], "&") {
+		key, value, ok := strings.Cut(parameter, "=")
+		if ok && key == "mode" && value == "memory" {
+			return true
+		}
+	}
+	return false
 }
