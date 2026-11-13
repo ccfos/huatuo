@@ -16,28 +16,30 @@ package provider
 
 import (
 	"bytes"
-	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
 
-	"github.com/cilium/ebpf"
-
-	"github.com/ccfos/huatuo/client"
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
-	"github.com/ccfos/huatuo/internal/profiler/bpfmap"
-	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
-	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
-func newNativeBPFConstants(pid int, cssAddr uint64, threadGroup bool) map[string]any {
+func newNativeBPFConstants(pid int, cgroupCSSRef pod.CgroupCSSRef, threadGroup bool) map[string]any {
 	return map[string]any{
-		"profiler_filter_css":     cssAddr,
-		"profiler_filter_pid":     uint32(pid),
-		"profiler_filter_threads": threadGroup,
+		"profiler_filter_css_addr":  cgroupCSSRef.CSSAddr,
+		"profiler_filter_cgroup_id": cgroupCSSRef.CgroupID,
+		"profiler_filter_pid":       uint32(pid),
+		"profiler_filter_threads":   threadGroup,
 	}
+}
+
+func resolveContainerCgroupCSSRef(cfg *Config, subsys string) (pod.CgroupCSSRef, error) {
+	if cfg.ContainerID == "" {
+		return pod.CgroupCSSRef{}, nil
+	}
+	ref, err := pod.ContainerCSSBySubsys(cfg.ContainerID, subsys)
+	if err != nil {
+		return pod.CgroupCSSRef{}, fmt.Errorf("resolve container %q %s CSS identity locally: %w", cfg.ContainerID, subsys, err)
+	}
+	return ref, nil
 }
 
 func taskCommString(comm [bpf.TaskCommLen]byte) string {
@@ -46,100 +48,4 @@ func taskCommString(comm [bpf.TaskCommLen]byte) string {
 		length = len(comm)
 	}
 	return string(comm[:length])
-}
-
-// resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
-// It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
-// method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem
-// (e.g., "memory", "cpu").
-func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string) (uint64, error) {
-	if pctx.ContainerID == "" {
-		return 0, nil
-	}
-
-	// Try API method first
-	cssAddr, err := resolveContainerCgroupCssByAPI(
-		pctx.Ctx,
-		pctx.ServerAddress,
-		pctx.ContainerID,
-		subsysName,
-	)
-	if err == nil {
-		return cssAddr, nil
-	}
-
-	log.Warn("API method failed, falling back to local method", "error", err, "container_id", pctx.ContainerID, "subsystem", subsysName)
-
-	// Fallback to local BPF-based method
-	cssAddr, err = resolveContainerCgroupCssByLocal(pctx.ContainerID, subsysName)
-	if err != nil {
-		return 0, fmt.Errorf("both API and local methods failed for subsystem %s: %w", subsysName, err)
-	}
-
-	return cssAddr, nil
-}
-
-// resolveContainerCgroupCssByAPI attempts to get CSS address via huatuo-bamai API.
-func resolveContainerCgroupCssByAPI(
-	ctx context.Context,
-	serverAddr string,
-	containerID string,
-	subsysName string,
-) (uint64, error) {
-	nodeClient, err := client.NewNode(&client.NodeConfig{})
-	if err != nil {
-		return 0, fmt.Errorf("initialize node client: %w", err)
-	}
-	container, err := nodeClient.FetchContainer(
-		ctx,
-		client.NodeAddress{HostPort: serverAddr},
-		containerID,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("fetch container metadata: %w", err)
-	}
-
-	cssAddr, ok := kernaddr.Parse(container.CgroupCSS[subsysName])
-	if !ok {
-		return 0, fmt.Errorf("%s CSS not found in API response", subsysName)
-	}
-
-	return cssAddr, nil
-}
-
-// resolveContainerCgroupCssByLocal retrieves CSS address using local BPF-based method.
-func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, error) {
-	cssAddr, err := pod.ContainerCSSBySubsys(containerID, subsysName)
-	if err != nil {
-		return 0, fmt.Errorf("local CSS retrieval failed: %w", err)
-	}
-
-	return cssAddr, nil
-}
-
-// readStackTrace reads a stack trace from the BPF stack map by ID.
-// Returns the stack trace as an array of instruction pointers and a success flag.
-func readStackTrace(b bpf.BPF, mapID uint32, id int32) ([bpfmap.StackTraceLen]uint64, bool) {
-	keyBuf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(keyBuf, uint32(id))
-
-	val, err := b.ReadMap(mapID, keyBuf)
-	if err != nil {
-		if !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.Warnf("stack map lookup for ID %d: %v", id, err)
-		}
-		return [bpfmap.StackTraceLen]uint64{}, false
-	}
-
-	if len(val) != bpfmap.StackTraceLen*8 {
-		return [bpfmap.StackTraceLen]uint64{}, false
-	}
-
-	var trace [bpfmap.StackTraceLen]uint64
-	reader := bytes.NewReader(val)
-	if err := binary.Read(reader, binary.LittleEndian, &trace); err != nil {
-		return [bpfmap.StackTraceLen]uint64{}, false
-	}
-
-	return trace, true
 }

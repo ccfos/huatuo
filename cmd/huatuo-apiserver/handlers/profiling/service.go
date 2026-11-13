@@ -20,13 +20,13 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/job"
-	"github.com/ccfos/huatuo/internal/profiling/publication"
-	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
@@ -91,7 +91,6 @@ type RawProfilePage struct {
 type Service struct {
 	jobs             *job.Manager
 	profileStore     *profilingstore.Store
-	publications     *publication.Store
 	dashboardBaseURL string
 }
 
@@ -99,21 +98,15 @@ type Service struct {
 func NewService(
 	jobs *job.Manager,
 	profileStore *profilingstore.Store,
-	publications *publication.Store,
 	config Config,
 ) (*Service, error) {
 	if jobs == nil {
 		return nil, errors.New("create profiling service: job manager is required")
 	}
-	if (profileStore == nil) != (publications == nil) {
-		return nil, errors.New(
-			"create profiling service: profile storage and publication store must be configured together",
-		)
-	}
+
 	return &Service{
 		jobs:             jobs,
 		profileStore:     profileStore,
-		publications:     publications,
 		dashboardBaseURL: config.DashboardBaseURL,
 	}, nil
 }
@@ -221,7 +214,7 @@ func (s *Service) RawProfiles(
 	default:
 		return nil, fmt.Errorf("unsupported Job status %q", currentJob.Status)
 	}
-	if s.profileStore == nil || s.publications == nil {
+	if s.profileStore == nil {
 		return nil, ErrResultUnavailable
 	}
 	published, err := s.isPublished(ctx, requestID)
@@ -290,7 +283,7 @@ func (s *Service) ResultURL(
 			resultJob.Terminal.Outcome != job.OutcomeUnknown) {
 		return nil, nil
 	}
-	if s.publications == nil {
+	if s.profileStore == nil {
 		return nil, nil
 	}
 	published, err := s.isPublished(ctx, resultJob.ID)
@@ -300,11 +293,27 @@ func (s *Service) ResultURL(
 	if !published {
 		return nil, nil
 	}
-	return buildDashboardURL(s.dashboardBaseURL, resultJob), nil
+	filter := &profilingstore.Filter{
+		ID:    resultJob.ID,
+		Limit: 1,
+	}
+	regions, err := s.profileStore.Values(ctx, filter, "region")
+	if err != nil {
+		return nil, fmt.Errorf("%w: query result regions: %w", ErrResultStoreUnavailable, err)
+	}
+	profileTypes, err := s.profileStore.Values(ctx, filter, "profile_type")
+	if err != nil {
+		return nil, fmt.Errorf("%w: query result profile types: %w", ErrResultStoreUnavailable, err)
+	}
+	if len(regions) == 0 || len(profileTypes) == 0 {
+		return nil, nil
+	}
+
+	return buildDashboardURL(s.dashboardBaseURL, resultJob, regions[0], profileTypes[0]), nil
 }
 
 func (s *Service) isPublished(ctx context.Context, requestID string) (bool, error) {
-	published, err := s.publications.IsPublished(ctx, requestID)
+	published, err := s.profileStore.IsCommitted(ctx, requestID)
 	if err != nil {
 		return false, fmt.Errorf(
 			"%w: query publication for request %q: %w",
@@ -316,61 +325,40 @@ func (s *Service) isPublished(ctx context.Context, requestID string) (bool, erro
 	return published, nil
 }
 
-func buildDashboardURL(baseURL string, resultJob *job.Job) *string {
+func buildDashboardURL(baseURL string, resultJob *job.Job, region, profileType string) *string {
 	if baseURL == "" || resultJob == nil || resultJob.Spec.Profiling == nil {
 		return nil
 	}
+	if resultJob.Spec.Profiling.Type != profilingdomain.TypeCPU && resultJob.Spec.Profiling.Type != profilingdomain.TypeMemory {
+		return nil
+	}
 
-	var dashboardUID, dashboardSlug, scopeKey, scopeValue string
+	query := url.Values{}
+	query.Set("orgId", "1")
+	query.Set("from", strconv.FormatInt(resultJob.CreatedAt.UnixMilli(), 10))
+	query.Set("to", strconv.FormatInt(resultJob.EndedAt.Add(time.Second).UnixMilli(), 10))
+	query.Set("var-region", region)
+	query.Set("var-hostname", resultJob.Hostname)
+	query.Set("var-task_id", resultJob.ID)
+	query.Set("var-type", profileType)
 	switch resultJob.Scope {
-	case observation.ScopeContainer:
-		scopeKey = "var-container_id"
-		scopeValue = resultJob.ContainerID
-		switch resultJob.Spec.Profiling.Type {
-		case profilingdomain.TypeMemory:
-			dashboardUID = "container-memory-profiling"
-			dashboardSlug = "e5aeb9-e599a8-memory-profiling"
-		case profilingdomain.TypeCPU:
-			dashboardUID = "container-cpu-profiling"
-			dashboardSlug = "e5aeb9-e599a8-cpu-profiling"
-		}
 	case observation.ScopeHost:
-		scopeKey = "var-hostname"
-		scopeValue = resultJob.Hostname
-		switch resultJob.Spec.Profiling.Type {
-		case profilingdomain.TypeMemory:
-			dashboardUID = "host-memory-profiling"
-			dashboardSlug = "e5aebf-e4b8bb-e69cba-memory-profiling"
-		case profilingdomain.TypeCPU:
-			dashboardUID = "host-cpu-profiling"
-			dashboardSlug = "e5aebf-e4b8bb-e69cba-cpu-profiling"
-		}
+		query.Set("var-scope", "NOT _exists_:container_id")
+		query.Set("var-container_id", "$__all")
+	case observation.ScopeContainer:
+		query.Set("var-scope", "_exists_:container_id")
+		query.Set("var-container_id", resultJob.ContainerID)
 	default:
 		return nil
 	}
-	if dashboardUID == "" {
-		return nil
-	}
-	query := url.Values{}
-	query.Set("orgId", "1")
-	query.Set("from", resultJob.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"))
-	query.Set("to", resultJob.EndedAt.UTC().Format("2006-01-02T15:04:05.000Z"))
-	query.Set("timezone", "browser")
-	query.Set(scopeKey, scopeValue)
-	query.Set("var-tracer_id", resultJob.ID)
-	result := fmt.Sprintf(
-		"%s/%s/%s?%s",
-		strings.TrimRight(baseURL, "/"),
-		dashboardUID,
-		dashboardSlug,
-		query.Encode(),
-	)
+
+	result := strings.TrimRight(baseURL, "/") + "/continuous-profiling?" + query.Encode()
 	return &result
 }
 
 // NormalizePage applies the public pagination defaults.
 func NormalizePage(limit, offset *int) (int, int) {
-	normalizedLimit := server.DefaultListLimit
+	normalizedLimit := httpserver.DefaultListLimit
 	if limit != nil {
 		normalizedLimit = *limit
 	}
@@ -401,7 +389,7 @@ func validateCreateInput(input *CreateInput) error {
 	if input.Hostname == "" || strings.TrimSpace(input.Hostname) != input.Hostname {
 		return errors.New("hostname must be a non-empty trimmed value")
 	}
-	if input.DurationSeconds > math.MaxInt64/int64(time.Second) {
+	if input.DurationSeconds <= 0 || input.DurationSeconds > math.MaxInt64/int64(time.Second) {
 		return errors.New("duration_seconds is outside the supported range")
 	}
 	return nil

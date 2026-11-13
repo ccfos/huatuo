@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
 	"github.com/ccfos/huatuo/internal/job"
-	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
@@ -125,7 +125,7 @@ func (*Service) Capabilities() []tracingdomain.Capability {
 
 // NormalizePage applies the public pagination defaults.
 func NormalizePage(limit, offset *int) (int, int) {
-	normalizedLimit := server.DefaultListLimit
+	normalizedLimit := httpserver.DefaultListLimit
 	if limit != nil {
 		normalizedLimit = *limit
 	}
@@ -140,7 +140,7 @@ func validateCreateInput(input CreateInput) error {
 	if input.Hostname == "" || strings.TrimSpace(input.Hostname) != input.Hostname {
 		return errors.New("hostname must be a non-empty trimmed value")
 	}
-	if input.DurationSeconds > math.MaxInt64/int64(time.Second) {
+	if input.DurationSeconds <= 0 || input.DurationSeconds > math.MaxInt64/int64(time.Second) {
 		return errors.New("duration_seconds is outside the supported range")
 	}
 	return nil

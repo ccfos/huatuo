@@ -1,5 +1,5 @@
 ---
-title: Extending Observability
+title: Extending Features
 type: docs
 description:
 author: HUATUO Team
@@ -7,64 +7,51 @@ date: 2026-07-18
 weight: 1
 ---
 
-HUATUO supports three extension types: Metrics, Event, and AutoTracing. They use
-the same registration framework but differ in activation, runtime cost, and
-data output.
+HUATUO supports three observability extensions: Metrics, Event, and AutoTracing. They share a registration mechanism but differ in triggers, runtime cost, and output.
 
-| Type | Activation | Data output | Use case |
+| Type | Trigger | Output | Use Case |
 | --- | --- | --- | --- |
-| Metrics | Periodic collection | Prometheus | Continuous performance monitoring and long-term trends |
-| Event | Kernel event or threshold | ES, local files, optional Prometheus | Continuous operation with anomaly context capture |
-| AutoTracing | System anomaly | ES, local files, optional Prometheus | On-demand, higher-cost context capture |
+| Metrics | Periodic collection | Prometheus | Continuous system monitoring and long-term trends |
+| Event | Kernel events or thresholds | ES, local files, optional Prometheus | Continuous observation that captures abnormal conditions |
+| AutoTracing | Detected system anomalies | ES, local files, optional Prometheus | More expensive context collection on demand |
 
-## Collection Modes
+## Modes
 
 ### Metrics
 
-Metrics periodically collect system state through procfs, sysfs, or eBPF and
-expose it in Prometheus format. This mode supports real-time monitoring and
-long-term trend analysis. Built-in collectors cover:
+Metrics periodically collects system state through procfs, sysfs, or eBPF and exports it in Prometheus format for real-time monitoring and trend analysis. Built-in collectors cover:
 
-- CPU: sys, usr, util, load, nr_running, and related metrics.
-- Memory: vmstat, memory_stat, directreclaim, and asyncreclaim.
-- I/O: d2c, q2c, freeze, and flush.
-- Networking: ARP, socket memory, qdisc, netstat, netdev, and sockstat.
+- CPU: sys, usr, util, load, nr_running, and more.
+- Memory: vmstat, memory_stat, directreclaim, asyncreclaim, and more.
+- I/O: d2c, q2c, freeze, flush, and more.
+- Network: ARP, socket memory, qdisc, netstat, netdev, sockstat, conntrack entry counts and limits, and more.
 
 ### Event
 
-Events continuously observe kernel events or threshold conditions and preserve
-kernel context when an anomaly occurs. This mode is intended for low-overhead,
-always-on observation. Data is written to Elasticsearch and local files and
-can also produce Prometheus metrics. Built-in events include:
+Event continuously watches kernel events or thresholds and saves kernel context when an anomaly occurs. It targets low-overhead observation that can remain enabled. Data is written to Elasticsearch and local files and can also produce Prometheus metrics. Built-in events include:
 
-- Scheduler tick interval anomalies (`sched_tick`).
-- Abnormal memory allocation (`memory_oom_kill`).
-- Soft lockups (`softlockup`).
-- D-state processes (`hungtask`).
-- Memory reclaim (`memory_reclaim_events`).
-- Packet drops (`dropwatch`).
-- Network receive latency (`net_rx_latency`).
+- Abnormal scheduling tick intervals: `sched_tick`.
+- OOM kills: `memory_oom_kill`.
+- Soft lockups: `softlockup`.
+- Tasks in D state: `hungtask`.
+- Memory reclaim: `memory_reclaim_events`.
+- Packet drops: `dropwatch`.
+- Network receive latency: `net_rx_latency`.
 
 ### AutoTracing
 
-AutoTracing invokes diagnostic tools after detecting a system anomaly. It is
-intended for flame graphs, context snapshots, and other diagnostic operations
-that are too expensive to run continuously. Results are written to
-Elasticsearch and local files and can also be converted into Prometheus
-metrics. Built-in capabilities include:
+AutoTracing invokes diagnostic tools after detecting a system anomaly, collecting flame graphs, context snapshots, and other evidence. It suits diagnostic data that is too costly to collect continuously. Results are written to Elasticsearch and local files and can also be converted into Prometheus metrics. Built-in capabilities include:
 
-- CPU idle and system-time anomaly tracing (`cpuidle`, `cpusys`).
-- D-state load tracing (`dload`).
-- Burst memory allocation tracing (`memburst`).
-- Disk I/O anomaly tracing (`iotracing`).
+- Container CPU and host system-mode CPU tracing: `cpuidle`, `cpusys`.
+- D-state load tracing: `dload`.
+- Memory allocation burst tracing: `memburst`.
+- Disk I/O anomaly tracing: `iotracing`.
 
-Event and AutoTracing are both Tracing modes and share the `ITracingEvent`
-interface. They can preserve anomaly context for root-cause analysis and expose
-statistics to Prometheus by also implementing `Collector`.
+Event and AutoTracing both use Tracing mode and share the `ITracingEvent` interface. They save abnormal context for root-cause analysis and can expose statistics to Prometheus by also implementing `Collector`.
 
-## Adding Metrics
+## Add Metrics
 
-Custom Metrics collectors expose Prometheus metrics through `/metrics`.
+Custom Metrics exports Prometheus metrics through `/metrics`.
 
 ### Implement Collector
 
@@ -84,9 +71,9 @@ func (c *exampleMetric) Update() ([]*metric.Data, error) {
 }
 ```
 
-### Register the collector
+### Register the Collector
 
-Use `FlagMetric` when registering the implementation:
+Register the implementation as a metric collector with `FlagMetric`:
 
 ```go
 func init() {
@@ -101,13 +88,9 @@ func newExampleMetric() (*tracing.EventTracingAttr, error) {
 }
 ```
 
-### Manage BPF object
+### Manage BPF Objects
 
-When one implementation provides both `Start` and `Update`, the methods may
-run concurrently. Do not read and write a `bpf.BPF` interface directly in a
-collector field. Use `Reference` and `Lease` from
-[`internal/bpf/bpf_ref.go`](../../internal/bpf/bpf_ref.go) to manage the
-object lifetime:
+If an implementation provides both `Start` and `Update`, these methods may run concurrently. Do not read or write a `bpf.BPF` interface directly in collector fields. Use `Reference` and `Lease` from [`internal/bpf/bpf_ref.go`](../../internal/bpf/bpf_ref.go) to manage the object lifecycle:
 
 ```go
 type example struct {
@@ -150,20 +133,18 @@ func (c *example) Update() ([]*metric.Data, error) {
 }
 ```
 
-The API has these constraints:
+Interface contracts:
 
-- `Publish` transfers ownership of the object to `Reference`. Do not call `object.Close()` directly after a successful publish.
-- The `Lease` returned by `Acquire` pins the BPF object until the current `Update` completes. Always pair it with `Release`, and do not copy a Lease.
-- `UnPublish` first prevents new acquisitions, then waits for every Lease to be released, closes the BPF object, and returns the close error.
-- Calls to `Publish` and `UnPublish` must be serialized. The current framework does not run `Start` concurrently for the same instance.
+- `Publish` transfers object ownership to `Reference`. After success, do not call `object.Close()` directly.
+- The `Lease` returned by `Acquire` keeps the BPF object alive until the current `Update` completes. Pair it with `Release` and do not copy the `Lease`.
+- `UnPublish` blocks new `Acquire` calls, waits for all leases to be released, then closes the BPF object and returns any close error.
+- Serialize `Publish` and `UnPublish`. The current framework ensures that `Start` does not run concurrently for the same instance.
 
-An `Update` that has already started can therefore finish with its original
-BPF object. During shutdown or restart, `Start` closes that object only after
-those updates complete.
+An `Update` that has already started can therefore finish using the original BPF object. When `Start` exits or restarts, the object is closed only after those `Update` calls complete.
 
-## Adding an Event
+## Add an Event
 
-An Event implements `ITracingEvent`:
+An Event must implement `ITracingEvent`:
 
 ```go
 type ITracingEvent interface {
@@ -173,8 +154,8 @@ type ITracingEvent interface {
 type exampleEvent struct{}
 
 func (e *exampleEvent) Start(ctx context.Context) error {
-    // Detect the event and capture its context.
-    // storage.Save writes the data to ES and local storage.
+    // Detect the event and collect context.
+    // storage.Save writes data to ES and local storage.
     storage.Save("example", containerID, time.Now(), eventData)
     return nil
 }
@@ -196,19 +177,17 @@ func newExampleEvent() (*tracing.EventTracingAttr, error) {
 }
 ```
 
-To expose Prometheus metrics for the event, also implement `Collector` and add
-`tracing.FlagMetric` to `Flag`.
+To also export Prometheus metrics, implement `Collector` and add `tracing.FlagMetric` to `Flag`.
 
-## Adding AutoTracing
+## Add AutoTracing
 
-AutoTracing and Event use the same `ITracingEvent` interface and registration
-framework:
+AutoTracing uses the same `ITracingEvent` interface and registration framework as Event:
 
 ```go
 type exampleAutoTracing struct{}
 
 func (t *exampleAutoTracing) Start(ctx context.Context) error {
-    // Capture context after the anomaly trigger fires.
+    // Collect context after an anomaly triggers tracing.
     storage.Save("example", containerID, time.Now(), tracingData)
     return nil
 }
@@ -226,6 +205,4 @@ func newExampleAutoTracing() (*tracing.EventTracingAttr, error) {
 }
 ```
 
-See `core/metrics`, `core/events`, and `core/autotracing` for complete examples
-covering BPF map interaction, container metadata, storage, and Prometheus
-output.
+See `core/metrics`, `core/events`, and `core/autotracing` for complete implementations covering BPF map access, container information, data storage, and Prometheus output.

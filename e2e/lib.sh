@@ -16,40 +16,52 @@
 
 set -euo pipefail
 
-source ${ROOT_DIR}/integration/lib.sh
+source "${ROOT_DIR}/integration/lib.sh"
 
-# k8s
-k8s_create_pod() {
-	local ns=$1
-	local name=$2
-	local image=$3
-	local label=$4
-	local num=$5
-
-	for i in $(seq 1 ${num}); do
-		kubectl run "${name}-${i}" \
-			-n ${ns} \
-			--image=${image} \
-			--image-pull-policy=Never \
-			--restart=Never \
-			-l ${label} \
-			-- sleep infinity
-	done
+e2e_huatuo_bamai_start() {
+	huatuo_bamai_initialize_address
+	cp "${ROOT_DIR}/_output/conf/huatuo-bamai.conf" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
+	huatuo_bamai_configure_default_address
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "bamai.conf"
+		"--region" "e2e"
+		"--disable-storage"
+	)
+	if ! kernel_version_le 6 5; then
+		log_info "disabling sched-blame on unsupported kernel $(uname -r)"
+		runtime_args+=("--disable-tracing" "sched-blame")
+	fi
+	huatuo_bamai_start "${runtime_args[@]}"
 }
 
+# k8s
 k8s_delete_pod() {
 	local ns=$1
 	local label=$2
-	kubectl delete pod --namespace "$ns" -l "$label"
+	kubectl delete pod --namespace "$ns" -l "$label" \
+		--ignore-not-found --timeout=30s --request-timeout=10s
 }
 
 # kubelet
 kubelet_pods_json() {
-	curl -sk "${CURL_TIMEOUT[@]}" \
-		--cert ${KUBELET_CERT} \
-		--key ${KUBELET_KEY} \
+	local status curl_status=0
+	local response="${HUATUO_BAMAI_TEST_TMPDIR}/kubelet-pods.json"
+	status=$(curl -skS "${CURL_TIMEOUT[@]}" \
+		--cert "${KUBELET_CERT}" \
+		--key "${KUBELET_KEY}" \
 		--header "Content-Type: application/json" \
-		${KUBELET_PODS_API}
+		-o "${response}" -w '%{http_code}' "${KUBELET_PODS_API}") || curl_status=$?
+	if [[ ${curl_status} -ne 0 || ${status} != 200 ]]; then
+		log_error "kubelet pods request failed: curl=${curl_status} HTTP=${status:-unavailable}; response=${response}"
+		return 1
+	fi
+	jq -e '.items | type == "array"' "${response}" > /dev/null \
+		|| {
+			log_error "invalid kubelet PodList: ${response}"
+			return 1
+		}
+	cat "${response}"
 }
 
 kubelet_pod_count() {
@@ -62,7 +74,7 @@ kubelet_pod_count() {
           | select(.metadata.name | test($re))
           | select(.status.phase == "Running")
         ] | length
-        ' 2> /dev/null || echo 0
+        '
 }
 
 kubelet_container_ids() {
@@ -84,7 +96,7 @@ assert_kubelet_pod_count() {
 
 	_assert() {
 		local actual
-		actual="$(kubelet_pod_count "$ns" "$regex")"
+		actual="$(kubelet_pod_count "$ns" "$regex")" || return 1
 		assert_eq "$actual" "$expect" "$desc"
 	}
 
@@ -93,7 +105,7 @@ assert_kubelet_pod_count() {
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		_assert; then
 		# wait timeout, dump pods from kubelet
-		kubelet_pods_json
+		kubelet_pods_json || true
 
 		fatal "❌ wait timeout, kubelet pod count not expected"
 	fi
@@ -102,9 +114,10 @@ assert_kubelet_pod_count() {
 huatuo_bamai_containers_present() {
 	local ns=$1 regex=$2 expect=$3
 	local -a container_ids=()
-	local container_id
+	local container_id ids
 
-	mapfile -t container_ids < <(kubelet_container_ids "$ns" "$regex")
+	ids=$(kubelet_container_ids "$ns" "$regex") || return 1
+	if [[ -n ${ids} ]]; then mapfile -t container_ids <<< "${ids}"; fi
 	[[ ${#container_ids[@]} -eq ${expect} ]] || return 1
 	for container_id in "${container_ids[@]}"; do
 		curl -sf "${CURL_TIMEOUT[@]}" \
@@ -126,6 +139,7 @@ assert_huatuo_bamai_containers_present() {
 
 huatuo_bamai_containers_absent() {
 	local container_id status
+	[[ $# -gt 0 ]] || return 1
 	for container_id in "$@"; do
 		status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 			-o /dev/null -w '%{http_code}' \
@@ -138,6 +152,7 @@ huatuo_bamai_containers_absent() {
 assert_huatuo_bamai_containers_absent() {
 	local desc=$1
 	shift
+	[[ $# -gt 0 ]] || fatal "${desc}: expected at least one container ID"
 
 	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
@@ -155,16 +170,17 @@ assert_huatuo_bamai_containers_absent() {
 }
 
 e2e_test_teardown() {
-	local code=$1
+	local cleanup_status=0
 
-	huatuo_bamai_stop || code=1
-	if ! huatuo_bamai_log_check; then
+	huatuo_bamai_stop || {
+		cleanup_status=1
+		RUNNER_CLEANUP_REASON="failed to stop huatuo-bamai"
+	}
+	if ! assert_huatuo_bamai_log_clean; then
+		RUNNER_CLEANUP_REASON="${RUNNER_CLEANUP_REASON:+${RUNNER_CLEANUP_REASON}; }huatuo-bamai log verification failed"
 		log_error "❌ huatuo-bamai log check failed"
-		code=1
+		cleanup_status=1
 	fi
 
-	if [[ $code -ne 0 && $code -ne 77 ]]; then
-		log_error "❌ e2e test failed with exit code: $code"
-		return 1
-	fi
+	return "$cleanup_status"
 }

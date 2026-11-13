@@ -4,47 +4,39 @@ type: docs
 weight: 1
 ---
 
-# Contributing to HUATUO
-
-Thank you for your interest in contributing to HUATUO! This guide will help you get started.
-
----
+This guide covers the development environment, validation requirements, and contribution workflow. Keep each change focused on one problem so it is easy to review and revert.
 
 ## Ways to Contribute
 
-There are many ways to contribute to HUATUO:
+You can contribute to HUATUO in several ways:
 
-- **Code** — Fix bugs, add features, improve performance
-- **Documentation** — Improve docs, translate content, write tutorials
-- **Testing** — Write unit tests, integration tests, report bugs
-- **eBPF** — Add new kernel probes, improve kernel compatibility
-- **Review** — Review pull requests from other contributors
-
----
+- **Code**: fix bugs, add features, or improve performance.
+- **Documentation**: improve documentation, translate content, or write tutorials.
+- **Testing**: write unit and integration tests or report bugs.
+- **eBPF**: add kernel probes or improve kernel compatibility.
+- **Review**: review other contributors' pull requests.
 
 ## Development Environment
 
 ### Prerequisites
 
-| Tool | Requirement | Note |
-|------|----------|------|
-| **Go** | 1.24+ | The project is written in Go |
-| **Linux** | Kernel 4.18+ | eBPF programs require a Linux kernel |
-| **Clang/LLVM** | Any recent version | Required for compiling eBPF C programs |
+| Tool | Requirement | Purpose |
+|------|------|------|
+| **Go** | As specified in `go.mod` (currently 1.24.3) | Main implementation language |
+| **Linux** | Kernel 4.18+ | Required for eBPF programs |
+| **Clang/LLVM** | A recent version | Compile eBPF C programs |
 | **Kernel headers** | linux-headers | Required for BPF compilation |
-| **Docker** | (optional) | For containerized development |
-| **Git** | Any recent version | For version control |
+| **Docker** | Optional | Containerized development environment |
+| **Git** | A recent version | Version control |
 
 ### Clone the Repository
 
 ```bash
-# Fork the repository on GitHub, then:
+# Fork the repository on GitHub first, then:
 git clone https://github.com/YOUR_USERNAME/huatuo.git
 cd huatuo
 git remote add upstream https://github.com/ccfos/huatuo.git
 ```
-
----
 
 ## Build and Test
 
@@ -52,21 +44,19 @@ git remote add upstream https://github.com/ccfos/huatuo.git
 
 ```bash
 make build        # Build BPF programs and Go binaries
-make gen-build    # Regenerate BPF and generated Go artifacts
-make docker-build # Build Docker image
+make gen-build    # Regenerate BPF artifacts and generated Go code
+make docker-build # Build the Docker image
 ```
 
-### Full Container Integration
+### Run the Development Stack
 
-Build the development image from the current source and start the collector,
-API Server, Elasticsearch, Prometheus, and Grafana:
+Build a development image from the current source and start the collector, API Server, Elasticsearch, Prometheus, and Grafana:
 
 ```bash
 make compose-dev-up
 ```
 
-Stop the environment and remove its containers, volumes, and local development
-image:
+Stop the environment and remove its containers, volumes, and local development image:
 
 ```bash
 make compose-dev-down
@@ -77,151 +67,134 @@ make compose-dev-down
 ```bash
 make test  # Run all tests
 make unit  # Run unit tests only
-make check # Run linting and formatting checks
+make check # Run code style and formatting checks
 ```
 
-> **Note**: `make test` requires `/etc/kubernetes/pki` for E2E tests. If you don't have a K8s cluster, use `make unit` instead.
+> **Note:** `make test` requires `/etc/kubernetes/pki` for E2E tests. Without a Kubernetes cluster, use `make unit`.
 
-To test or debug on another distribution without a local VM, use
-[GitHub Actions VM debugging](/docs/development/vm-debugging_en.md).
-
----
+To test or debug on other distributions without a local VM, see [GitHub Actions VM Debugging](/docs/development/debugging_en.md#vm-debugging).
 
 ## Contribution Workflow
 
 ### 1. Find or Create an Issue
 
-- Check the [open issues](https://github.com/ccfos/huatuo/issues) for bugs and features
-- If you find an unassigned issue, comment to ask for assignment
-- If you have a new idea, [create an issue](https://github.com/ccfos/huatuo/issues/new/choose) first
+- Browse [open issues](https://github.com/ccfos/huatuo/issues) for bugs and feature requests.
+- To work on an unassigned issue, leave a comment asking to take it.
+- For a new idea, [create an issue](https://github.com/ccfos/huatuo/issues/new/choose) to discuss it first.
 
 ### 2. Create a Branch
 
 ```bash
 git checkout -b fix/short-description
-# or: git checkout -b feat/short-description
-# or: git checkout -b docs/short-description
+# Or: git checkout -b feat/short-description
+# Or: git checkout -b docs/short-description
 ```
 
-Branch name prefixes:
+Branch prefixes:
 
 | Prefix | Purpose |
-|---------|--------|
+|------|------|
 | `fix/` | Bug fixes |
 | `feat/` | New features |
 | `docs/` | Documentation |
-| `refactor/` | Code restructuring |
-| `test/` | Adding tests |
+| `refactor/` | Code refactoring |
+| `test/` | Additional tests |
 
-### 3. Make Your Changes
+### 3. Write Code
 
-- Keep changes focused on a single issue
-- Add or update tests to cover your changes
-- Run `make check` to ensure code style compliance
-- Run `make unit` to verify tests pass
+- Address one problem at a time.
+- Update existing unit tests; add integration tests for components with external dependencies.
+- Update documentation when changing configuration, interfaces, storage structures, or features.
+- Run `make check` to check code style.
+- Run `make unit` to verify the tests pass.
 
-### 4. Commit Your Changes
+### 4. Commit Changes
 
-Use [conventional commits](https://www.conventionalcommits.org/):
+Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```bash
-git commit -s -m "fix(scope): brief description
+git commit -s -m "fix(scope): short summary
 
-Detailed explanation if needed.
+Detailed explanation (optional)
 
 Closes #issue-number
 
 Signed-off-by: Your Name <your.email@example.com>"
 ```
 
-The `-s` flag adds the required DCO `Signed-off-by` line.
+The `-s` flag adds the `Signed-off-by` line required by the DCO.
 
-### 5. Push and Create a Pull Request
+### 5. Push and Open a PR
 
 ```bash
 git push origin your-branch-name
 ```
 
-Then go to [ccfos/huatuo](https://github.com/ccfos/huatuo) and create a **draft** Pull Request. When ready for review, click **Ready for review**.
+Create a **Draft** pull request in [ccfos/huatuo](https://github.com/ccfos/huatuo). When ready, click **Ready for review**.
 
 ### 6. Code Review
 
-- A maintainer will review your PR
-- Address review comments by pushing new commits
-- Once approved, the maintainer will merge your PR
-
----
+- Maintainers review your PR.
+- Address feedback and push new commits.
+- You can mark the PR as Draft while revising it, then click **Ready for review** again.
+- Maintainers merge the PR after approval.
 
 ## Commit Messages
 
-HUATUO follows [Conventional Commits](https://www.conventionalcommits.org/):
+Use `type(scope): summary` and follow the repository's `AGENTS.md`. The body must explain why the change is needed, with no line exceeding 80 characters. Each commit must contain one logical change and no `Co-authored-by:` trailer.
 
 ```text
 <type>(<scope>): <description>
 
-[optional body]
+Explain why the change is needed (no more than 80 characters per line)
 
-[optional footer]
+[Optional footer]
 ```
 
 ### Types
 
 | Type | Description |
-|------|-------------|
-| `fix` | A bug fix |
-| `feat` | A new feature |
-| `docs` | Documentation changes |
-| `test` | Adding or updating tests |
-| `refactor` | Code restructuring without behavior change |
-| `chore` | Build process, dependencies, etc. |
-| `perf` | Performance improvements |
+|------|------|
+| `fix` | Bug fix |
+| `feat` | New feature |
+| `refactor` | Code restructuring without behavior changes |
 
 ### Examples
 
 ```text
 fix(pod): preserve response body read errors in httpDoRequest
 feat(bpf): add probe for kernel scheduling latency
-docs(contributing): add development setup guide
-test(request): verify response body is readable after doRequest
+fix(docs): clarify development setup requirements
+fix(request): cover response body reads after doRequest
 ```
-
----
 
 ## Code Style
 
 | Language | Tool |
-|----------|--------|
+|------|------|
 | **Go** | `gofumpt` + `goimports` |
-| **C (eBPF)** | `clang-format` (config in `.clang-format`) |
+| **C (eBPF)** | `clang-format` (configured in `.clang-format`) |
 | **Shell** | `shfmt` |
-| **YAML/JSON** | 2-space indent |
+| **YAML/JSON** | 2-space indentation |
 
-Run `make check` before every commit to ensure compliance.
-
----
+Run `make check` before every commit to verify compliance.
 
 ## DCO Sign-off
 
-All contributions must include a **Developer Certificate of Origin (DCO)** sign-off.
+All contributions require a **Developer Certificate of Origin (DCO)** sign-off.
 
-Every commit must end with:
+Each commit must end with:
 
-```
+```bash
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-Use `git commit -s` to add this automatically.
+Use `git commit -s` to add it automatically.
 
-The sign-off certifies that you wrote the code or have the right to contribute it under the project's license (Apache 2.0).
-
----
+The sign-off confirms that you authored the code or have the right to contribute it under the project's Apache 2.0 license.
 
 ## Community
 
-- **GitHub Issues** — Report bugs and request features
-- **GitHub Discussions** — Ask questions and share ideas
-- **WeChat** — Scan the QR code in the [README](https://github.com/ccfos/huatuo) to join the group
-
----
-
-**Thank you for contributing to HUATUO!**
+- **GitHub Issues**: report bugs and request features.
+- **GitHub Discussions**: ask questions and share ideas.
+- **WeChat**: scan the QR code in the [README](https://github.com/ccfos/huatuo) to join the group.

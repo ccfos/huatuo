@@ -18,10 +18,11 @@ package main
 // with the matching #define names in bpf/iotracing.c — a typo here is a
 // silent no-op at attach time.
 const (
-	bpfFilterEventTimeout = "FILTER_EVENT_TIMEOUT"
-	bpfFilterDevIDs       = "FILTER_DEV_IDS"
-	bpfFilterDevCount     = "FILTER_DEV_COUNT"
-	bpfFilterDevMaxNums   = 16
+	bpfFilterEventTimeout     = "FILTER_EVENT_TIMEOUT"
+	bpfFilterDevIDs           = "FILTER_DEV_IDS"
+	bpfFilterDevCount         = "FILTER_DEV_COUNT"
+	bpfFilterDevMaxNums       = 16
+	bpfRequestPartBlockDevice = "REQUEST_PART_BLOCK_DEVICE"
 
 	// bpfPerfMapName / bpfSourceMapName are map names exposed by the BPF
 	// object; the tool dumps the latter and reads events from the former.

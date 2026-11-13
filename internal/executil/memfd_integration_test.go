@@ -83,7 +83,10 @@ func TestProcessDoesNotCloseBorrowedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := process.Run(t.Context()); err != nil {
+	if err := process.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	if err := process.Close(); err != nil {

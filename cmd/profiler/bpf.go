@@ -16,15 +16,16 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 )
 
 // initBpfManager prepares shared BPF resources for native profilers. The
 // returned cleanup must run on exit so map FDs and pinned objects are released.
-func initBpfManager(duration int) (func(), error) {
+func initBpfManager(duration time.Duration) (func(), error) {
 	if err := bpf.Init(&bpf.Option{
-		KeepaliveTimeout: duration,
+		KeepaliveTimeout: int(duration / time.Second),
 	}); err != nil {
 		return nil, fmt.Errorf("init bpf: %w", err)
 	}

@@ -21,9 +21,9 @@ import (
 	"testing"
 
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
-	"github.com/ccfos/huatuo/internal/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
-	"github.com/ccfos/huatuo/internal/server/response"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
@@ -74,7 +74,7 @@ func TestSelectMergeStacktracesUsesStrictProtobufContract(t *testing.T) {
 	handler := &APIHandler{profileQuery: service}
 	body, err := proto.Marshal(&querierv1.SelectMergeStacktracesRequest{
 		ProfileTypeID: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-		LabelSelector: `{hostname="node-1"}`,
+		LabelSelector: `{scope="host",hostname="node-1"}`,
 	})
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
@@ -90,7 +90,7 @@ func TestSelectMergeStacktracesUsesStrictProtobufContract(t *testing.T) {
 	if _, ok := result.(serverapi.SelectMergeStacktraces200ApplicationProtoResponse); !ok {
 		t.Fatalf("SelectMergeStacktraces() response = %T", result)
 	}
-	if service.selectRequest == nil || service.selectRequest.LabelSelector != `{hostname="node-1"}` {
+	if service.selectRequest == nil || service.selectRequest.LabelSelector != `{scope="host",hostname="node-1"}` {
 		t.Fatalf("profile query request = %+v", service.selectRequest)
 	}
 }

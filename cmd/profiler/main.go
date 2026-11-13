@@ -16,14 +16,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/version"
-
-	_ "github.com/ccfos/huatuo/cmd/profiler/provider"
 )
 
 const profilerToolName = "profiler"
@@ -62,7 +62,11 @@ func main() {
 			fmt.Fprint(os.Stderr, signalLog.String())
 		}
 
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		if errors.Is(err, bpf.ErrHardwarePMUUnavailable) {
+			fmt.Fprintln(os.Stderr, "Error: hardware_pmu_unavailable:", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		os.Exit(1)
 	}
 }

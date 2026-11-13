@@ -231,7 +231,12 @@ func generateDomain(types []mergedType) ([]byte, error) {
 		out.WriteString(")\n\n")
 	}
 
-	formatted, err := format.Source([]byte(out.String()))
+	source := out.String()
+	if strings.Contains(source, "structs.HostLayout") {
+		source = strings.Replace(source, `import "unsafe"`, "import (\n\"structs\"\n\"unsafe\"\n)", 1)
+	}
+
+	formatted, err := format.Source([]byte(source))
 	if err != nil {
 		return nil, fmt.Errorf("format generated go: %w", err)
 	}

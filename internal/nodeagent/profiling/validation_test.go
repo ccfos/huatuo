@@ -31,7 +31,6 @@ func TestValidateEnvironmentUsesSharedToolDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.ProfilerPath = executable
-	config.ResultPublisher = &fakeResultPublisher{}
 	config.ToolDir = t.TempDir()
 	binary := filepath.Join(config.ToolDir, "py-spy")
 	if err := os.WriteFile(binary, nil, 0o600); err != nil {

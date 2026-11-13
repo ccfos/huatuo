@@ -36,10 +36,9 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 		"--duration", strconv.FormatInt(durationSeconds, 10),
 		"--aggr-interval", strconv.FormatInt(int64(aggregationInterval/time.Second), 10),
 		"--max-concurrent-procs", strconv.Itoa(config.MaxConcurrentProcesses),
-		"--output-format", "remote",
-		"--output-storage", config.ToolstreamSocketPath,
-		"--tracer-id", request.RequestID,
-		"--huatuo-api-address", config.NodeAPIAddress,
+		"--output-format", "remote-store",
+		"--output-path", config.ToolstreamSocketPath,
+		"--task-id", request.RequestID,
 		"--tool-path", config.ToolDir,
 	}
 	if request.Scope == observation.ScopeContainer {
@@ -60,6 +59,6 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 	return executil.Spec{
 		Path:           config.ProfilerPath,
 		Args:           args,
-		MaxOutputBytes: config.CommandOutputLimitBytes,
+		MaxStdoutBytes: config.CommandOutputLimitBytes,
 	}, nil
 }

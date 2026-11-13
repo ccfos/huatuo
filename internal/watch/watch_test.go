@@ -15,6 +15,7 @@
 package watch
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,56 @@ func TestHub_SubscribeReceivesNotifiedValue(t *testing.T) {
 		require.Equal(t, doc, received)
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for value")
+	}
+}
+
+func TestHub_ZeroValueIsUsable(t *testing.T) {
+	var h Hub[*testDoc]
+	ch, cancel := h.Subscribe()
+	require.Equal(t, defaultBufSize, cap(ch))
+
+	doc := &testDoc{}
+	h.Notify(doc)
+	select {
+	case received := <-ch:
+		require.Equal(t, doc, received)
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for value from zero-value hub")
+	}
+	cancel()
+	h.Notify(&testDoc{})
+	select {
+	case <-ch:
+		t.Fatal("zero-value hub delivered a value after cancellation")
+	default:
+	}
+}
+
+func TestHub_ZeroValueConcurrentFirstSubscriptions(t *testing.T) {
+	var h Hub[*testDoc]
+	channels := make([]<-chan *testDoc, 8)
+	cancels := make([]func(), len(channels))
+	var wg sync.WaitGroup
+	for i := range channels {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			channels[i], cancels[i] = h.Subscribe()
+		}(i)
+	}
+	wg.Wait()
+
+	doc := &testDoc{}
+	h.Notify(doc)
+	for i, ch := range channels {
+		require.Equal(t, defaultBufSize, cap(ch), "subscriber %d capacity", i)
+		select {
+		case received := <-ch:
+			require.Equal(t, doc, received)
+		case <-time.After(time.Second):
+			t.Fatalf("subscriber %d did not receive value", i)
+		}
+		cancels[i]()
 	}
 }
 

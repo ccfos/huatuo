@@ -41,7 +41,7 @@ const (
 
 func init() {
 	tracing.RegisterEventTracing(tcpRetransmitTracerName, newTCPRetransmit)
-	toolstream.RegisterDefault[*types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
+	toolstream.RegisterDefault[types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
 }
 
 func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
@@ -71,23 +71,15 @@ func validateTCPRetransmitFilter(config *Config) error {
 // Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
-	return c.start(ctx, executil.Run)
-}
-
-func (c *tcpRetransmitTracing) start(
-	ctx context.Context,
-	run func(context.Context, executil.Spec, ...executil.Option) (*executil.Result, error),
-) error {
-	result, err := run(ctx, executil.Spec{
+	result, err := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
 		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
-		var runErr *executil.RunError
-		if errors.As(err, &runErr) && runErr.IsCancellation() && errors.Is(err, context.Canceled) {
+		if errors.Is(err, executil.ErrRunCanceled) {
 			return nil
 		}
-		if result != nil && len(result.Stderr) > 0 {
+		if len(result.Stderr) > 0 {
 			return fmt.Errorf("run tcpshark: %w; stderr: %s", err, result.Stderr)
 		}
 		return fmt.Errorf("run tcpshark: %w", err)
@@ -123,7 +115,11 @@ func tcpRetransmitArgs(config *Config) []string {
 	return args
 }
 
-func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTracing) error {
+func handleTCPRetransmitEvent(_ context.Context, request *toolstream.Request[types.TCPRetransmitTracing]) error {
+	if request.Data == nil {
+		return nil
+	}
+	ev := request.Data
 	if ev.ContainerID == "" {
 		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
 			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),

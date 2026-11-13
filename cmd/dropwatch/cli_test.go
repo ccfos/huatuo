@@ -25,9 +25,9 @@ import (
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
+// CLI tests must run serially: urfave/cli adds the shared HelpFlag to each app
+// and mutates it during App.Run, even when appFlags returns fresh flags.
 func TestAppSourceTypes(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name string
 		args []string
@@ -43,8 +43,6 @@ func TestAppSourceTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			var sourceTypes string
 			app := &cli.App{
 				Name: dropwatchToolName, Flags: appFlags(), Before: validateFlags,
@@ -68,8 +66,6 @@ func TestAppSourceTypes(t *testing.T) {
 }
 
 func TestAppHelpHidesSourceTypes(t *testing.T) {
-	t.Parallel()
-
 	var output bytes.Buffer
 	app := &cli.App{
 		Name: dropwatchToolName, Flags: appFlags(), Before: validateFlags,
@@ -87,8 +83,6 @@ func TestAppHelpHidesSourceTypes(t *testing.T) {
 }
 
 func TestValidateFlags(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name string
 		args []string

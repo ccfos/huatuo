@@ -205,10 +205,21 @@ func TestManagerValidatesRequests(t *testing.T) {
 
 func TestManagerGetAndStopByID(t *testing.T) {
 	manager := newTestManager(t, testConfig())
+	stopCalled := make(chan struct{})
+	executor := &fakeExecutor{
+		waitFn: func() error {
+			<-stopCalled
+			return nil
+		},
+		stopFn: func(context.Context) error {
+			close(stopCalled)
+			return nil
+		},
+	}
 	if _, created, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindTracing,
-		Executor:  &fakeExecutor{},
+		Executor:  executor,
 	}); err != nil || !created {
 		t.Fatalf("Start() = (created=%t, err=%v), want created operation", created, err)
 	}
@@ -220,7 +231,10 @@ func TestManagerGetAndStopByID(t *testing.T) {
 	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("StopByID() = (initiated=%t, err=%v), want initiated stop", initiated, err)
 	}
-	waitForStatus(t, manager, KindTracing, "request", StatusTerminal)
+	operation := waitForStatus(t, manager, KindTracing, "request", StatusTerminal)
+	if operation.Terminal == nil || operation.Terminal.Outcome != OutcomeStopped {
+		t.Fatalf("stopped operation terminal = %+v, want stopped", operation.Terminal)
+	}
 }
 
 func TestManagerAdmissionAndIdempotency(t *testing.T) {

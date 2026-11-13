@@ -17,6 +17,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -33,11 +34,14 @@ func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventRea
 		return nil, fmt.Errorf("get event pipe: %w", err)
 	}
 
-	defer func() {
+	// Capture the opened reader before an error return clears the result.
+	defer func(reader bpf.PerfEventReader) {
 		if err != nil {
-			reader.Close()
+			if closeErr := reader.Close(); closeErr != nil {
+				err = errors.Join(err, fmt.Errorf("close event pipe: %w", closeErr))
+			}
 		}
-	}()
+	}(reader)
 
 	infos, _ := b.Info()
 

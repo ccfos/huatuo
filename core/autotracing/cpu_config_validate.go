@@ -19,7 +19,7 @@ import "fmt"
 type cpuTracingConfig struct {
 	intervalSeconds         int64
 	minTraceIntervalSeconds int64
-	perfDurationSeconds     int64
+	traceDurationSeconds    int64
 	systemThreshold         int64
 	systemDeltaThreshold    int64
 }
@@ -31,7 +31,7 @@ func validateCPUConfig(config cpuTracingConfig) error {
 	if err := validateTimerSeconds(config.minTraceIntervalSeconds); err != nil {
 		return fmt.Errorf("minimum trace interval: %w", err)
 	}
-	if err := validatePerfDurationSeconds(config.perfDurationSeconds); err != nil {
+	if err := validateProfileDurationSeconds(config.traceDurationSeconds); err != nil {
 		return err
 	}
 	if err := validateCPUPercentage(config.systemThreshold); err != nil {
@@ -47,13 +47,13 @@ func validateCPUConfig(config cpuTracingConfig) error {
 func validateCPUIdleConfig(
 	intervalSeconds int64,
 	minTraceIntervalSeconds int64,
-	perfDurationSeconds int64,
+	traceDurationSeconds int64,
 	threshold cpuIdleThreshold,
 ) error {
 	if err := validateCPUConfig(cpuTracingConfig{
 		intervalSeconds:         intervalSeconds,
 		minTraceIntervalSeconds: minTraceIntervalSeconds,
-		perfDurationSeconds:     perfDurationSeconds,
+		traceDurationSeconds:    traceDurationSeconds,
 		systemThreshold:         threshold.percent.system,
 		systemDeltaThreshold:    threshold.delta.system,
 	}); err != nil {
@@ -90,14 +90,14 @@ func validateTimerSeconds(value int64) error {
 	return nil
 }
 
-func validatePerfDurationSeconds(value int64) error {
+func validateProfileDurationSeconds(value int64) error {
 	if value <= 0 {
-		return fmt.Errorf("perf duration must be positive, got %d", value)
+		return fmt.Errorf("profile duration must be positive, got %d", value)
 	}
-	if value > maxPerfDurationSeconds {
+	if value > maxProfileDurationSeconds {
 		return fmt.Errorf(
-			"perf duration must not exceed %d seconds, got %d",
-			maxPerfDurationSeconds,
+			"profile duration must not exceed %d seconds, got %d",
+			maxProfileDurationSeconds,
 			value,
 		)
 	}

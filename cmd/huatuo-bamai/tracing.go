@@ -23,12 +23,12 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/handlers"
 	"github.com/ccfos/huatuo/internal/bpf"
-	"github.com/ccfos/huatuo/internal/document"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/profiling"
+	"github.com/ccfos/huatuo/internal/strutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/tracing"
-	"github.com/ccfos/huatuo/pkg/types"
+	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 )
 
 const defaultHTTPDrainTimeout = 5 * time.Second
@@ -49,23 +49,23 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
 	}
-	if d.profileStore != nil {
-		documentWriter, err := profiling.NewDocumentWriter(
-			d.profileStore,
-			document.New(d.opts.Region),
-		)
+	cleanup := func(context.Context) error { return nil }
+	cfg := config.Get().Storage.Elasticsearch
+	if !d.opts.DisableStorage && cfg.Enabled() {
+		cleanup, err = profiling.Register(context.Background(), srv, profilingstore.Config{
+			Addresses: strutil.SplitCommaList(cfg.Address), Username: cfg.Username,
+			Password: cfg.Password, Index: cfg.Index,
+		}, d.opts.Region)
 		if err != nil {
 			return nil, err
 		}
-		toolstream.Register(srv, types.ProfilingToolName, documentWriter.Write)
 	}
 
 	if err := srv.Start(); err != nil {
-		return nil, fmt.Errorf("start: %w", err)
+		return nil, errors.Join(fmt.Errorf("start: %w", err), cleanup(context.Background()))
 	}
-	d.toolstreamServer = srv
 
-	return func(context.Context) error { return srv.Close() }, nil
+	return func(ctx context.Context) error { return errors.Join(srv.Close(), cleanup(ctx)) }, nil
 }
 
 func startTracing(d *Daemon) (func(context.Context) error, error) {

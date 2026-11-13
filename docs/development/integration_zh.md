@@ -7,133 +7,217 @@ date: 2026-03-04
 weight: 5
 ---
 
-集成测试用于验证 ``huatuo-bamai``在使用模拟的 ``/proc`` 和 ``/sys`` 文件系统时，能够正确启动并对外暴露符合预期的``Prometheus``指标。
+集成测试和 E2E 测试用于验证 Huatuo 的采集、服务接口及外部依赖。本文说明如何运行测试、配置测试环境和查看结果。
 
-测试运行的是真实的可执行文件，并通过校验 ``/metrics`` 接口的输出结果，确保指标采集与暴露逻辑正确，而不依赖宿主机的内核或硬件环境。
+## 运行测试
 
-### 脚本执行流程
+在项目根目录执行。测试需要 Linux 和 root 权限；涉及容器、Pod 或块设备的用例应在专用测试节点运行。
 
-该集成测试脚本主要包含以下步骤：
-
-1. 生成临时的``bamai.conf``配置文件
-2. 使用模拟的 ``procfs`` 和 ``sysfs`` 启动 ``huatuo-bamai`` 服务
-3. 等待 ``/metrics`` 接口可访问
-4. 从 ``/metrics`` 接口拉取所有指标数据
-5. 校验所有预期指标是否存在且内容匹配
-6. 停止服务并清理相关资源
-7. 若任意一个预期指标缺失或不匹配，测试将直接失败
-
-### 运行方式
-
-请在项目根目录下执行集成测试：
-```bash
-bash integration/run.sh
-```
-
-指定文件名可以只运行一个集成测试，第二个参数指定循环次数，默认为 1：
+通过 Makefile 构建并运行：
 
 ```bash
-bash integration/run.sh test_metrics_exclude_filter.sh 10
+sudo make integration
+sudo make e2e
+sudo make test
 ```
 
-或通过 Makefile 执行：
-```bash
-make integration
-```
-
-### 前置检查与结果汇总
-
-两套测试共用 `integration/run.sh`，默认运行 integration；`e2e/run.sh` 转发到
-`--suite e2e`。现有 `make integration`、`make e2e` 和单用例入口继续可用：
+`make test` 包含单元测试、集成测试和 E2E 测试。也可以先构建，再以 root 运行脚本：
 
 ```bash
-bash integration/run.sh --suite e2e
-bash integration/run.sh --suite e2e test_metrics.sh 2
-bash e2e/run.sh test_metrics.sh 2
+make build test-build
+sudo bash integration/run.sh
+sudo bash e2e/run.sh
 ```
 
-两套测试都在独立的 UTS、mount namespace 中运行，hostname 为 `huatuo-dev`，
-挂载传播设为 private。integration 由用例启动服务；e2e 在每例之前启动默认 bamai，
-结束时停止服务并检查日志。integration 成功或跳过后删除工作目录，失败时保留；
-e2e 保留工作目录。
+### 单用例与重复运行
 
-runner 只检查 `_output` 目录是否存在，不逐个检查项目二进制和 BPF 产物。
-直接运行脚本前先执行 `make build`；
-目录存在不代表构建完整，缺失产物会在实际使用时导致失败。
-
-用例使用同一个函数检查 PATH 中的命令或可执行文件路径，缺失时跳过：
+脚本名后可指定重复次数，默认为 1，范围为 1–1,000。所选测试数量乘以重复次数不得超过 10,000。
 
 ```bash
-require_commands jq curl ss
-require_commands "${PROFILER_TOOL_DIR}/bin/asprof"
+sudo bash integration/run.sh test_metrics_exclude_filter.sh 10
+sudo bash e2e/run.sh test_metrics.sh 2
 ```
 
-证书等输入文件使用 `require_readable` 检查，不可读时输出具体路径并跳过：
+也可以通过 `--suite e2e` 选择 E2E：
 
 ```bash
-require_readable "${KUBELET_CERT}" "${KUBELET_KEY}"
+sudo bash integration/run.sh --suite e2e test_metrics.sh 2
 ```
 
-`skip` 输出原因并以 77 退出，仍会执行 `EXIT` 清理。runner 将 0 记为 PASS、
-77 记为 SKIP，其他状态记为 FAIL；清理失败也记为 FAIL。只有成功和跳过时，
-runner 返回 0。失败时停止后续用例，并输出截至当前的统计。
+无效参数返回退出码 2，不创建运行目录或报告。
 
-每次执行都单独计数，包括重复运行，例如：
+### 并发运行
 
-```text
-summary: total=5 passed=3 skipped=2 failed=0
-```
+集成测试默认单 worker，`-j` 支持 1–8；也可以设置 `INTEGRATION_JOBS`：
 
-两套测试缺少 root 权限或 namespace 命令时，所选用例全部计为 SKIP。
-
-#### 失败时的行为
-- ``huatuo-bamai`` 服务指标和日志将直接输出到标准输出，便于问题定位
-- 临时工作目录将被保留，用于后续调试分析
-
-#### 成功时的行为
-- 显示验证成功的``metrics`` 列表
----
-
-### 后台进程清理
-
-`stop_and_wait_by_pid PID [TIMEOUT]` 停止并等待子进程，返回其退出码。
-未传入 PID 或 PID 为空时立即返回成功，调用方可以直接传入已初始化的 PID 变量。
-等待结束后清空变量；尽力清理时使用 `|| true`，退出码属于测试契约时应进行断言。
-
-### 网络命名空间辅助函数
-
-网络测试可以在加载 `lib.sh` 后加载 `integration/lib_namespace.sh`：
-
-- `namespace_setup NAME` 创建一个网络命名空间，通过 `NETNS` 暴露名称。
-  调用方负责启用 `lo` 并配置所需地址。
-- `namespace_setup_with_pair PREFIX SERVER_ADDR CLIENT_ADDR [PREFIX_LENGTH]`
-  创建通过 veth 连接的两个命名空间，配置地址并启用接口，地址前缀长度默认为 24。
-  命名空间、接口和地址通过 `NETNS_SERVER`、`NETNS_CLIENT`、
-  `NETNS_VETH_SERVER`、`NETNS_VETH_CLIENT`、`NETNS_SERVER_ADDR`、
-  `NETNS_CLIENT_ADDR` 暴露。
-- `namespace_cleanup` 删除上述函数创建的命名空间并清空状态，支持重复调用。
-  用例应在 `EXIT` 清理中先停止命名空间内的进程，再调用该函数。
-
-### 如何新增指标测试
-#### 第一步：新增或更新模拟数据
-如果新增的指标依赖 ``/proc`` 或 ``/sys`` 文件内容，请在以下目录中新增或修改模拟数据：
 ```bash
-integration/fixtures/
+sudo bash integration/run.sh -j 2
+sudo env INTEGRATION_JOBS=2 make integration
 ```
-目录结构需与真实内核文件系统保持一致。
 
-#### 第二步：添加预期指标
-在以下目录中新建一个文件：
-```bash
-integration/fixtures/expected_metrics/
-├── cpu.txt
-├── memory.txt
-└── ...
-```
-每一行（非空、非注释行）表示一条期望的 Prometheus 指标，指标内容必须与 ``/metrics`` 接口返回结果完全一致，新增的``*.txt`` 文件会被测试脚本自动加载并参与校验。
+部分用例需要独占运行，实际并发数可能低于设置值。每台主机同时只运行一个测试套件。E2E 始终串行运行，不支持 `-j` 大于 1。
 
-#### 第三步：运行测试
+E2E 默认由 runner 启动使用默认配置的 bamai。需要自行管理黑名单或配置的用例，可在 `integration/lib_runner.sh` 的 `runner_test_bamai_startup` 中添加 `["e2e/test_example.sh"]=case`（默认值为 `runner`）。runner 仍初始化服务地址，用例负责使用自己的配置启动 bamai，并在每次替换前检查该 daemon 的日志，包括子目录中的 daemon。清理时仍严格检查用例工作目录中的日志/PID 文件；启动前提前跳过无需提供 daemon 日志。集成测试继续自行管理服务。
+
+## 环境要求
+
+运行前需完成 `make build test-build`；缺失构建产物会导致失败。报告依赖 `jq`，测试环境还需提供 `unshare`、`mount`、`flock`、`ss`、`stat`。具体用例会检查其所需的外部命令、内核能力、服务和输入文件。
+
+缺少 root 权限或必要的 namespace 命令时，所选用例报告 SKIP。用例缺少外部依赖时也会报告具体跳过原因；SKIP 不表示验证通过。
+
+常用环境变量：
+
+| 变量 | 用途 |
+| --- | --- |
+| `INTEGRATION_JOBS` | 集成测试 worker 数，默认 1 |
+| `KUBELET_CERT`、`KUBELET_KEY` | 本机 kubelet 的客户端证书和私钥路径 |
+| `PROFILER_TOOL_DIR` | Java/Python 采集工具目录，默认 `_output/tools` |
+| `APISERVER_TEST_NODE` | apiserver 矩阵测试使用的本机 Kubernetes 节点名 |
+| `APISERVER_TEST_NATIVE_IMAGE`、`APISERVER_TEST_GO_IMAGE`、`APISERVER_TEST_JAVA_IMAGE`、`APISERVER_TEST_PYTHON_IMAGE` | apiserver 矩阵测试镜像 |
+| `TEST_IO_DISK` | IO 专用测试盘，内容可被覆盖 |
+
+通过 `sudo env NAME=value ...` 传入需要覆盖的环境变量，避免被 sudo 的环境过滤规则丢弃。
+
+## 结果与日志
+
+| 结果 | 含义 |
+| --- | --- |
+| PASS | 测试和清理成功 |
+| SKIP | 依赖不满足、未启动或被取消；具体原因见报告 |
+| FAIL | 测试、服务准备或清理失败 |
+
+失败后停止启动新用例；未启动项和被取消的执行记为 SKIP。INT/TERM 中断返回 130/143。仅有跳过项时可能返回成功，因此应同时检查计数和跳过原因。
+
+每次有效调用创建 `/tmp/huatuo-test.XXXXXX/`。集成测试的所有执行均通过且终端摘要输出成功后，会删除该目录；存在跳过、失败或中断时保留，以便排查。E2E 测试无论结果如何都保留目录。运行目录包含 `test_run_results.json`；每次执行的工作目录包含 `stdout.log`、`stderr.log` 及服务日志、配置和响应数据。集成测试全部通过时，终端摘要中的 `output_dir` 和 `results_path` 指向运行结束后已删除的目录。
+
+### 终端摘要
+
+终端显示各用例结果、JSON 摘要，然后输出失败测试的日志：
+
+| 字段 | 含义 |
+| --- | --- |
+| `status` | `passed`、`failed` 或 `interrupted` |
+| `output_dir`、`results_path` | 运行目录和完整报告路径 |
+| `runs_per_test` | 每个测试计划执行的次数 |
+| `started_at`、`finished_at`、`duration_seconds` | 开始、结束时间和耗时 |
+| `execution_counts` | `total`、`passed`、`failed`、`skipped`，包含重复执行和未启动项 |
+| `skipped_tests` | 跳过的测试名称 |
+| `failed_tests` | 失败测试的名称、执行序号、原因和日志 |
+`failed_tests` 每项包含 `name`、`run_index`、`reason` 和 `logs`。`logs` 数组包含相对于 `output_dir` 的路径。
+
+日志覆盖该次失败工作目录中的非空 `.log`、`.err`、`.out`、`.json`、`.conf` 文本文件，排除二进制、`test_run_results.json` 和 `reason.*.log`。JSON 摘要后，每次失败执行先输出 `Failed: ... (run N/M)`，再输出文件标题和内容。超过 64 KiB 的文件标题带有 `(64KB)`，仅展示末尾 64 KiB；完整内容仍保留在原文件中。排查失败时先读 `reason` 和 `stderr.log`，再查看相关服务日志及响应数据。
+
+日志内容以文本形式输出，包括 JSON 文件。失败原因优先使用显式诊断；未捕获的命令失败记录脚本、行号、命令和退出码。无法记录原因时保留退出码兜底，已捕获的子进程错误不会作为测试失败原因。
+
+### 完整报告
+
+`test_run_results.json` 的 `schema_version` 为 1：
+
+| 字段 | 含义 |
+| --- | --- |
+| `suite`、`runs_per_test` | 测试套件和每个测试计划执行的次数 |
+| `status` | `running`、`completed`、`aborted`、`interrupted` |
+| `exit_code`、`reason` | 测试运行的退出码和提前结束原因 |
+| `started_at`、`finished_at`、`duration_seconds` | 开始、结束时间和耗时 |
+| `execution_counts` | 执行计数 |
+| `test_executions` | 每个测试每次计划执行的记录 |
+
+执行记录包含 `test_name`、`run_index`、`result`、`exit_code`、`reason`、时间字段及 `logs.stdout` / `logs.stderr`，日志路径相对于报告目录。`result` 为 `passed`、`failed` 或 `skipped`；运行中未结束的记录为 `null`。未启动项没有时间和日志；无法确认的进程退出码为 `null`。清理失败可能使进程退出码为 0 的执行仍被判为 `failed`。
+
+`status: running` 表示报告尚未完成，不能作为最终结果。运行被强制终止或报告写入失败时，可能保留此状态。
+
+查看失败或跳过原因：
+
 ```bash
-bash integration/run.sh
+jq '.test_executions[] | select(.result == "failed" or .result == "skipped") | {test_name, run_index, result, reason, logs}' /tmp/huatuo-test.XXXXXX/test_run_results.json
 ```
-当任意一个预期指标缺失或不匹配时，测试将失败。
+
+## 常用专项测试
+
+### CPU 指标与自动追踪
+
+```bash
+sudo bash e2e/run.sh test_metrics_cpu_util.sh
+sudo bash e2e/run.sh test_metrics_cpu_stat.sh
+sudo bash e2e/run.sh test_metrics_cpu_runqlat_tracing.sh
+sudo bash e2e/run.sh test_autotracing_cpuidle.sh
+sudo bash e2e/run.sh test_autotracing_dload.sh
+```
+
+这些用例需要本机 Kubernetes/kubelet 访问权限；基准环境为 4 核、8 GB 内存的 VM。安装 `stress-ng`，CPU util/stat 还需要 `sysstat`。容器运行时需能获取负载镜像，CPU 参考采集、cpuidle 和 dload 还需要 Docker。
+
+CPU 指标支持 cgroup v1/v2；runqlat 和 cpuidle 需要相应内核采样能力。dload 功能检查需要 Legacy cgroup、taskstats、dm-delay、`dmsetup`、`losetup`、`mkfs.ext4`、`modprobe`、`nsenter`、挂载权限和可用 loop 设备。其他 cgroup 模式报告不支持及跳过原因。
+
+### Apiserver
+
+```bash
+sudo bash integration/run.sh test_apiserver_profile_disabled.sh
+sudo bash integration/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling.sh
+sudo bash e2e/run.sh test_apiserver_profiling_matrix.sh
+```
+
+集成测试覆盖认证、能力、参数和异常请求；E2E 覆盖采样结果、分页、火焰图及语言/采样模式矩阵。停止、并发和恢复场景可分别运行 `test_apiserver_profiling_{stop,concurrent,recovery,node_recovery}.sh`。
+
+无存储 API 检查不需要 Docker、perf 或编译器。采样测试需要 Docker、curl、jq、ss、timeout、允许采样的 perf 配置及已构建的采集工具；宿主机原生负载还需要 gcc。
+
+矩阵测试还需要 Python 3、ip、kubectl 管理权限、crictl、本机 kubelet 凭证和 asprof/py-spy。`APISERVER_TEST_NODE` 可指定本机节点；未指定时自动匹配，无法唯一匹配则失败。
+
+默认镜像为 `gcc:14`、`golang:1.24`、`eclipse-temurin:17-jdk`、`python:3.11-slim`，可通过对应的 `APISERVER_TEST_*_IMAGE` 变量替换。运行时需要镜像访问权限。工作目录中的 `summary.tsv` 记录矩阵各组合的结果。
+
+### 性能剖析
+
+```bash
+sudo bash integration/run.sh test_profiler_native_cpu.sh
+sudo bash integration/run.sh test_profiler_native_cpu_offcpu.sh
+sudo bash integration/run.sh test_profiler_native_memory_virtual_alloc.sh
+sudo bash integration/run.sh test_profiler_native_memory_physical_usage.sh
+sudo bash integration/run.sh test_profiler_java_cpu_multi_pid.sh
+sudo bash integration/run.sh test_profiler_java_memory_usage_alloc.sh
+sudo bash integration/run.sh test_profiler_python_cpu_multi_pid.sh
+```
+
+Java/Python 用例需在 `PROFILER_TOOL_DIR` 中准备对应采集工具。容器、线程组和指定 CPU 的测试分别为 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh`、`test_profiler_native_cpu_cpuid.sh`。
+
+### 存储与资源限额
+
+以下存储测试不需要 Elasticsearch 服务：
+
+| 用例 | 验证内容 |
+| --- | --- |
+| `test_basic_storage_elasticsearch_config.sh` | Elasticsearch 配置完整性和启动行为 |
+| `test_basic_storage_localfile_rotation.sh` | LocalFile 轮转、保留数量和事件数据 |
+
+LocalFile 轮转测试需要内核 BTF、`skb/kfree_skb` tracepoint 及已构建的 Dropwatch 工具。
+
+```bash
+sudo bash integration/run.sh test_node_runtime_limits.sh
+```
+
+资源限额测试验证启动和运行阶段的 CPU、内存配置，需要可写的 CPU、memory 控制器；cgroup v2 还需要可访问的 systemd。分别在 v1/hybrid 和 v2 环境运行，才能确认两种层级的覆盖。环境被占用或能力不足时报告 SKIP；该测试不验证 CPU 吞吐或 OOM 行为。
+
+### IO
+
+IO 用例覆盖公开指标、容器归属、自动诊断及健康事件取证。在具备 BPF/BTF 支持的专用 Linux 测试节点运行，先以普通用户构建，再以 root 运行测试入口：
+
+```bash
+make build test-build
+sudo bash integration/run.sh test_metrics_io_wait.sh
+sudo env TEST_IO_DISK=/dev/vdb bash integration/run.sh test_metrics_blk_iotrace.sh
+```
+
+`TEST_IO_DISK` 默认 `/dev/disk/by-id/virtio-huatuo-ci-io`，必须是专用测试盘，内容可被覆盖。默认设备不存在时跳过依赖该盘的测试；指定其他不存在的设备，或设备不是块设备、已挂载、有分区时直接失败。MD、loop 和 NVMe-loop 的后端文件也使用该盘。需要 SCSI 驱动控制的用例单独创建 `scsi_debug` 设备。容器用例使用本机 Kubernetes 节点和已有 kubelet 凭证。
+
+`make unit` 验证 Go 配置解析、兼容选择、数据解码和指标转换。宿主机及容器指标用例验证真实 blk_iotrace 输出，不逐一验证各内核的完整 tracepoint 参数数量，也不保证触发全部 remap 路径。
+
+健康取证用例调用真实 `smartctl`、`nvme`，分别需要 `smartmontools`、`nvme-cli`；受控工具输出覆盖命令失败场景。
+
+### SchedBlame
+
+```bash
+sudo bash integration/run.sh test_sched_blame.sh
+```
+
+需要隔离的 Linux 4.18–6.5 测试环境、BTF、调度和 cgroup 钩子、本机 Kubernetes 节点、kubelet 认证及已缓存的 `BUSINESS_POD_IMAGE`。不支持的内核或缺失能力报告 SKIP。
+
+成功日志为 `sched-blame live collection verified`；失败时工作目录保留 CSV、命令日志和 Pod 诊断信息。该测试验证真实采集和竞争场景，不证明精确资源记账。

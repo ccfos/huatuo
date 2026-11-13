@@ -120,7 +120,7 @@ func (d *Device) SerialNumber() (string, error) {
 	if mtmlDeviceGetSerialNumber == nil {
 		return "", errNotSupportedSymbol("mtmlDeviceGetSerialNumber")
 	}
-	return getStringSerialLenFirst("mtmlDeviceGetSerialNumber", d.handle, deviceSerialNumberBufferSize,
+	return getString("mtmlDeviceGetSerialNumber", d.handle, deviceSerialNumberBufferSize,
 		func(buf []byte) Return {
 			return mtmlDeviceGetSerialNumber(d.handle, uint32(len(buf)), &buf[0])
 		})
@@ -559,7 +559,7 @@ func (m *Memory) Vendor() (string, error) {
 	if mtmlMemoryGetVendor == nil {
 		return "", errNotSupportedSymbol("mtmlMemoryGetVendor")
 	}
-	return getStringSerialLenFirst("mtmlMemoryGetVendor", m.handle, memoryVendorBufferSize,
+	return getString("mtmlMemoryGetVendor", m.handle, memoryVendorBufferSize,
 		func(buf []byte) Return {
 			return mtmlMemoryGetVendor(m.handle, uint32(len(buf)), &buf[0])
 		})
@@ -690,13 +690,6 @@ func getString(symbol string, _ uintptr, size int, fn func(buf []byte) Return) (
 		return "", err
 	}
 	return cString(buf), nil
-}
-
-// getStringSerialLenFirst is like getString but for APIs with the unusual
-// signature (handle, length, *byte) — e.g. mtmlDeviceGetSerialNumber,
-// mtmlMemoryGetVendor.
-func getStringSerialLenFirst(symbol string, _ uintptr, size int, fn func(buf []byte) Return) (string, error) {
-	return getString(symbol, 0, size, fn)
 }
 
 func cString(b []byte) string {

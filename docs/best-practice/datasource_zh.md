@@ -7,7 +7,7 @@ date: 2026-05-05
 weight: 2
 ---
 
-HUATUO 通过 Prometheus 采集指标，并将事件数据写入 Elasticsearch。本文介绍 Docker Compose 和 Kubernetes 环境下的数据源与仪表盘配置方法。
+Prometheus 抓取 HUATUO 暴露的指标，Elasticsearch 保存事件数据。本文介绍 Docker Compose 和 Kubernetes 环境下的数据源与仪表盘配置方法。
 
 > 不要在同一节点同时运行 Docker Compose、systemd 和 Kubernetes 版本的
 > huatuo-bamai。它们会争用 `19704` 端口和
@@ -29,6 +29,7 @@ docker compose --project-directory ./build/docker up -d
 | Elasticsearch | `http://localhost:9200` | 事件存储 |
 | Prometheus | `http://localhost:9090` | 指标采集 |
 | Grafana | `http://localhost:3000` | 可视化 |
+| huatuo-apiserver | `http://localhost:12740` | Profiling/Tracing 任务接口与火焰图查询 |
 | huatuo-bamai | `http://localhost:19704` | 指标和事件采集 |
 
 Grafana 默认账号为 `admin/admin`。首次登录后应立即修改密码。
@@ -42,6 +43,7 @@ Grafana 默认账号为 `admin/admin`。首次登录后应立即修改密码。
 | `huatuo-bamai-prom` | Prometheus | `huatuo-bamai-prom` |
 | `huatuo-bamai-es` | Elasticsearch | `huatuo-bamai-es` |
 | `huatuo-bamai-infinity` | Infinity | `huatuo-bamai-infinity-auto-flamegraph` |
+| `huatuo-apiserver-pyroscope` | Pyroscope | `huatuo-apiserver-pyroscope` |
 
 ### 已预配置的仪表盘
 
@@ -49,6 +51,7 @@ Grafana 默认账号为 `admin/admin`。首次登录后应立即修改密码。
 
 - Metric 大盘（宿主机）
 - Metric 大盘（容器）
+- Disk IO 大盘（持续监控）
 - HuaTuo 根因定位 AutoTracing
 - Continuous Profiling（宿主机）
 - Continuous Profiling（容器）
@@ -73,7 +76,7 @@ template:
       prometheus.io/path: "/metrics"
 ```
 
-Helm Chart 根据 `charts/huatuo/values.yaml` 中的以下配置生成注解：
+Helm Chart 根据 `build/charts/values.yaml` 中的以下配置生成注解：
 
 ```yaml
 metrics:

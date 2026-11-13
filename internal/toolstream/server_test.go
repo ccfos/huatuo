@@ -15,7 +15,9 @@
 package toolstream_test
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -29,7 +31,7 @@ type testEvent struct {
 }
 
 type capturedEvent struct {
-	sess  toolstream.Session
+	sess  toolstream.Request[testEvent]
 	event testEvent
 }
 
@@ -43,7 +45,11 @@ func newRecorder() *eventRecorder {
 	return &eventRecorder{notifyCh: make(chan struct{}, 10)}
 }
 
-func (r *eventRecorder) handler(sess *toolstream.Session, ev testEvent) error {
+func (r *eventRecorder) handler(_ context.Context, sess *toolstream.Request[testEvent]) error {
+	if sess.Data == nil {
+		return nil
+	}
+	ev := *sess.Data
 	r.mu.Lock()
 	r.events = append(r.events, capturedEvent{sess: *sess, event: ev})
 	r.mu.Unlock()
@@ -104,10 +110,10 @@ func TestRegisterAndReceive(t *testing.T) {
 
 	t.Cleanup(func() { _ = srv.Close() })
 
-	c, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: sockPath,
-		ToolName: "testtool",
-		Version:  "1.0",
+	c, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    sockPath,
+		ServiceName: "testtool",
+		Version:     "1.0",
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -122,7 +128,7 @@ func TestRegisterAndReceive(t *testing.T) {
 	}
 
 	for _, ev := range events {
-		if err := c.Send(ev); err != nil {
+		if err := c.Send(t.Context(), ev, toolstream.SendOptions{}); err != nil {
 			t.Fatalf("Send: %v", err)
 		}
 	}
@@ -138,13 +144,16 @@ func TestRegisterAndReceive(t *testing.T) {
 			t.Errorf("event %d: Value=%q want %q", i, g.event.Value, events[i].Value)
 		}
 
-		if g.sess.ToolName != "testtool" {
-			t.Errorf("event %d: ToolName=%q want %q", i, g.sess.ToolName, "testtool")
+		if g.sess.ToolName != "" {
+			t.Errorf("optional ToolName = %q, want empty", g.sess.ToolName)
+		}
+		if g.sess.ServiceName != "testtool" {
+			t.Errorf("event %d: ServiceName=%q want %q", i, g.sess.ServiceName, "testtool")
 		}
 	}
 }
 
-func TestUnregisteredToolIsIgnored(t *testing.T) {
+func TestUnregisteredServiceReturnsCommitError(t *testing.T) {
 	srv, sockPath := newTestServer(t)
 	rec := newRecorder()
 
@@ -157,20 +166,22 @@ func TestUnregisteredToolIsIgnored(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 
 	// Connect as "unknown-tool" which has no handler registered.
-	c, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: sockPath,
-		ToolName: "unknown-tool",
-		Version:  "1.0",
+	c, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    sockPath,
+		ServiceName: "unknown-tool",
+		Version:     "1.0",
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	_ = c.Send(testEvent{ID: 99})
-	endClient(t, c)
-
-	// Give the server a moment to process, then assert no handler was called.
-	time.Sleep(100 * time.Millisecond)
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := c.Send(ctx, testEvent{ID: 99}, toolstream.SendOptions{End: true, Commit: true}); err == nil ||
+		!strings.Contains(err.Error(), "no handler registered") {
+		t.Fatalf("unregistered tool commit error = %v", err)
+	}
 
 	rec.mu.Lock()
 	n := len(rec.events)
@@ -193,17 +204,17 @@ func TestMultipleChunksThenEnd(t *testing.T) {
 
 	t.Cleanup(func() { _ = srv.Close() })
 
-	c, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: sockPath,
-		ToolName: "sender",
-		Version:  "2.0",
+	c, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    sockPath,
+		ServiceName: "sender",
+		Version:     "2.0",
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 
 	for i := range 5 {
-		if err := c.Send(testEvent{ID: i}); err != nil {
+		if err := c.Send(t.Context(), testEvent{ID: i}, toolstream.SendOptions{}); err != nil {
 			t.Fatalf("Send %d: %v", i, err)
 		}
 	}
@@ -301,10 +312,10 @@ func TestStartAfterClose(t *testing.T) {
 		t.Fatalf("second Start after Close: %v", err)
 	}
 
-	c, err := toolstream.NewClient(toolstream.ClientOptions{
-		SockPath: sockPath,
-		ToolName: "restart-tool",
-		Version:  "1.0",
+	c, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    sockPath,
+		ServiceName: "restart-tool",
+		Version:     "1.0",
 	})
 	if err != nil {
 		t.Fatalf("NewClient after restart: %v", err)
@@ -312,7 +323,7 @@ func TestStartAfterClose(t *testing.T) {
 
 	defer endClient(t, c)
 
-	if err := c.Send(testEvent{ID: 42, Value: "after-restart"}); err != nil {
+	if err := c.Send(t.Context(), testEvent{ID: 42, Value: "after-restart"}, toolstream.SendOptions{}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -324,8 +335,9 @@ func TestStartAfterClose(t *testing.T) {
 
 func endClient(t *testing.T, client *toolstream.Client) {
 	t.Helper()
-	if err := client.End(); err != nil {
-		t.Errorf("End() error = %v", err)
+	defer client.Close()
+	if err := client.Send(t.Context(), nil, toolstream.SendOptions{End: true}); err != nil {
+		t.Errorf("send end marker: %v", err)
 	}
 }
 

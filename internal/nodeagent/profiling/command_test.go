@@ -21,26 +21,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
 func testProfilingConfig(t *testing.T) *Config {
 	t.Helper()
-	stream, err := toolstream.NewServer(t.TempDir() + "/toolstream.sock")
-	if err != nil {
-		t.Fatalf("toolstream.NewServer() error = %v", err)
-	}
 	return &Config{
 		ProfilerPath:            "/opt/huatuo/profiler",
 		ToolstreamSocketPath:    "/var/run/huatuo-toolstream.sock",
-		NodeAPIAddress:          "127.0.0.1:19704",
 		ToolDir:                 "/opt/huatuo/tools",
 		AggregationInterval:     10 * time.Second,
 		MaxConcurrentProcesses:  4,
 		CommandOutputLimitBytes: 4096,
-		ToolstreamServer:        stream,
 	}
 }
 
@@ -73,10 +66,9 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 		"--duration", "60",
 		"--aggr-interval", "10",
 		"--max-concurrent-procs", "4",
-		"--output-format", "remote",
-		"--output-storage", "/var/run/huatuo-toolstream.sock",
-		"--tracer-id", "job-1",
-		"--huatuo-api-address", "127.0.0.1:19704",
+		"--output-format", "remote-store",
+		"--output-path", "/var/run/huatuo-toolstream.sock",
+		"--task-id", "job-1",
 		"--tool-path", "/opt/huatuo/tools",
 		"--cpu-mode", "offcpu",
 		"--binary-match-path", "/usr/bin/service worker",
@@ -84,8 +76,12 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 	if spec.Path != config.ProfilerPath || !slices.Equal(spec.Args, want) {
 		t.Fatalf("command spec = %+v, want args %q", spec, want)
 	}
-	if spec.MaxOutputBytes != config.CommandOutputLimitBytes {
-		t.Fatalf("MaxOutputBytes = %d", spec.MaxOutputBytes)
+	if spec.StopSignal != 0 {
+		t.Fatalf("StopSignal = %v, want default SIGTERM to abort without publishing", spec.StopSignal)
+	}
+
+	if spec.MaxStdoutBytes != config.CommandOutputLimitBytes {
+		t.Fatalf("MaxStdoutBytes = %d", spec.MaxStdoutBytes)
 	}
 }
 

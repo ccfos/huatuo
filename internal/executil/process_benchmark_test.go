@@ -16,7 +16,7 @@ package executil
 
 import "testing"
 
-func BenchmarkProcessRun(b *testing.B) {
+func BenchmarkProcessStartWait(b *testing.B) {
 	ctx := b.Context()
 	b.ReportAllocs()
 	for b.Loop() {
@@ -25,7 +25,13 @@ func BenchmarkProcessRun(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		if err := process.Run(ctx); err != nil {
+		if err := process.Start(ctx); err != nil {
+			b.Fatal(err)
+		}
+		if err := process.Wait(); err != nil {
+			b.Fatal(err)
+		}
+		if err := process.Close(); err != nil {
 			b.Fatal(err)
 		}
 	}

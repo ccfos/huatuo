@@ -35,32 +35,32 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestHTTPDoRequestPropagatesBodyReadError reproduces issue #258: when a kubelet
+// TestHTTPRequestContextPropagatesBodyReadError reproduces issue #258: when a kubelet
 // response body fails to read, the error must be surfaced to the caller rather
 // than being swallowed and replaced with an empty body.
-func TestHTTPDoRequestPropagatesBodyReadError(t *testing.T) {
+func TestHTTPRequestContextPropagatesBodyReadError(t *testing.T) {
 	wantReadErr := errors.New("simulated mid-stream read failure")
 	client := &http.Client{
 		Transport: bodyReadErrorTransport{readErr: wantReadErr},
 	}
 	requestURL := "http://test.kubelet.invalid/pods"
 
-	_, err := httpDoRequest(client, requestURL)
+	_, err := httpRequestContext(t.Context(), client, requestURL)
 	if err == nil {
-		t.Fatal("httpDoRequest() error = nil, want non-nil")
+		t.Fatal("httpRequestContext() error = nil, want non-nil")
 	}
 	if !errors.Is(err, wantReadErr) {
-		t.Errorf("errors.Is(httpDoRequest(%q) error, wantReadErr) = false, want true; error = %v", requestURL, err)
+		t.Errorf("errors.Is(httpRequestContext(%q) error, wantReadErr) = false, want true; error = %v", requestURL, err)
 	}
 	wantError := fmt.Sprintf("http: %s, read body: %v", requestURL, wantReadErr)
 	if err.Error() != wantError {
-		t.Errorf("httpDoRequest(%q) error = %q, want %q", requestURL, err, wantError)
+		t.Errorf("httpRequestContext(%q) error = %q, want %q", requestURL, err, wantError)
 	}
 }
 
-// TestHTTPDoRequestReturnsBodyOnSuccess confirms the happy path still works
+// TestHTTPRequestContextReturnsBodyOnSuccess confirms the happy path still works
 // after the fix, guarding against regressions that drop the body.
-func TestHTTPDoRequestReturnsBodyOnSuccess(t *testing.T) {
+func TestHTTPRequestContextReturnsBodyOnSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -69,19 +69,19 @@ func TestHTTPDoRequestReturnsBodyOnSuccess(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	requestURL := srv.URL + "/pods"
-	body, err := httpDoRequest(srv.Client(), requestURL)
+	body, err := httpRequestContext(t.Context(), srv.Client(), requestURL)
 	if err != nil {
-		t.Fatalf("httpDoRequest() error = %v, want nil", err)
+		t.Fatalf("httpRequestContext() error = %v, want nil", err)
 	}
 	wantBody := `{"ok":true}`
 	if string(body) != wantBody {
-		t.Errorf("httpDoRequest(%q) body = %q, want %q", requestURL, body, wantBody)
+		t.Errorf("httpRequestContext(%q) body = %q, want %q", requestURL, body, wantBody)
 	}
 }
 
-// TestHTTPDoRequestReportsNonOKStatusAndBody makes sure the existing
+// TestHTTPRequestContextReportsNonOKStatusAndBody makes sure the existing
 // non-200 error path is unaffected by the read-error fix.
-func TestHTTPDoRequestReportsNonOKStatusAndBody(t *testing.T) {
+func TestHTTPRequestContextReportsNonOKStatusAndBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `boom`)
@@ -89,13 +89,13 @@ func TestHTTPDoRequestReportsNonOKStatusAndBody(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	requestURL := srv.URL + "/pods"
-	_, err := httpDoRequest(srv.Client(), requestURL)
+	_, err := httpRequestContext(t.Context(), srv.Client(), requestURL)
 	if err == nil {
-		t.Fatal("httpDoRequest() error = nil, want non-nil")
+		t.Fatal("httpRequestContext() error = nil, want non-nil")
 	}
 	wantError := fmt.Sprintf("http: %s, status: %d, body: boom", requestURL, http.StatusInternalServerError)
 	if err.Error() != wantError {
-		t.Errorf("httpDoRequest(%q) error = %q, want %q", requestURL, err, wantError)
+		t.Errorf("httpRequestContext(%q) error = %q, want %q", requestURL, err, wantError)
 	}
 }
 
@@ -128,7 +128,7 @@ func (r *trackingReadCloser) Close() error {
 	return nil
 }
 
-func TestHTTPDoRequestRejectsDeclaredOversizedBodyWithoutReading(t *testing.T) {
+func TestHTTPRequestContextRejectsDeclaredOversizedBodyWithoutReading(t *testing.T) {
 	body := &trackingReadCloser{reader: strings.NewReader(strings.Repeat("x", 65))}
 	client := &http.Client{Transport: kubeletRoundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -139,9 +139,9 @@ func TestHTTPDoRequestRejectsDeclaredOversizedBodyWithoutReading(t *testing.T) {
 		}, nil
 	})}
 
-	_, err := httpDoRequest(client, "http://test.kubelet.invalid/pods")
+	_, err := httpRequestContext(t.Context(), client, "http://test.kubelet.invalid/pods")
 	if err == nil || !strings.Contains(err.Error(), "declares 134217729 bytes, limit is 134217728 bytes") {
-		t.Fatalf("httpDoRequest() error=%v, want declared-size rejection", err)
+		t.Fatalf("httpRequestContext() error=%v, want declared-size rejection", err)
 	}
 	if body.read != 0 {
 		t.Fatalf("body bytes read=%d, want 0", body.read)
@@ -151,7 +151,7 @@ func TestHTTPDoRequestRejectsDeclaredOversizedBodyWithoutReading(t *testing.T) {
 	}
 }
 
-func TestHTTPDoRequestBoundsUnknownLengthBody(t *testing.T) {
+func TestHTTPRequestContextBoundsUnknownLengthBody(t *testing.T) {
 	const limit = int64(64)
 	body := &trackingReadCloser{reader: strings.NewReader(strings.Repeat("x", 128))}
 	data, truncated, err := requestLimitedBody(body, limit)
@@ -166,7 +166,7 @@ func TestHTTPDoRequestBoundsUnknownLengthBody(t *testing.T) {
 	}
 }
 
-func TestHTTPDoRequestAcceptsExactLimit(t *testing.T) {
+func TestHTTPRequestContextAcceptsExactLimit(t *testing.T) {
 	const limit = int64(64)
 	want := strings.Repeat("x", int(limit))
 	got, truncated, err := requestLimitedBody(strings.NewReader(want), limit)
@@ -181,7 +181,7 @@ func TestHTTPDoRequestAcceptsExactLimit(t *testing.T) {
 	}
 }
 
-func TestHTTPDoRequestBoundsChunkedBody(t *testing.T) {
+func TestHTTPRequestContextBoundsChunkedBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if flusher, ok := w.(http.Flusher); ok {
@@ -197,7 +197,7 @@ func TestHTTPDoRequestBoundsChunkedBody(t *testing.T) {
 	}
 }
 
-func TestHTTPDoRequestBoundsDecompressedBody(t *testing.T) {
+func TestHTTPRequestContextBoundsDecompressedBody(t *testing.T) {
 	var compressed bytes.Buffer
 	zw := gzip.NewWriter(&compressed)
 	if _, err := zw.Write([]byte(strings.Repeat("x", 128))); err != nil {
@@ -227,7 +227,7 @@ func TestHTTPDoRequestBoundsDecompressedBody(t *testing.T) {
 	}
 }
 
-func TestHTTPDoRequestTruncatesNonOKBody(t *testing.T) {
+func TestHTTPRequestContextTruncatesNonOKBody(t *testing.T) {
 	body := &trackingReadCloser{
 		reader: strings.NewReader(strings.Repeat("x", maxKubeletErrorBodyBytes*2)),
 	}
@@ -240,12 +240,12 @@ func TestHTTPDoRequestTruncatesNonOKBody(t *testing.T) {
 		}, nil
 	})}
 
-	_, err := httpDoRequest(client, "http://test.kubelet.invalid/pods")
+	_, err := httpRequestContext(t.Context(), client, "http://test.kubelet.invalid/pods")
 	if err == nil {
-		t.Fatal("httpDoRequest() error=nil, want non-OK response")
+		t.Fatal("httpRequestContext() error=nil, want non-OK response")
 	}
 	if count := strings.Count(err.Error(), "[truncated after 8192 bytes]"); count != 1 {
-		t.Fatalf("httpDoRequest() truncation markers=%d, want 1: %q", count, err)
+		t.Fatalf("httpRequestContext() truncation markers=%d, want 1: %q", count, err)
 	}
 	if body.read != maxKubeletErrorBodyBytes+1 {
 		t.Fatalf("body bytes read=%d, want %d", body.read, maxKubeletErrorBodyBytes+1)
@@ -266,9 +266,9 @@ func TestKubeletDecodersBoundMalformedBodyDiagnostics(t *testing.T) {
 		}, nil
 	})}
 
-	_, podErr := kubeletPodListDoRequest(client, "http://test.kubelet.invalid/pods")
+	_, podErr := kubeletFetchPodList(t.Context(), client, "http://test.kubelet.invalid/pods")
 	if podErr == nil || !strings.Contains(podErr.Error(), "[truncated after 8192 bytes]") {
-		t.Fatalf("kubeletPodListDoRequest() error=%v, want bounded diagnostic", podErr)
+		t.Fatalf("kubeletFetchPodList() error=%v, want bounded diagnostic", podErr)
 	}
 	_, configErr := kubeletConfigDoRequest(client, "http://test.kubelet.invalid/configz")
 	if configErr == nil || !strings.Contains(configErr.Error(), "[truncated after 8192 bytes]") {
@@ -281,7 +281,7 @@ func TestKubeletDecodersBoundMalformedBodyDiagnostics(t *testing.T) {
 	}
 }
 
-func TestHTTPDoRequestWarnsWhenResponseExceedsLimit(t *testing.T) {
+func TestHTTPRequestContextWarnsWhenResponseExceedsLimit(t *testing.T) {
 	var logs bytes.Buffer
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(os.Stdout) })
@@ -301,9 +301,9 @@ func TestHTTPDoRequestWarnsWhenResponseExceedsLimit(t *testing.T) {
 	})}
 	requestURL := "http://test.kubelet.invalid/pods"
 	for attempt := range 2 {
-		_, err := httpDoRequest(client, requestURL)
+		_, err := httpRequestContext(t.Context(), client, requestURL)
 		if err == nil {
-			t.Fatalf("httpDoRequest() attempt %d error=nil, want size rejection", attempt+1)
+			t.Fatalf("httpRequestContext() attempt %d error=nil, want size rejection", attempt+1)
 		}
 	}
 	output := logs.String()

@@ -11,7 +11,7 @@ Group: System Environment/Daemons
 URL: https://huatuo.tech/
 License: APLv2
 
-Source0: https://github.com/ccfos/huatuo/archive/tags/tags/v%{version}.tar.gz
+Source0: https://github.com/ccfos/huatuo/archive/refs/tags/v%{version}.tar.gz
 Source1: huatuo-bamai.service
 Source2: grafana-example.zip
 
@@ -104,7 +104,7 @@ unzip -q %{SOURCE2} -d %{buildroot}/opt/huatuo-bamai/grafana-example/
 
 # Create symlink for main executable
 mkdir -p %{buildroot}/usr/local/bin
-ln -s ../../opt/huatuo-bamai/bin/huatuo-bamai %{buildroot}/usr/local/bin/huatuo-bamai
+ln -s ../../../opt/huatuo-bamai/bin/huatuo-bamai %{buildroot}/usr/local/bin/huatuo-bamai
 
 # Install systemd service files
 mkdir -p %{buildroot}/etc/systemd/system

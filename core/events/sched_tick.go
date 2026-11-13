@@ -74,7 +74,7 @@ func newSchedTick() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (*schedTickTracing) Start(ctx context.Context) error {
+func (*schedTickTracing) Start(ctx context.Context) (retErr error) {
 	cfg := configSnapshot()
 	tickIntervalThresholdNS := cfg.SchedTick.IntervalThreshold
 
@@ -125,7 +125,10 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 		return fmt.Errorf("attach scheduler tick tracing: %w", err)
 	}
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	for {
 		select {
