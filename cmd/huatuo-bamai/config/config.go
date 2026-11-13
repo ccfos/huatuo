@@ -135,6 +135,7 @@ func Load(path string) error {
 	if err := internalconfig.Load(path, loaded); err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
+	loaded.normalizeBlacklist()
 	if err := loaded.Validate(); err != nil {
 		return err
 	}
@@ -328,6 +329,7 @@ func update(values map[string]any, persist bool) error {
 
 	// Detach values supplied by the caller before publishing the snapshot.
 	next = next.Clone()
+	next.normalizeBlacklist()
 	if persist {
 		if configState.path == "" {
 			return errors.New("config path is not initialized")
@@ -350,6 +352,22 @@ func rejectOverlappingKeys(keys []string) error {
 		}
 	}
 	return nil
+}
+
+func (c *Config) normalizeBlacklist() {
+	// Preserve disablement across block collector renames without runtime aliases.
+	for i, name := range c.BlackList {
+		switch name {
+		case "diskio":
+			c.BlackList[i] = "blk_iostat"
+		case "iolatency":
+			c.BlackList[i] = "blk_iotrace"
+		case "io_health":
+			c.BlackList[i] = "blk_device_health"
+		case "iocost":
+			c.BlackList[i] = "blk_iocost"
+		}
+	}
 }
 
 func publishConfig(next *Config) {

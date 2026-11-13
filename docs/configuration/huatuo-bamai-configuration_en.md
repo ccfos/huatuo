@@ -38,7 +38,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_
 | --- | --- |
 | `BlackList` | Array of tracer and metric collector names to disable. The built-in default is `[]`. To enable a module, remove its name, satisfy its dependencies and enablement conditions, and restart to register it. |
 
-When upgrading, replace `io_health`, `iolatency`, `iocost`, and `diskio` in an existing `BlackList` with `blk_device_health`, `blk_iotrace`, `blk_iocost`, and `blk_iostat`, respectively. The old names no longer take effect.
+`BlackList` and `--disable-tracing` accept the legacy names `io_health`, `iolatency`, `iocost`, and `diskio`, mapping them to `blk_device_health`, `blk_iotrace`, `blk_iocost`, and `blk_iostat`, respectively. Existing configurations continue to disable the same collectors; use the new names in new configurations.
 
 The configuration file explicitly disables these modules:
 

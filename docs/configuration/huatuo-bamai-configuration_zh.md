@@ -38,7 +38,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_
 | --- | --- |
 | `BlackList` | 禁用的追踪器和指标采集器名称数组，内置默认值为 `[]`。启用模块需从黑名单移除对应名称，满足其依赖和开关条件，并重启以完成注册。 |
 
-升级时，将已有 `BlackList` 中的 `io_health`、`iolatency`、`iocost`、`diskio` 分别替换为 `blk_device_health`、`blk_iotrace`、`blk_iocost`、`blk_iostat`；旧名称不再生效。
+`BlackList` 和 `--disable-tracing` 兼容旧名称 `io_health`、`iolatency`、`iocost`、`diskio`，分别转换为 `blk_device_health`、`blk_iotrace`、`blk_iocost`、`blk_iostat`。旧配置仍禁用相同的采集器，新配置请使用新名称。
 
 配置文件显式禁用以下模块：
 
