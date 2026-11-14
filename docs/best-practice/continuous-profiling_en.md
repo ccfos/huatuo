@@ -362,6 +362,9 @@ A run with no samples may produce no display file; an existing file alone does n
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; SVG with interactive scripts | Recommended for visual analysis; search, zoom, and inspect frame values in a browser |
 | `svg` | Same interactive SVG as `flamegraph` | For callers explicitly requesting SVG; currently equivalent to `flamegraph` |
 | `json` | One JSON line per collection window; streaming collection may emit multiple lines | Preserve windows, sample labels, and signed values |
+| `speedscope` | Speedscope profile JSON | Inspect the profile interactively at speedscope.app or in any Speedscope viewer |
+| `chrometrace` | Chrome tracing JSON | Load the collection into `chrome://tracing` or Perfetto; the timeline is synthesised from the sample unit, so it does not preserve the real event order or concurrency |
+| `dump` | `perf_<Unix timestamp>.txt`; numbered stacks and signed values | Read or attach aggregate stacks as plain text; samples retain collection window order |
 | `remote-store` | Uploads pprof-compatible data through a Unix socket without a local flame graph | HUATUO storage integration; not for offline viewing |
 
 ### Flame Graphs
@@ -383,7 +386,7 @@ main;handleRequest;writeResponse 172
 
 Stacks are aggregated by user stack, kernel stack, and the complete label set. CPU and wait times use nanoseconds; memory uses bytes. `comm` is only the process command name. Java and Python entry points are stored in `java_entry` and `python_entry` labels.
 
-`collapsed`, `flamegraph`, and `svg` produce final aggregates after successful collection. `json` preserves each window and signed values. Display formats clamp negative cumulative sample values to zero and log a warning. Stored labels do not imply that query APIs support arbitrary label indexing or filtering.
+`collapsed`, `flamegraph`, `svg`, and `speedscope` produce final aggregates after successful collection and clamp negative cumulative sample values to zero with a warning. `chrometrace` places every window's stacks on one estimated timeline in arrival order and fails the collection on a negative sample weight instead of clamping it. `json` preserves each window and signed values. Stored labels do not imply that query APIs support arbitrary label indexing or filtering.
 
 ### Live Physical Memory
 

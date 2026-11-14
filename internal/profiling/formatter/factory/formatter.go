@@ -21,6 +21,7 @@ import (
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/chrometrace"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/collapsed"
+	"github.com/ccfos/huatuo/internal/profiling/formatter/dump"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/flamegraph"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/json"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/remotestore"
@@ -40,6 +41,8 @@ func NewFormatter(cfg output.Config) (output.Formatter, error) {
 		return speedscope.NewFormatter(cfg)
 	case output.FormatChromeTrace:
 		return chrometrace.NewFormatter(cfg)
+	case output.FormatDump:
+		return dump.NewFormatter(cfg)
 	case output.FormatRemoteStore:
 		return remotestore.NewFormatter(cfg)
 	default:

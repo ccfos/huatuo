@@ -365,6 +365,9 @@ _output/bin/profiler \
 | `flamegraph` | `flamegraph_<Unix 时间戳>.svg`；内嵌交互脚本的 SVG | 推荐用于人工分析，可在浏览器中搜索、缩放和查看栈帧数值 |
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
 | `json` | 每个采集窗口一行 JSON，流式采集可输出多行 | 保留窗口、样本标签和有符号值 |
+| `speedscope` | Speedscope 格式的 profile JSON | 在 speedscope.app 或任意 Speedscope 查看器中交互分析 |
+| `chrometrace` | Chrome tracing 格式 JSON | 导入 `chrome://tracing` 或 Perfetto 查看；时间轴由样本单位合成，不代表真实事件顺序或并发关系 |
+| `dump` | `perf_<Unix 时间戳>.txt`；带有序号和有符号数值的调用栈 | 以纯文本阅读或附加聚合调用栈；样本保留采集窗口顺序 |
 | `remote-store` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
 ### 火焰图
@@ -386,7 +389,7 @@ main;handleRequest;writeResponse 172
 
 调用栈按用户栈、内核栈和完整标签组聚合。CPU 时间和等待时间使用纳秒，内存使用字节。`comm` 仅表示进程命令名，Java、Python 入口分别保存在 `java_entry`、`python_entry` 标签中。
 
-`collapsed`、`flamegraph` 和 `svg` 在采集成功结束后生成最终聚合结果；`json` 保留各窗口及有符号值。展示格式会将每个样本的负累计值归零并记录警告。标签已保存不代表查询接口支持任意标签索引或过滤。
+`collapsed`、`flamegraph`、`svg` 和 `speedscope` 在采集成功结束后生成最终聚合结果，并将负的累计样本值归零并记录警告。`chrometrace` 按到达顺序把各窗口的调用栈排到同一条估算时间轴上，遇到负样本权重会令采集失败，而不是归零。`json` 保留各窗口及有符号值。标签已保存不代表查询接口支持任意标签索引或过滤。
 
 ### 物理内存存活量
 
