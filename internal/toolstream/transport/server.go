@@ -37,6 +37,7 @@ type Server struct {
 	listener    net.Listener
 	handler     func(*Session, ChunkMsg)
 	cancel      context.CancelFunc
+	closing     bool
 }
 
 // Serve starts accepting connections from l in the background.
@@ -72,10 +73,17 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		}
 
 		s.mutex.Lock()
+		if s.closing {
+			s.mutex.Unlock()
+			// Close already snapshotted the connection map; registering here
+			// would leak this connection past shutdown and keep waitGroup
+			// blocked while handleConn waits for a frame that never arrives.
+			_ = conn.Close()
+			return
+		}
 		s.connections[conn] = struct{}{}
-		s.mutex.Unlock()
-
 		s.waitGroup.Add(1)
+		s.mutex.Unlock()
 
 		go func() {
 			defer func() {
@@ -97,6 +105,12 @@ func (s *Server) acceptLoop(ctx context.Context) {
 }
 
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
+	// Close cancels the context before draining connections. Check first so a
+	// peer accepted during shutdown does not start a session or block in Decode.
+	if ctx.Err() != nil {
+		return
+	}
+
 	frameDecoder := capnp.NewDecoder(conn)
 
 	firstMsg, err := frameDecoder.Decode()
@@ -274,6 +288,10 @@ func (s *Server) Close() error {
 
 	// snapshot under lock, close outside to avoid holding the lock during I/O
 	s.mutex.Lock()
+	// Setting closing under the same lock makes registration and the snapshot
+	// mutually ordered: any connection accepted after this point is rejected
+	// by acceptLoop instead of being added after the snapshot.
+	s.closing = true
 	conns := make([]net.Conn, 0, len(s.connections))
 
 	for c := range s.connections {
