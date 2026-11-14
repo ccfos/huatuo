@@ -86,7 +86,7 @@ start_test_storage
 start_node
 start_server
 # Keep the workload alive while validating profiling results.
-compile_user_fixture "${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c" "${HUATUO_BAMAI_TEST_TMPDIR}/callchain"
+compile_user_fixture "${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c" "${HUATUO_BAMAI_TEST_TMPDIR}/callchain" -pthread
 "${HUATUO_BAMAI_TEST_TMPDIR}/callchain" &
 TARGET_PID=$!
 functional_cases

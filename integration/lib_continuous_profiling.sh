@@ -57,7 +57,7 @@ continuous_profiling_start_native_cpu_fixture() {
 	local fixture_bin="${HUATUO_BAMAI_TEST_TMPDIR}/callchain"
 	local fixture_pid
 
-	compile_user_fixture "${fixture_source}" "${fixture_bin}"
+	compile_user_fixture "${fixture_source}" "${fixture_bin}" -pthread
 	"${fixture_bin}" > "${HUATUO_BAMAI_TEST_TMPDIR}/fixture.out" \
 		2> "${HUATUO_BAMAI_TEST_TMPDIR}/fixture.err" &
 	fixture_pid=$!

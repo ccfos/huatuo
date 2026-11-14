@@ -61,22 +61,33 @@ kubectl --request-timeout=30s -n "$POD_NAMESPACE" create configmap workloads \
 	--from-file="${ROOT_DIR}/integration/testdata/TestProfilerJavaMemory.java" \
 	--from-file="${ROOT_DIR}/integration/testdata/test_profiler_python_cpu.py"
 
+assert_matrix_oncpu_samples() {
+	local file=$1 invalid
+	invalid=$(jq -r '
+		.data.items | to_entries[] |
+		select(((.value.profile.sample | length) > 0 and
+			any(.value.profile.sample[]?.value[]?; type == "number" and . > 0)) | not) |
+		"window=\(.key) started=\(.value.started_timestamp) samples=\(.value.profile.sample | length): expected positive CPU samples"
+	' "$file") || fatal "cannot inspect oncpu samples in $file"
+	[[ -z $invalid ]] || fatal "oncpu windows lack valid samples in $file: $invalid"
+}
+
 for language in c c++ go java python; do
 	case "$language" in
 	c)
 		image=$native_image
-		matrix_prepare='gcc -O2 -g -fno-omit-frame-pointer /src/workload.c -o /work/load'
-		command='exec /work/load'
+		matrix_prepare='gcc -O2 -g -fno-omit-frame-pointer -pthread /src/workload.c -o /work/load'
+		command='exec /work/load --cpu-worker'
 		;;
 	c++)
 		image=$native_image
-		matrix_prepare='g++ -O2 -g -fno-omit-frame-pointer -x c++ /src/workload.c -o /work/load'
-		command='exec /work/load'
+		matrix_prepare='g++ -O2 -g -fno-omit-frame-pointer -pthread -x c++ /src/workload.c -o /work/load'
+		command='exec /work/load --cpu-worker'
 		;;
 	go)
 		image=$go_image
 		matrix_prepare='test -x /fixtures/apiserver-go-workload'
-		command='exec /fixtures/apiserver-go-workload'
+		command='exec /fixtures/apiserver-go-workload --cpu-worker'
 		;;
 	java)
 		image=$java_image
@@ -129,7 +140,8 @@ for language in c c++ go java python; do
 	matrix_minimum_windows=3
 	case "$language" in
 	c | c++ | go)
-		matrix_duration=6
+		# Leave startup and final-window margin beyond three aggregation intervals.
+		matrix_duration=10
 		combinations=('cpu oncpu' 'cpu offcpu' 'memory virtual_alloc' 'memory physical_alloc' 'memory physical_usage')
 		;;
 	java)
@@ -155,6 +167,9 @@ for language in c c++ go java python; do
 		memory/*) expected_type=memory:alloc_space:bytes:space:bytes ;;
 		esac
 		verify_result "$JOB_ID" "$matrix_minimum_windows" "$expected_type"
+		if [[ $typ/$mode == cpu/oncpu ]]; then
+			assert_matrix_oncpu_samples "${HUATUO_BAMAI_TEST_TMPDIR}/raw-${JOB_ID}.json"
+		fi
 		jq -e --arg id "$container_id" 'all(.data.items[]; .container_id == $id)' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/raw-${JOB_ID}.json" > /dev/null || fatal 'raw result belongs to another container'
 		pass

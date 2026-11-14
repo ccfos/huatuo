@@ -15,7 +15,10 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
+	"os/signal"
 	"syscall"
 	"time"
 )
@@ -30,13 +33,35 @@ func hotLoop() {
 }
 
 func main() {
+	cpuWorker := flag.Bool("cpu-worker", false, "keep a CPU worker busy while pacing memory allocations")
+	flag.Parse()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+	if *cpuWorker {
+		ready := make(chan struct{})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			hotLoop()
+			close(ready)
+			for ctx.Err() == nil {
+				hotLoop()
+			}
+		}()
+		defer func() { cancel(); <-done }()
+		<-ready
+	}
 	fmt.Println("ready")
 
 	// Keep live mappings so retained-memory snapshots have a stable target.
 	var retained [16][]byte
 	next := 0
-	for {
-		hotLoop()
+	for ctx.Err() == nil {
+		// Only the worker writes sink when enabled; memory pacing stays unchanged.
+		if !*cpuWorker {
+			hotLoop()
+		}
 		data, err := syscall.Mmap(
 			-1,
 			0,
