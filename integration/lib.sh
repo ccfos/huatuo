@@ -377,6 +377,18 @@ wait_until() {
 	return 1
 }
 
+assert_profiler_output_file() {
+	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
+}
+
+assert_profiler_stack_contains() {
+	local folded=$1
+	local pid=$2
+	local method=$3
+	grep -qh "pid=\"${pid}\";.*${method}" "${folded}" \
+		|| fatal "stack ${method} not found for PID ${pid} in ${folded}"
+}
+
 # Expose the real PID, start time and pipes to the calling Shell test. A
 # temporary FIFO writer keeps a fast child exit from blocking the parent's open.
 # Callers own cleanup and close the returned descriptors when done.
