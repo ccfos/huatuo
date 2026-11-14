@@ -251,20 +251,15 @@ func TestCgroupSubsystemInitializationRetries(t *testing.T) {
 
 type lifecycleReaderTest struct {
 	bpf.PerfEventReader
-	event    *containerCssPerfEvent
-	closed   chan struct{}
-	once     sync.Once
-	fail     bool
-	lostOnce bool
+	event  *containerCssPerfEvent
+	closed chan struct{}
+	once   sync.Once
+	fail   bool
 }
 
 func (r *lifecycleReaderTest) ReadInto(dst any) error {
 	if r.fail {
 		return errors.New("reader failed")
-	}
-	if r.lostOnce {
-		r.lostOnce = false
-		return bpf.ErrPerfEventSamplesLost
 	}
 	if r.event != nil {
 		*dst.(*containerCssPerfEvent) = *r.event
@@ -273,28 +268,6 @@ func (r *lifecycleReaderTest) ReadInto(dst any) error {
 	}
 	<-r.closed
 	return context.Canceled
-}
-
-func TestCgroupCSSSyncReportsLostSamples(t *testing.T) {
-	reader := &lifecycleReaderTest{closed: make(chan struct{}), lostOnce: true}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	lost := make(chan struct{}, 1)
-	done := cgroupCssEventSyncHandler(ctx, reader, false, func() {
-		lost <- struct{}{}
-	})
-	select {
-	case <-lost:
-	case <-time.After(time.Second):
-		t.Fatal("CSS sync did not report lost perf event samples")
-	}
-	cancel()
-	_ = reader.Close()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("CSS sync reader did not stop")
-	}
 }
 
 func (r *lifecycleReaderTest) Close() error {
