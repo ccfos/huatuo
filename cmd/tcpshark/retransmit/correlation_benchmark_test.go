@@ -159,7 +159,7 @@ func BenchmarkAsyncCorrelation(b *testing.B) {
 				*dst = *record
 				return nil
 			case <-ctx.Done():
-				return ctx.Err()
+				return types.ErrExitByCancelCtx
 			}
 		}, nil, drops)
 	})

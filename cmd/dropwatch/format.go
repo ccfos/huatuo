@@ -139,10 +139,6 @@ func newWriter(runCtx context.Context, output io.Writer, options *writerOptions)
 		outputCtx := context.WithoutCancel(runCtx)
 		cleanup := func() error {
 			endErr := client.Send(outputCtx, nil, toolstream.SendOptions{End: true})
-			if runCtx.Err() != nil && errors.Is(endErr, toolstream.ErrOutputTimeout) {
-				endErr = nil
-			}
-
 			if closeErr := client.Close(); closeErr != nil {
 				return errors.Join(endErr, closeErr)
 			}

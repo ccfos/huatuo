@@ -16,9 +16,9 @@ package dropwatch
 
 import (
 	"context"
-	"errors"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestConfigValidation(t *testing.T) {
@@ -49,8 +49,13 @@ func TestOpenFailureBeforeAttach(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if tracer, err := Open(ctx, &cfg); !errors.Is(err, context.Canceled) || tracer != nil {
+	if tracer, err := Open(ctx, &cfg); err != ErrOpenCanceled || tracer != nil { //nolint:errorlint // Verify the direct marker contract.
 		t.Fatalf("canceled = %v, %v", tracer, err)
+	}
+	deadlineCtx, deadlineCancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+	if tracer, err := Open(deadlineCtx, &cfg); err != ErrOpenCanceled || tracer != nil { //nolint:errorlint // Deadline expiry has the same successful-stop contract.
+		t.Fatalf("expired = %v, %v", tracer, err)
 	}
 }
 

@@ -85,6 +85,7 @@ type tracerReaderStub struct {
 	bpf.PerfEventReader
 	records    []*abi.DropwatchPacketEvent
 	errors     []error
+	beforeRead func()
 	ctx        context.Context
 	closeErr   error
 	operations *[]string
@@ -92,6 +93,9 @@ type tracerReaderStub struct {
 }
 
 func (s *tracerReaderStub) ReadInto(destination any) error {
+	if s.beforeRead != nil {
+		s.beforeRead()
+	}
 	if len(s.errors) != 0 {
 		err := s.errors[0]
 		s.errors = s.errors[1:]

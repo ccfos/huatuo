@@ -225,7 +225,7 @@ func TestDropwatchReadEvents(t *testing.T) {
 			return nil
 		}
 		<-ctx.Done()
-		return ctx.Err()
+		return types.ErrExitByCancelCtx
 	}
 	events := make(chan *dropEvent)
 	done := make(chan error, 1)
@@ -241,22 +241,45 @@ func TestDropwatchReadEvents(t *testing.T) {
 }
 
 func TestDropwatchReadCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	read := func(*abi.DropwatchPacketEvent) error {
-		t.Fatal("read called after cancellation")
-		return errors.New("unexpected read")
-	}
-	if err := readDropwatchEvents(ctx, read, nil, make(chan *dropEvent)); err != nil {
-		t.Fatal(err)
+	for _, mode := range []string{"before read", "during read", "reader closed"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "before read" {
+				cancel()
+			}
+			read := func(*abi.DropwatchPacketEvent) error {
+				if mode == "before read" {
+					t.Fatal("read called after cancellation")
+				}
+				if mode == "during read" {
+					cancel()
+				}
+				return types.ErrExitByCancelCtx
+			}
+			if err := readDropwatchEvents(ctx, read, nil, make(chan *dropEvent)); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
 func TestDropwatchReadError(t *testing.T) {
 	readErr := errors.New("reader failed")
-	read := func(*abi.DropwatchPacketEvent) error { return readErr }
-	if err := readDropwatchEvents(t.Context(), read, nil, make(chan *dropEvent)); !errors.Is(err, readErr) {
-		t.Fatalf("readDropwatchEvents() = %v, want %v", err, readErr)
+	for _, cancelDuringRead := range []bool{false, true} {
+		for _, result := range []error{readErr, errors.Join(types.ErrExitByCancelCtx, readErr)} {
+			ctx, cancel := context.WithCancel(t.Context())
+			read := func(*abi.DropwatchPacketEvent) error {
+				if cancelDuringRead {
+					cancel()
+				}
+				return result
+			}
+			if err := readDropwatchEvents(ctx, read, nil, make(chan *dropEvent)); !errors.Is(err, readErr) {
+				t.Fatalf("readDropwatchEvents() = %v, want %v", err, readErr)
+			}
+			cancel()
+		}
 	}
 }
 

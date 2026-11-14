@@ -78,6 +78,9 @@ func Run(ctx context.Context, cfg *RunConfig) (returnErr error) {
 
 	dropTracer, err := dropwatch.Open(groupCtx, cfg.Dropwatch)
 	if err != nil {
+		if err == dropwatch.ErrOpenCanceled { //nolint:errorlint // Only the direct marker guarantees successful rollback.
+			return groupCtx.Err()
+		}
 		return err
 	}
 	defer func() {

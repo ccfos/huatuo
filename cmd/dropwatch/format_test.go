@@ -349,8 +349,39 @@ func TestSocketOutputCancellation(t *testing.T) {
 		<-done
 		t.Fatal("blocked output exceeded send timeout")
 	}
-	if err := cleanup(); err != nil {
-		t.Fatalf("cleanup after cancellation: %v", err)
+	if err := cleanup(); !errors.Is(err, toolstream.ErrOutputTimeout) {
+		t.Fatalf("cleanup after cancellation = %v, want send timeout", err)
+	}
+}
+
+func TestSocketOutputCancellationPreservesCleanupFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "test",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sink.(*socketWriter).client.Close() }()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := peer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := cleanup(); err == nil || errors.Is(err, context.Canceled) {
+		t.Fatalf("cleanup after peer closure = %v, want independent output failure", err)
 	}
 }
 
