@@ -175,8 +175,9 @@ func loadBlkIOCostKernelProfileWith(
 	}
 	resolved, err := resolveBlkIOCostKallsyms(addresses, ranges)
 	if err != nil {
-		return nil, fmt.Errorf("%w: resolve IOCOST hooks: %w",
-			types.ErrNotSupported, err)
+		// Keep unsupported as the sole cause; hook details are not independent failures.
+		return nil, fmt.Errorf("%w: resolve IOCOST hooks: %s",
+			types.ErrNotSupported, err.Error())
 	}
 	return resolved, nil
 }
