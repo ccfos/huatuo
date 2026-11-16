@@ -448,6 +448,8 @@ func TestLoadBlkIOCostKernelProfile(t *testing.T) {
 			})
 			if test.isUnsupported {
 				require.ErrorIs(t, err, types.ErrNotSupported)
+				require.ErrorIs(t, errors.Unwrap(err), types.ErrNotSupported)
+				require.ErrorContains(t, err, test.missing)
 				require.Nil(t, got)
 				return
 			}
