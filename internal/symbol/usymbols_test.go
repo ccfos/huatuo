@@ -15,9 +15,12 @@
 package symbol
 
 import (
+	"bufio"
 	"debug/elf"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -621,5 +624,208 @@ func TestUsymStackStrsInvalidPid(t *testing.T) {
 	byteFrames := resolver.UsymStackBytes(uint32(99999998), []uint64{0x400100}, 1)
 	if len(byteFrames) != 1 || string(byteFrames[0]) != wantFrame {
 		t.Errorf("UsymStackBytes invalid pid: got %v, want [%s]", byteFrames, wantFrame)
+	}
+}
+
+func runningExecutableFixture(tb testing.TB, pie bool) (uint32, uint64, string) {
+	tb.Helper()
+	compiler, err := exec.LookPath("clang")
+	if err != nil {
+		tb.Skip("clang is required for real ELF process fixtures")
+	}
+	dir := tb.TempDir()
+	source := filepath.Join(dir, "probe.c")
+	binary := filepath.Join(dir, "running-app")
+	if err := os.WriteFile(source, []byte(`#include <stdio.h>
+void huatuo_symbol_probe(void) { puts("probe"); }
+int main(void) {
+ printf("%p\n", (void *)huatuo_symbol_probe);
+ fflush(stdout);
+ getchar();
+ return 0;
+}
+`), 0o600); err != nil {
+		tb.Fatal(err)
+	}
+	args := []string{"-O0", "-g", "-o", binary, source, "-fno-pie", "-no-pie"}
+	if pie {
+		args = []string{"-O0", "-g", "-o", binary, source, "-fPIE", "-pie"}
+	}
+	if output, err := exec.Command(compiler, args...).CombinedOutput(); err != nil {
+		tb.Fatalf("compile: %v: %s", err, output)
+	}
+	cmd := exec.Command(binary)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		tb.Fatal(err)
+	}
+	tb.Cleanup(func() {
+		_ = stdin.Close()
+		if err := cmd.Wait(); err != nil {
+			tb.Error(err)
+		}
+	})
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() {
+		tb.Fatalf("read child address: %v", scanner.Err())
+	}
+	addr, err := strconv.ParseUint(scanner.Text(), 0, 64)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return uint32(cmd.Process.Pid), addr, binary
+}
+
+func TestResolveRunningExecutableAfterUpgrade(t *testing.T) {
+	setTestXfsMounts(t, nil)
+	for _, pie := range []bool{false, true} {
+		for _, warm := range []string{"cold", "elf", "preloaded-maps", "maps"} {
+			for _, change := range []string{"unlink", "replace", "rename"} {
+				t.Run(fmt.Sprintf("pie=%t/%s/%s", pie, warm, change), func(t *testing.T) {
+					pid, addr, binary := runningExecutableFixture(t, pie)
+					resolver := NewUsymResolver()
+					if warm != "cold" {
+						if _, err := resolver.loadElfCaches(pid); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if warm == "preloaded-maps" {
+						if err := resolver.loadProcMaps(pid); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if warm == "maps" {
+						if got := resolver.resolveAddr(pid, addr); got != "huatuo_symbol_probe" {
+							t.Fatalf("warm function = %q", got)
+						}
+					}
+					if change == "rename" {
+						if err := os.Rename(binary, binary+".renamed"); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if err := os.Remove(binary); err != nil {
+							t.Fatal(err)
+						}
+						if change == "replace" {
+							if err := os.WriteFile(binary, []byte("replacement is not the running ELF"), 0o600); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					if got := resolver.resolveAddr(pid, addr); got != "huatuo_symbol_probe" {
+						t.Fatalf("running function = %q, want huatuo_symbol_probe", got)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestResolveEmptyAddressesDoesNotLoadProcess(t *testing.T) {
+	resolver := NewUsymResolver()
+	pid := uint32(os.Getpid())
+	if got := resolver.resolveAddrs(pid, nil); got == nil || len(got) != 0 {
+		t.Fatalf("empty addresses = %v", got)
+	}
+	if len(resolver.processes) != 0 || len(resolver.exeCache) != 0 || len(resolver.procmaps) != 0 {
+		t.Fatal("empty addresses loaded process state")
+	}
+}
+
+func BenchmarkCachedPIEExecutableSymbol(b *testing.B) {
+	pid, addr, _ := runningExecutableFixture(b, true)
+	resolver := NewUsymResolver()
+	if got := resolver.resolveAddr(pid, addr); got != "huatuo_symbol_probe" {
+		b.Fatalf("warm function = %q", got)
+	}
+	cache := resolver.exeCache[resolver.processes[pid].cacheKey]
+	if cache.typ != elf.ET_DYN {
+		b.Fatalf("fixture ELF type = %v, want ET_DYN", cache.typ)
+	}
+	for _, depth := range []int{0, 1, 16, 64} {
+		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
+			addrs := slices.Repeat([]uint64{addr}, depth)
+			b.ReportAllocs()
+			for b.Loop() {
+				resolver.resolveAddrs(pid, addrs)
+			}
+		})
+	}
+}
+
+func TestRunningExecutableCacheKeepsXFSMountIdentity(t *testing.T) {
+	root := setupTempProcRoot(t)
+	pid := uint32(1001)
+	setupHostProcessProcFS(t, root, pid)
+	binary := filepath.Join(root, "binary")
+	copyCurrentExecutable(t, binary)
+	mustSymlink(t, binary, filepath.Join(root, "proc", "1001", "exe"))
+	setTestXfsMounts(t, []string{root, "/unrelated-xfs"})
+	resolver := NewUsymResolver()
+	if _, err := resolver.loadElfCaches(pid); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolver.processes[pid].cacheKey.mountKey; got != root {
+		t.Errorf("XFS identity = %q, want %q", got, root)
+	}
+}
+
+func TestExecutableModuleSnapshotRetriesFailures(t *testing.T) {
+	for _, failure := range []string{"readlink", "maps", "mismatch"} {
+		t.Run(failure, func(t *testing.T) {
+			root := setupTempProcRoot(t)
+			const pid = uint32(1001)
+			dir := filepath.Join(root, "proc", "1001")
+			mustMkdirAll(t, dir)
+			exe := filepath.Join(dir, "exe")
+			const module = "/bin/app (deleted)"
+			if failure != "readlink" {
+				mustSymlink(t, module, exe)
+			}
+			mapsPath := filepath.Join(dir, "maps")
+			maps := "70000000-71000000 r-xp 00000000 fd:01 1001 " + module + "\n"
+			if failure != "maps" {
+				content := maps
+				if failure == "mismatch" {
+					content = "70000000-71000000 r-xp 00000000 fd:01 1001 /bin/old-name\n"
+				}
+				mustWriteFile(t, mapsPath, content)
+			}
+			resolver := NewUsymResolver()
+			resolver.processes[pid] = processELF{path: exe}
+			oldMap := &procfs.ProcMap{Pathname: "/previous-map"}
+			resolver.procmaps[pid] = sections{oldMap}
+			if _, err := resolver.loadExecutableModule(pid); err == nil {
+				t.Fatal("incomplete snapshot accepted")
+			}
+			if resolver.processes[pid].module != "" || resolver.procmaps[pid][0] != oldMap {
+				t.Fatal("failed snapshot changed cached state")
+			}
+			if failure == "readlink" {
+				mustSymlink(t, module, exe)
+			}
+			mustWriteFile(t, mapsPath, maps)
+			got, err := resolver.loadExecutableModule(pid)
+			if err != nil || got != module || resolver.procmaps[pid][0].Pathname != module {
+				t.Fatalf("retry snapshot = %q, %v", got, err)
+			}
+			if err := os.Remove(exe); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(mapsPath); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := resolver.loadExecutableModule(pid); err != nil || got != module {
+				t.Fatalf("warm snapshot reread process: %q, %v", got, err)
+			}
+		})
 	}
 }
