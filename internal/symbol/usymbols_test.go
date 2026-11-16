@@ -741,6 +741,7 @@ func TestResolveEmptyAddressesDoesNotLoadProcess(t *testing.T) {
 }
 
 func BenchmarkCachedPIEExecutableSymbol(b *testing.B) {
+	setTestXfsMounts(b, nil)
 	pid, addr, _ := runningExecutableFixture(b, true)
 	resolver := NewUsymResolver()
 	if got := resolver.resolveAddr(pid, addr); got != "huatuo_symbol_probe" {
