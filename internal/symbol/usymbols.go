@@ -440,17 +440,17 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	if !inContainer {
-		if hostPath == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
-			proc, err := procfs.NewProc(int(pid))
-			if err != nil {
-				return "", err
-			}
-			hostPath, err = proc.Executable()
-			if err != nil {
-				return "", err
-			}
+	if !inContainer && hostPath == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
+		proc, err := procfs.NewProc(int(pid))
+		if err != nil {
+			return "", err
 		}
+		hostPath, err = proc.Executable()
+		if err != nil {
+			return "", err
+		}
+	}
+	if !inContainer {
 		return matchXfsMount(hostPath, mounts)
 	}
 
