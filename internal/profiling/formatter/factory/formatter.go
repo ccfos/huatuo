@@ -34,6 +34,8 @@ func NewFormatter(cfg output.Config) (output.Formatter, error) {
 		return collapsed.NewFormatter(cfg)
 	case output.FormatFlameGraph, output.FormatSVG:
 		return flamegraph.NewFormatter(cfg)
+	case output.FormatTUI:
+		return flamegraph.NewTUIFormatter(cfg)
 	case output.FormatJSON:
 		return json.NewFormatter(cfg)
 	case output.FormatSpeedscope:

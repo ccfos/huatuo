@@ -66,6 +66,8 @@ A flame graph shows call paths and their cumulative values. Width represents CPU
 
 View results in Grafana or export them locally as SVG, folded stacks, or JSON for offline analysis and further processing.
 
+The CLI supports `--output-format=tui` to open an interactive terminal flamegraph after collection without creating a result file. Press `v` to switch between the graph and a list of all frames, including nodes narrower than one terminal column. Left/right select frames at the same depth, Enter zooms in, Backspace zooms out, `/` searches, and `q` exits. Terminal stdin and stdout are required. `--output-path` may be omitted; when supplied, it accepts only `stdout` or `-`.
+
 ### Collection windows
 
 Native CPU, native memory, and Java collection process data periodically; Python produces one result when collection ends. Window timestamps describe reception and aggregation intervals, not exact execution times for individual samples.

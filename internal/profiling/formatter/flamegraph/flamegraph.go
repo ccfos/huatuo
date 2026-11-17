@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package flamegraph writes an interactive SVG flame graph via the JS-enhanced renderer.
+// Package flamegraph renders profiling windows as SVG or terminal flamegraphs.
 package flamegraph
 
 import (

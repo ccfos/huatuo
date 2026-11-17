@@ -29,6 +29,7 @@ const (
 	FormatCollapsed   OutputFormat = "collapsed"
 	FormatFlameGraph  OutputFormat = "flamegraph"
 	FormatSVG         OutputFormat = "svg"
+	FormatTUI         OutputFormat = "tui"
 	FormatJSON        OutputFormat = "json"
 	FormatSpeedscope  OutputFormat = "speedscope"
 	FormatChromeTrace OutputFormat = "chrometrace"
@@ -48,6 +49,12 @@ type Formatter interface {
 	Add(ctx context.Context, window *types.AggregationWindow) error
 	Complete(ctx context.Context) error
 	Close() error
+}
+
+// Viewer optionally displays output prepared by Complete. View runs only after
+// Complete succeeds and the runner ends the finalization timeout.
+type Viewer interface {
+	View(ctx context.Context) error
 }
 
 // Config selects the representation and its filesystem destination.
