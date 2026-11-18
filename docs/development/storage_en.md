@@ -144,6 +144,12 @@ Elasticsearch existence checks apply to indexed values, not key presence in `_so
 
 `Count` counts all matching records. `Values` uses a separate `size`, validated as nonnegative by `storage.Store.Values`. Backends do not repeat pagination or `size` validation for these operations.
 
+Elasticsearch/OpenSearch `Values` preserves integer term keys without converting
+them through floating point, including `unsigned_long` values returned by
+OpenSearch. String keys remain literal and floating-point terms retain their
+existing formatting. Values already rounded by the server (for example after
+numeric type promotion across indexes) cannot be recovered by the client.
+
 ### Backend Differences
 
 - SQLite reads rows using one SELECT with `LIMIT/OFFSET`. The callback holds the sole database connection and must not synchronously access the same backend again.

@@ -34,7 +34,6 @@ import (
 	esdeletebyquery "github.com/elastic/go-elasticsearch/v8/typedapi/core/deletebyquery"
 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
 	esindex "github.com/elastic/go-elasticsearch/v8/typedapi/core/index"
-	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 	"github.com/elastic/go-elasticsearch/v8/typedapi/types"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -408,11 +407,11 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 		return nil, responseError("terms aggregation", s.index, res)
 	}
 
-	var payload essearch.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	payload, err := decodeTermsSearchResponse(res.Body)
+	if err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
 	}
-	if err := checkSearchStatus(&payload); err != nil {
+	if err := checkSearchStatus(payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
 	}
 
@@ -467,7 +466,11 @@ func termsValues(aggregation types.Aggregate) ([]string, error) {
 			if !ok {
 				return nil, fmt.Errorf("unexpected terms bucket %d type %T", i, value)
 			}
-			result[i] = driver.StringValue(bucket["key"])
+			term, err := termString(bucket["key"])
+			if err != nil {
+				return nil, fmt.Errorf("terms bucket %d key: %w", i, err)
+			}
+			result[i] = term
 		}
 		return result, nil
 	default:
