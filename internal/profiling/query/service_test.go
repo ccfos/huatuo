@@ -510,6 +510,7 @@ func TestSelectMergeStacktracesRejectsInvalidScope(t *testing.T) {
 		`{scope="other",id="job"}`,
 		`{scope="host",scope="container",id="job"}`,
 		`{scope="host",container_id="container",id="job"}`,
+		`{scope="host",container_host_namespace="team-a",id="job"}`,
 		`{scope="container",hostname="node"}`,
 	} {
 		t.Run(selector, func(t *testing.T) {
@@ -560,6 +561,12 @@ func TestProfileMatcherSetAppliesEverySupportedLabel(t *testing.T) {
 			label:  "container_id",
 			value:  "9f4c2f1a8b7d",
 			stored: func(filter *profilingstore.Filter) string { return filter.ContainerID },
+		},
+		{
+			name:   "container host namespace",
+			label:  "container_host_namespace",
+			value:  "team-a",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerHostNamespace },
 		},
 		{
 			name:   "container hostname",
@@ -629,6 +636,11 @@ func TestProfileMatcherSetRejectsConflictingValues(t *testing.T) {
 			name:   "container id",
 			label:  "container_id",
 			stored: func(filter *profilingstore.Filter) string { return filter.ContainerID },
+		},
+		{
+			name:   "container host namespace",
+			label:  "container_host_namespace",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerHostNamespace },
 		},
 		{
 			name:   "container hostname",
