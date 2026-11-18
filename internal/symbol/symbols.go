@@ -480,10 +480,15 @@ func buildELFSymbolIndex(f *elf.File, section *elf.Section, symbolSize uint64) (
 			if elf.ST_TYPE(info) != elf.STT_FUNC {
 				continue
 			}
-			if index == nil {
-				// Delay reservation until a function exists; all-object tables
-				// need no index. The remaining count is already budget-checked.
-				index = make([]elfSymbolCandidate, 0, (section.Size-offset-position)/symbolSize)
+			if len(index) == cap(index) {
+				// Grow with discovered functions, not all remaining records.
+				// Start with at most one chunk and never reserve more entries
+				// than the validated table can still contribute.
+				remaining := (section.Size - offset - position) / symbolSize
+				capacity := min(max(uint64(len(buffer))/symbolSize, 2*uint64(cap(index))), uint64(len(index))+remaining)
+				grown := make([]elfSymbolCandidate, len(index), capacity)
+				copy(grown, index)
+				index = grown
 			}
 			candidate := elfSymbolCandidate{nameOffset: f.ByteOrder.Uint32(entry[:4])}
 			if f.Class == elf.ELFCLASS32 {
@@ -496,10 +501,6 @@ func buildELFSymbolIndex(f *elf.File, section *elf.Section, symbolSize uint64) (
 			index = append(index, candidate)
 		}
 		offset += uint64(len(data))
-	}
-	// Do not retain space for non-function records in sparse tables.
-	if len(index) < cap(index)/2 {
-		index = slices.Clone(index)
 	}
 	slices.SortStableFunc(index, func(a, b elfSymbolCandidate) int {
 		return cmp.Compare(a.value, b.value)
