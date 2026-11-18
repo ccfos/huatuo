@@ -146,7 +146,10 @@ func (b *Storage) writerByName(name string) (io.Writer, error) {
 		return fileWriter, nil
 	}
 
-	if _, err := os.Stat(b.path); os.IsNotExist(err) {
+	if _, err := os.Stat(b.path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
 		if mkdirErr := os.MkdirAll(b.path, 0o755); mkdirErr != nil {
 			return nil, mkdirErr
 		}

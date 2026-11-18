@@ -146,3 +146,22 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 		t.Errorf("Backend.Terms() error = %v, want ErrUnsupported", err)
 	}
 }
+
+// TestWriterByNameReturnsStatError verifies that writerByName surfaces
+// non-ENOENT os.Stat errors instead of silently proceeding to create a lazy
+// file writer.
+func TestWriterByNameReturnsStatError(t *testing.T) {
+	invalidPath := string([]byte{'b', 'a', 'd', 0, 'p', 'a', 't', 'h'})
+	if _, statErr := os.Stat(invalidPath); statErr == nil || os.IsNotExist(statErr) {
+		t.Skip("path does not produce a non-ENOENT stat error on this platform")
+	}
+
+	backend := NewBackend(invalidPath, 1024, 3)
+	writer, err := backend.writerByName("tracer")
+	if err == nil {
+		t.Fatalf("writerByName() error=nil, want non-ENOENT stat error")
+	}
+	if writer != nil {
+		t.Fatalf("writerByName() writer=%v, want nil on stat error", writer)
+	}
+}
