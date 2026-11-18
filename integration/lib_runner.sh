@@ -54,6 +54,7 @@ declare -A runner_test_groups=(
 	["integration/test_profiler_java_cpu_container.sh"]=profiler-java
 	["integration/test_profiler_java_cpu_multi_pid.sh"]=profiler-java
 	["integration/test_profiler_java_memory_usage_alloc.sh"]=profiler-java
+	["integration/test_profiler_json_conversion.sh"]=independent
 	["integration/test_profiler_native_cpu.sh"]=profiler
 	["integration/test_profiler_native_cpu_container.sh"]=profiler
 	["integration/test_profiler_native_cpu_cpp_symbols.sh"]=profiler
