@@ -168,8 +168,17 @@ func TestStoreRejectsInvalidDocumentBeforePersistence(t *testing.T) {
 		hub:      watch.NewHub[*Document](),
 	}
 
-	if err := store.Save(&Document{}); err == nil {
+	sentinel := timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)}
+	document := &Document{Document: types.Document{
+		UploadedTimestamp: sentinel,
+		TracerRunType:     "unsupported",
+	}}
+	if err := store.Save(document); err == nil {
 		t.Fatal("Store.Save() error = nil, want invalid document error")
+	}
+	if document.UploadedTimestamp != sentinel {
+		t.Fatalf("invalid document uploaded timestamp = %v, want unchanged %v",
+			document.UploadedTimestamp, sentinel)
 	}
 	if len(backend.saved) != 0 {
 		t.Fatalf("backend saves = %d, want 0", len(backend.saved))
