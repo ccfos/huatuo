@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strings"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/filerotate"
@@ -156,12 +157,17 @@ func (b *Storage) writerByName(name string) (io.Writer, error) {
 }
 
 func tracerFilename(rec driver.Record) string {
-	if rec.Fields != nil {
-		if name, ok := rec.Fields["tracer_name"].(string); ok {
-			return name
-		}
+	if rec.Fields == nil {
+		return ""
 	}
-	return ""
+	name, ok := rec.Fields["tracer_name"].(string)
+	if !ok || name == "" || name == "." || name == ".." {
+		return ""
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return ""
+	}
+	return name
 }
 
 func formatDocumentJSON(data []byte) ([]byte, error) {
