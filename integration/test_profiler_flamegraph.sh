@@ -179,7 +179,7 @@ done
 
 # User-paced viewing must survive the 30-second collection finalization budget.
 start_flamegraph_tui tui 1
-wait_until 10 0.1 grep -q 'HUATUO profiler flamegraph' "${flamegraph_tui_prefix}.raw" \
+wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${flamegraph_tui_prefix}.raw" \
 	|| fatal "profiler did not open the terminal viewer: $(cat "${flamegraph_tui_prefix}.raw")"
 printf v >&"${flamegraph_tui_input_fd}"
 wait_until 5 0.1 grep -q 'view: all frames' "${flamegraph_tui_prefix}.raw" \
@@ -197,7 +197,7 @@ start_flamegraph_tui tui-signals 60
 wait_until 10 0.1 grep -q 'data reading loop started' "${flamegraph_tui_prefix}.raw" \
 	|| fatal "profiler collection did not become ready: $(cat "${flamegraph_tui_prefix}.raw")"
 kill -INT "${flamegraph_tui_pid}"
-wait_until 10 0.1 grep -q 'HUATUO profiler flamegraph' "${flamegraph_tui_prefix}.raw" \
+wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${flamegraph_tui_prefix}.raw" \
 	|| fatal "SIGINT did not publish the final TUI: $(cat "${flamegraph_tui_prefix}.raw")"
 kill -TERM "${flamegraph_tui_pid}"
 assert_flamegraph_tui_exit

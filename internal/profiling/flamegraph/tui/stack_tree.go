@@ -20,27 +20,28 @@ import (
 	"math"
 	"sort"
 
-	phlaremodel "github.com/grafana/pyroscope/pkg/model"
-
 	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 )
+
+type childKey struct {
+	parent *Node
+	name   string
+}
 
 // StackTree accumulates structured stacks without changing their frame names.
 // Add borrows frame slices only for the duration of the call.
 type StackTree struct {
 	ctx   context.Context
-	tree  *phlaremodel.StacktraceTree
-	ids   map[string]int32
-	names []string
-	total int64
+	root  *Node
+	nodes map[childKey]*Node
 }
 
 // NewStackTree creates a stack builder whose preparation observes ctx.
 func NewStackTree(ctx context.Context) *StackTree {
 	return &StackTree{
-		ctx:  ctx,
-		tree: phlaremodel.NewStacktraceTree(0),
-		ids:  make(map[string]int32),
+		ctx:   ctx,
+		root:  &Node{FrameData: flamegraph.FrameData{Label: "all"}},
+		nodes: make(map[childKey]*Node),
 	}
 }
 
@@ -49,6 +50,9 @@ func NewStackTree(ctx context.Context) *StackTree {
 func (t *StackTree) Add(frames []string, weight int64) error {
 	if err := t.ctx.Err(); err != nil {
 		return err
+	}
+	if t.root == nil {
+		return fmt.Errorf("stack tree has already been built")
 	}
 	if weight < 0 {
 		return fmt.Errorf("stack has negative weight %d", weight)
@@ -59,90 +63,89 @@ func (t *StackTree) Add(frames []string, weight int64) error {
 	if len(frames) == 0 {
 		return fmt.Errorf("stack with weight %d has no frames", weight)
 	}
-	if t.total > math.MaxInt64-weight {
+	if t.root.Value > math.MaxInt64-weight {
 		return fmt.Errorf("stack total weight exceeds int64")
 	}
 
-	locations := make([]int32, len(frames))
-	for i, name := range frames {
+	parent := t.root
+	parent.Value += weight
+	for _, name := range frames {
 		if err := t.ctx.Err(); err != nil {
 			return err
 		}
 
-		id, ok := t.ids[name]
-		if !ok {
-			if len(t.names) > math.MaxInt32 {
-				return fmt.Errorf("stacks contain too many function names")
-			}
-			id = int32(len(t.names))
-			t.names = append(t.names, name)
-			t.ids[name] = id
-		}
-		// Pyroscope consumes leaf-first location IDs.
-		locations[len(frames)-1-i] = id
+		parent = t.findOrCreateChild(parent, name)
+		parent.Value += weight
 	}
-	t.tree.Insert(locations, weight)
-	t.total += weight
+	parent.Self += weight
+
 	return nil
 }
 
-// BuildModel prepares the viewer, or returns nil when all stacks have zero weight.
+func (t *StackTree) findOrCreateChild(parent *Node, name string) *Node {
+	key := childKey{
+		parent: parent,
+		name:   name,
+	}
+	if node := t.nodes[key]; node != nil {
+		return node
+	}
+
+	node := &Node{
+		FrameData: flamegraph.FrameData{
+			Label: key.name,
+			Level: key.parent.Level + 1,
+		},
+		Parent: key.parent,
+	}
+	parent.Children = append(parent.Children, node)
+	t.nodes[key] = node
+
+	return node
+}
+
+// BuildModel transfers the tree to a new viewer model. It returns nil when all
+// stacks have zero weight. After a model is returned, the builder is consumed.
 func (t *StackTree) BuildModel() (*Model, error) {
 	if err := t.ctx.Err(); err != nil {
 		return nil, err
 	}
-	if t.total == 0 {
+	if t.root == nil {
+		return nil, fmt.Errorf("stack tree has already been built")
+	}
+	if t.root.Value == 0 {
 		return nil, nil
 	}
 
-	root := &Node{FrameData: flamegraph.FrameData{
-		Label: "all",
-		Value: t.total,
-	}}
-	// Insert creates parents before children; no second tree-building pass is needed.
-	nodes := make([]*Node, len(t.tree.Nodes))
-	nodes[0] = root
-	for i := 1; i < len(t.tree.Nodes); i++ {
-		if err := t.ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		frame := &t.tree.Nodes[i]
-		parent := nodes[frame.Parent]
-		node := &Node{
-			FrameData: flamegraph.FrameData{
-				Label: t.names[frame.Location],
-				Value: frame.Total,
-				Self:  frame.Value,
-				Level: parent.Level + 1,
-			},
-			Parent: parent,
-		}
-		parent.Children = append(parent.Children, node)
-		nodes[i] = node
-	}
 	// Stable sibling order must not depend on sample arrival order.
-	for _, node := range nodes {
+	nodes := []*Node{t.root}
+	for i := 0; i < len(nodes); i++ {
 		if err := t.ctx.Err(); err != nil {
 			return nil, err
 		}
 
+		node := nodes[i]
 		sort.Slice(node.Children, func(i, j int) bool {
 			return node.Children[i].Label < node.Children[j].Label
 		})
+		nodes = append(nodes, node.Children...)
 		if err := t.ctx.Err(); err != nil {
 			return nil, err
 		}
 	}
+
+	root := t.root
 	if len(root.Children) == 1 {
 		root = root.Children[0]
-		root.Parent = nil
 	}
 
-	model := newModel(root, "HUATUO profiler flamegraph")
+	model := newModel(root)
 	if err := t.ctx.Err(); err != nil {
 		return nil, err
 	}
+	root.Parent = nil
+	t.root = nil
+	t.nodes = nil
 
 	return &model, nil
 }

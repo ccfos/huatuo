@@ -41,8 +41,8 @@ var _ output.Formatter = (*tuiFormatter)(nil)
 
 // NewTUIFormatter validates the terminal before collection starts.
 func NewTUIFormatter(cfg output.Config) (output.Formatter, error) {
-	if cfg.Destination != "" && cfg.Destination != "stdout" && cfg.Destination != "-" {
-		return nil, fmt.Errorf("tui output requires --output-path to be omitted or set to stdout or -")
+	if err := output.ValidateTUIDestination(cfg.Destination); err != nil {
+		return nil, err
 	}
 	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
 		return nil, fmt.Errorf("tui output requires terminal stdin and stdout")

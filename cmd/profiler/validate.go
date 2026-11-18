@@ -228,21 +228,26 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	if ctx.String("output-format") != "tui" && (!ctx.IsSet("output-path") || !ctx.IsSet("output-format")) {
-		return fmt.Errorf("--output-path and --output-format must both be specified")
-	}
-	if ctx.String("output-format") != "tui" {
-		if err := output.ValidateDestination(ctx.String("output-path")); err != nil {
+	format, path := ctx.String("output-format"), ctx.String("output-path")
+	if format == string(output.FormatTUI) {
+		if err := output.ValidateTUIDestination(path); err != nil {
+			return err
+		}
+	} else {
+		if !ctx.IsSet("output-path") || !ctx.IsSet("output-format") {
+			return fmt.Errorf("--output-path and --output-format must both be specified")
+		}
+		if err := output.ValidateDestination(path); err != nil {
 			return err
 		}
 	}
-	if ctx.String("output-format") == "remote-store" && ctx.String("task-id") == "" {
+	if format == string(output.FormatRemoteStore) && ctx.String("task-id") == "" {
 		return fmt.Errorf("--task-id must not be empty when --output-format=remote-store")
 	}
-	if err := validateOutputFormat(ctx.String("output-format")); err != nil {
+	if err := validateOutputFormat(format); err != nil {
 		return err
 	}
-	if ctx.String("output-format") == "tui" &&
+	if format == string(output.FormatTUI) &&
 		(!term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd())) {
 		return fmt.Errorf("tui output requires terminal stdin and stdout")
 	}

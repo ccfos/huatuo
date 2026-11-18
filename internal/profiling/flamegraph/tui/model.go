@@ -44,14 +44,13 @@ type Node struct {
 
 // Run opens the interactive terminal viewer.
 func Run(data []flamegraph.FrameData) error {
-	program := tea.NewProgram(NewModel(data), tea.WithAltScreen())
-	_, err := program.Run()
+	model := newModel(BuildTree(data))
+	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	return err
 }
 
 // Model is the Bubble Tea state for the flamegraph viewer.
 type Model struct {
-	title      string
 	isListView bool
 	focus      *Node
 	visible    []*Node
@@ -65,14 +64,8 @@ type Model struct {
 	matches    map[*Node]bool
 }
 
-// NewModel creates a TUI model from nested-set flamegraph data.
-func NewModel(data []flamegraph.FrameData) Model {
-	return newModel(BuildTree(data), "HUATUO perf flamegraph")
-}
-
-func newModel(root *Node, title string) Model {
+func newModel(root *Node) Model {
 	model := Model{
-		title:   title,
 		focus:   root,
 		width:   defaultWidth,
 		height:  defaultHeight,
@@ -189,6 +182,56 @@ func (m *Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
 	return *m, nil
 }
 
+func (m *Model) moveCursor(delta int) {
+	m.cursor += delta
+	m.clampCursor()
+	m.ensureCursorVisible()
+}
+
+func (m *Model) moveHorizontal(delta int) {
+	selected := m.selectedNode()
+	if selected == nil || selected == m.focus {
+		return
+	}
+
+	depth := nodeDepthFrom(selected, m.focus)
+	// The visible list is depth-first; skip nodes at other depths.
+	for index := m.cursor + delta; index >= 0 && index < len(m.visible); index += delta {
+		if nodeDepthFrom(m.visible[index], m.focus) == depth {
+			m.cursor = index
+			m.ensureCursorVisible()
+			return
+		}
+	}
+}
+
+func (m *Model) zoomIn() {
+	selected := m.selectedNode()
+	if selected == nil || len(selected.Children) == 0 {
+		return
+	}
+	m.focus = selected
+	m.cursor = 0
+	m.offset = 0
+	m.refreshVisible()
+}
+
+func (m *Model) zoomOut() {
+	if m.focus == nil || m.focus.Parent == nil {
+		return
+	}
+	previous := m.focus
+	m.focus = m.focus.Parent
+	m.refreshVisible()
+	for index, node := range m.visible {
+		if node == previous {
+			m.cursor = index
+			break
+		}
+	}
+	m.ensureCursorVisible()
+}
+
 func (m *Model) updateSearch(key tea.KeyMsg) Model {
 	switch key.String() {
 	case "ctrl+c", "esc":
@@ -211,6 +254,116 @@ func (m *Model) updateSearch(key tea.KeyMsg) Model {
 	return *m
 }
 
+func (m *Model) applySearch() {
+	m.lastSearch = strings.TrimSpace(m.query)
+	firstMatch := m.refreshMatches()
+	if firstMatch >= 0 {
+		m.cursor = firstMatch
+		m.ensureCursorVisible()
+	}
+}
+
+func (m *Model) refreshMatches() int {
+	m.matches = map[*Node]bool{}
+	if m.lastSearch == "" {
+		return -1
+	}
+	needle := strings.ToLower(m.lastSearch)
+	firstMatch := -1
+	for index, node := range m.visible {
+		if strings.Contains(strings.ToLower(node.Label), needle) {
+			m.matches[node] = true
+			if firstMatch == -1 {
+				firstMatch = index
+			}
+		}
+	}
+	return firstMatch
+}
+
+func (m *Model) nextMatch() {
+	if len(m.matches) == 0 || len(m.visible) == 0 {
+		return
+	}
+	for step := 1; step <= len(m.visible); step++ {
+		index := (m.cursor + step) % len(m.visible)
+		if m.matches[m.visible[index]] {
+			m.cursor = index
+			m.ensureCursorVisible()
+			return
+		}
+	}
+}
+
+func (m *Model) refreshVisible() {
+	m.visible = flatten(m.focus)
+	m.refreshMatches()
+	m.clampCursor()
+}
+
+func flatten(root *Node) []*Node {
+	if root == nil {
+		return nil
+	}
+	result := []*Node{root}
+	for _, child := range root.Children {
+		result = append(result, flatten(child)...)
+	}
+	return result
+}
+
+func (m *Model) selectedNode() *Node {
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		return m.focus
+	}
+	return m.visible[m.cursor]
+}
+
+func (m *Model) clampCursor() {
+	if len(m.visible) == 0 {
+		m.cursor = 0
+		m.offset = 0
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.visible) {
+		m.cursor = len(m.visible) - 1
+	}
+	m.ensureCursorVisible()
+}
+
+func (m *Model) ensureCursorVisible() {
+	depth := nodeDepthFrom(m.selectedNode(), m.focus)
+	viewport := max(m.viewportHeight(), 1)
+	if depth < m.offset {
+		m.offset = depth
+	}
+	if depth >= m.offset+viewport {
+		m.offset = depth - viewport + 1
+	}
+	if m.offset < 0 {
+		m.offset = 0
+	}
+}
+
+func nodeDepthFrom(node, root *Node) int {
+	depth := 0
+	for current := node; current != nil && current != root; current = current.Parent {
+		depth++
+	}
+	return depth
+}
+
+func (m *Model) viewportHeight() int {
+	return max(m.height-headerLines-footerLines, 0)
+}
+
+func (m *Model) safeWidth() int {
+	return max(m.width, 1)
+}
+
 func (m Model) View() string { //nolint:gocritic // tea.Model interface requires value receiver
 	var content, view string
 	if m.isListView {
@@ -224,7 +377,7 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 
 	var out strings.Builder
 	selected := m.selectedNode()
-	fmt.Fprintf(&out, "%s  frames=%d  focus=%s\n", terminalText(m.title), len(m.visible), terminalText(m.focus.Label))
+	fmt.Fprintf(&out, "HUATUO tui flamegraph  frames=%d  focus=%s\n", len(m.visible), terminalText(m.focus.Label))
 	fmt.Fprintf(&out, "keys: v view  up/down select  left/right level  enter zoom  backspace back  / find  n next  q quit\n")
 	fmt.Fprintf(&out, "view: %s | ", view)
 	if m.searching {
@@ -318,19 +471,6 @@ func (m *Model) renderList() string {
 	return out.String()
 }
 
-// frameColumn scales weights without overflowing or losing int64 precision.
-func frameColumn(value, total int64, width int) int {
-	if value <= 0 || total <= 0 {
-		return 0
-	}
-	if value >= total {
-		return width
-	}
-	hi, lo := bits.Mul64(uint64(value), uint64(width))
-	column, _ := bits.Div64(hi, lo, uint64(total))
-	return int(column)
-}
-
 func (m *Model) renderBlock(node *Node, width int, selected bool) string {
 	label := terminalText(node.Label)
 	var hash uint32
@@ -361,156 +501,17 @@ func renderDetails(node *Node, focusValue int64) string {
 		terminalText(node.Label), node.Value, node.Self, percent(node.Value, focusValue), len(node.Children), terminalText(nodePath(node)))
 }
 
-func (m *Model) refreshVisible() {
-	m.visible = flatten(m.focus)
-	m.refreshMatches()
-	m.clampCursor()
-}
-
-func flatten(root *Node) []*Node {
-	if root == nil {
-		return nil
+// frameColumn scales weights without overflowing or losing int64 precision.
+func frameColumn(value, total int64, width int) int {
+	if value <= 0 || total <= 0 {
+		return 0
 	}
-	result := []*Node{root}
-	for _, child := range root.Children {
-		result = append(result, flatten(child)...)
+	if value >= total {
+		return width
 	}
-	return result
-}
-
-func (m *Model) moveCursor(delta int) {
-	m.cursor += delta
-	m.clampCursor()
-	m.ensureCursorVisible()
-}
-
-func (m *Model) moveHorizontal(delta int) {
-	selected := m.selectedNode()
-	if selected == nil || selected == m.focus {
-		return
-	}
-
-	depth := nodeDepthFrom(selected, m.focus)
-	// The visible list is depth-first; skip nodes at other depths.
-	for index := m.cursor + delta; index >= 0 && index < len(m.visible); index += delta {
-		if nodeDepthFrom(m.visible[index], m.focus) == depth {
-			m.cursor = index
-			m.ensureCursorVisible()
-			return
-		}
-	}
-}
-
-func (m *Model) clampCursor() {
-	if len(m.visible) == 0 {
-		m.cursor = 0
-		m.offset = 0
-		return
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.visible) {
-		m.cursor = len(m.visible) - 1
-	}
-	m.ensureCursorVisible()
-}
-
-func (m *Model) ensureCursorVisible() {
-	depth := nodeDepthFrom(m.selectedNode(), m.focus)
-	viewport := max(m.viewportHeight(), 1)
-	if depth < m.offset {
-		m.offset = depth
-	}
-	if depth >= m.offset+viewport {
-		m.offset = depth - viewport + 1
-	}
-	if m.offset < 0 {
-		m.offset = 0
-	}
-}
-
-func (m *Model) zoomIn() {
-	selected := m.selectedNode()
-	if selected == nil || len(selected.Children) == 0 {
-		return
-	}
-	m.focus = selected
-	m.cursor = 0
-	m.offset = 0
-	m.refreshVisible()
-}
-
-func (m *Model) zoomOut() {
-	if m.focus == nil || m.focus.Parent == nil {
-		return
-	}
-	previous := m.focus
-	m.focus = m.focus.Parent
-	m.refreshVisible()
-	for index, node := range m.visible {
-		if node == previous {
-			m.cursor = index
-			break
-		}
-	}
-	m.ensureCursorVisible()
-}
-
-func (m *Model) selectedNode() *Node {
-	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
-		return m.focus
-	}
-	return m.visible[m.cursor]
-}
-
-func (m *Model) applySearch() {
-	m.lastSearch = strings.TrimSpace(m.query)
-	firstMatch := m.refreshMatches()
-	if firstMatch >= 0 {
-		m.cursor = firstMatch
-		m.ensureCursorVisible()
-	}
-}
-
-func (m *Model) refreshMatches() int {
-	m.matches = map[*Node]bool{}
-	if m.lastSearch == "" {
-		return -1
-	}
-	needle := strings.ToLower(m.lastSearch)
-	firstMatch := -1
-	for index, node := range m.visible {
-		if strings.Contains(strings.ToLower(node.Label), needle) {
-			m.matches[node] = true
-			if firstMatch == -1 {
-				firstMatch = index
-			}
-		}
-	}
-	return firstMatch
-}
-
-func (m *Model) nextMatch() {
-	if len(m.matches) == 0 || len(m.visible) == 0 {
-		return
-	}
-	for step := 1; step <= len(m.visible); step++ {
-		index := (m.cursor + step) % len(m.visible)
-		if m.matches[m.visible[index]] {
-			m.cursor = index
-			m.ensureCursorVisible()
-			return
-		}
-	}
-}
-
-func (m *Model) viewportHeight() int {
-	return max(m.height-headerLines-footerLines, 0)
-}
-
-func (m *Model) safeWidth() int {
-	return max(m.width, 1)
+	hi, lo := bits.Mul64(uint64(value), uint64(width))
+	column, _ := bits.Div64(hi, lo, uint64(total))
+	return int(column)
 }
 
 func percent(value, total int64) float64 {
@@ -532,14 +533,6 @@ func truncate(value string, width int) string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-3]) + "..."
-}
-
-func nodeDepthFrom(node, root *Node) int {
-	depth := 0
-	for current := node; current != nil && current != root; current = current.Parent {
-		depth++
-	}
-	return depth
 }
 
 func nodePath(node *Node) string {
