@@ -146,10 +146,13 @@ func (s *Store) SaveContext(ctx context.Context, document *Document) error {
 	if document == nil {
 		return errors.New("tracing document is required")
 	}
-	document.UploadedTimestamp = timeutil.Now()
-	if err := document.validate(); err != nil {
+	// Validate the timestamped copy so a rejected document is left untouched.
+	candidate := *document
+	candidate.UploadedTimestamp = timeutil.Now()
+	if err := candidate.validate(); err != nil {
 		return err
 	}
+	document.UploadedTimestamp = candidate.UploadedTimestamp
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
