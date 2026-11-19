@@ -16,7 +16,11 @@ package procfs
 
 import "strings"
 
-// TrimDeletedSuffix removes the marker procfs appends to an unlinked file.
-func TrimDeletedSuffix(path string) string {
-	return strings.TrimSuffix(path, " (deleted)")
+// DeletedMarker is the suffix procfs appends to an unlinked file's path,
+// including the separating space.
+const DeletedMarker = " (deleted)"
+
+// TrimDeletedMarker removes one trailing DeletedMarker from path.
+func TrimDeletedMarker(path string) string {
+	return strings.TrimSuffix(path, DeletedMarker)
 }

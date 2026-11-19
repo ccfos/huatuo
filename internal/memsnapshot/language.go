@@ -98,7 +98,7 @@ func detectLanguage(exePath, mapsPath string) (Language, error) {
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("read executable link: %w", err)
 	}
-	if detected := languageFromExecutable(filepath.Base(procfs.TrimDeletedSuffix(name))); detected != LanguageUnknown {
+	if detected := languageFromExecutable(filepath.Base(procfs.TrimDeletedMarker(name))); detected != LanguageUnknown {
 		return detected, nil
 	}
 	mappings, err := ReadProcMapsContext(context.Background(), mapsPath, 4096)
@@ -112,7 +112,7 @@ func detectLanguage(exePath, mapsPath string) (Language, error) {
 	// Confirm managed runtimes before interpreting C++ components as the main language.
 	detected := map[Language]bool{LanguagePython: python}
 	for _, mapping := range mappings {
-		path := procfs.TrimDeletedSuffix(mapping.Path)
+		path := procfs.TrimDeletedMarker(mapping.Path)
 		library := filepath.Base(path)
 		detected[LanguageJava] = detected[LanguageJava] || matchesRuntimeLibrary(library, "libjvm.so")
 		detected[LanguagePython] = detected[LanguagePython] || pythonLibraryPattern.MatchString(library)

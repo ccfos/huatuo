@@ -100,7 +100,7 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 	var mappedPath string
 	var selectedMap memsnapshot.ProcMap
 	for _, mapping := range mappings {
-		path := procfs.TrimDeletedSuffix(mapping.Path)
+		path := procfs.TrimDeletedMarker(mapping.Path)
 		if !strings.HasSuffix(path, "/libjvm.so") {
 			continue
 		}

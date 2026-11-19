@@ -168,12 +168,12 @@ func runtimeModules(procRoot string, pid int,
 	limitReached := false
 	executablePath := filepath.Join(procRoot, strconv.Itoa(pid), "exe")
 	executableTarget, _ := os.Readlink(executablePath)
-	executableTarget = procfs.TrimDeletedSuffix(executableTarget)
+	executableTarget = procfs.TrimDeletedMarker(executableTarget)
 	for _, mapping := range maps {
 		if mapping.Inode == 0 || mapping.Path == "" || strings.HasPrefix(mapping.Path, "[") {
 			continue
 		}
-		path := procfs.TrimDeletedSuffix(mapping.Path)
+		path := procfs.TrimDeletedMarker(mapping.Path)
 		isExecutable := executableTarget != "" && path == executableTarget
 		isLibPython := strings.HasPrefix(strings.ToLower(filepath.Base(path)),
 			"libpython")
@@ -225,7 +225,7 @@ func runtimeModulePath(procRoot string, pid int, path string,
 	var deleted *memsnapshot.ProcMap
 	for index := range maps {
 		mapping := &maps[index]
-		if !strings.HasSuffix(mapping.Path, " (deleted)") ||
+		if !strings.HasSuffix(mapping.Path, procfs.DeletedMarker) ||
 			mapping.End <= mapping.Start {
 			continue
 		}
