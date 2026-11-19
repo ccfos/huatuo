@@ -17,6 +17,7 @@ package localfile
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -144,5 +145,39 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	}
 	if _, err := backend.Values(t.Context(), "tracer_name", driver.Query{}, 10); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Terms() error = %v, want ErrUnsupported", err)
+	}
+}
+
+// TestBackendClose verifies that Save reports ErrClosed once the backend has
+// been closed, for both an already open tracer and a tracer that was never
+// used, and that a second Close stays a no-op.
+func TestBackendClose(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	rec := func(name, id string) driver.Record {
+		return driver.Record{
+			ID:     id,
+			Data:   []byte(fmt.Sprintf("{\"tracer_name\":%q}", name)),
+			Fields: map[string]any{"tracer_name": name},
+		}
+	}
+
+	if err := backend.Save(t.Context(), rec("close_tracer", "close-0"), driver.SaveOptions{}); err != nil {
+		t.Fatalf("Save() = %v, want nil", err)
+	}
+	if err := backend.Close(t.Context()); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+
+	if err := backend.Save(t.Context(), rec("close_tracer", "close-1"), driver.SaveOptions{}); !errors.Is(err, ErrClosed) {
+		t.Errorf("Save() for an open tracer after Close error = %v, want ErrClosed", err)
+	}
+	if err := backend.Save(t.Context(), rec("fresh_tracer", "close-2"), driver.SaveOptions{}); !errors.Is(err, ErrClosed) {
+		t.Errorf("Save() for a new tracer after Close error = %v, want ErrClosed", err)
+	}
+
+	if err := backend.Close(t.Context()); err != nil {
+		t.Errorf("second Close() = %v, want nil", err)
 	}
 }
