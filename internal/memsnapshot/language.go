@@ -27,6 +27,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 // Language identifies a process runtime.
@@ -96,7 +98,7 @@ func detectLanguage(exePath, mapsPath string) (Language, error) {
 	if err != nil {
 		return LanguageUnknown, fmt.Errorf("read executable link: %w", err)
 	}
-	if detected := languageFromExecutable(filepath.Base(strings.TrimSuffix(name, " (deleted)"))); detected != LanguageUnknown {
+	if detected := languageFromExecutable(filepath.Base(procfs.TrimDeletedSuffix(name))); detected != LanguageUnknown {
 		return detected, nil
 	}
 	mappings, err := ReadProcMapsContext(context.Background(), mapsPath, 4096)
@@ -110,7 +112,7 @@ func detectLanguage(exePath, mapsPath string) (Language, error) {
 	// Confirm managed runtimes before interpreting C++ components as the main language.
 	detected := map[Language]bool{LanguagePython: python}
 	for _, mapping := range mappings {
-		path := strings.TrimSuffix(mapping.Path, " (deleted)")
+		path := procfs.TrimDeletedSuffix(mapping.Path)
 		library := filepath.Base(path)
 		detected[LanguageJava] = detected[LanguageJava] || matchesRuntimeLibrary(library, "libjvm.so")
 		detected[LanguagePython] = detected[LanguagePython] || pythonLibraryPattern.MatchString(library)

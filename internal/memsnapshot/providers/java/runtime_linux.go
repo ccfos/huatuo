@@ -28,6 +28,7 @@ import (
 	"github.com/ccfos/huatuo/internal/symbol"
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
+	"github.com/ccfos/huatuo/internal/procfs"
 )
 
 const (
@@ -99,7 +100,7 @@ func discoverVM(ctx context.Context, procRoot string, pid int) (*vmImage, error)
 	var mappedPath string
 	var selectedMap memsnapshot.ProcMap
 	for _, mapping := range mappings {
-		path := strings.TrimSuffix(mapping.Path, " (deleted)")
+		path := procfs.TrimDeletedSuffix(mapping.Path)
 		if !strings.HasSuffix(path, "/libjvm.so") {
 			continue
 		}
