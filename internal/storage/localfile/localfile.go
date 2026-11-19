@@ -20,10 +20,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ccfos/huatuo/internal/filerotate"
 	"github.com/ccfos/huatuo/internal/log"
@@ -35,10 +38,15 @@ type Storage struct {
 	lock         sync.Mutex
 	files        map[string]io.Writer
 	writerCache  sync.Map
+	closed       atomic.Bool
 	path         string
 	rotationSize int
 	maxRotation  int
 }
+
+// ErrClosed is returned by Save once the backend has been closed, so a record
+// is not appended after shutdown.
+var ErrClosed = errors.New("storage: localfile backend closed")
 
 var _ driver.Backend = (*Storage)(nil)
 
@@ -114,10 +122,32 @@ func (b *Storage) Values(context.Context, string, driver.Query, int) ([]string, 
 	return nil, driver.ErrUnsupported
 }
 
-// Close is a no-op: the file rotator flushes on each Write, so there is
-// nothing buffered to drain at shutdown.
+// Close closes every rotator this backend opened and marks the backend
+// closed, so a later Save reports ErrClosed instead of reopening the file.
+//
+// Close is idempotent: the store closes the same backend both when Init fails
+// and at shutdown, and the second call must not report an error.
 func (b *Storage) Close(_ context.Context) error {
-	return nil
+	if !b.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	var errs []error
+	b.writerCache.Range(func(name, w any) bool {
+		closer, ok := w.(io.Closer)
+		if !ok {
+			return true
+		}
+		if err := closer.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close localfile writer %q: %w", name, err))
+		}
+		return true
+	})
+
+	return errors.Join(errs...)
 }
 
 func (b *Storage) newFileWriter(filename string) io.Writer {
@@ -134,12 +164,20 @@ func (b *Storage) newFileWriter(filename string) io.Writer {
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
+	if b.closed.Load() {
+		return nil, ErrClosed
+	}
+
 	if fileWriter, ok := b.files[name]; ok {
 		return fileWriter, nil
 	}
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
+
+	if b.closed.Load() {
+		return nil, ErrClosed
+	}
 
 	// Double-check after acquiring lock
 	if fileWriter, ok := b.files[name]; ok {
