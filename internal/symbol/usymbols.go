@@ -17,6 +17,7 @@ package symbol
 import (
 	"debug/elf"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -41,6 +42,7 @@ type elfSymbolCache struct {
 type processELF struct {
 	cacheKey cacheKey
 	path     string
+	module   string // executable pathname paired with the cached process maps
 }
 
 type cacheKey struct {
@@ -150,16 +152,27 @@ type pendingELFPCs struct {
 }
 
 func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
+	if len(addrs) == 0 {
+		return []string{}
+	}
 	result := slices.Repeat([]string{failFrame("elf-load-fail", "")}, len(addrs))
 	cache, err := r.loadElfCaches(pid)
 	if err != nil {
 		return result
 	}
 
+	process := r.processes[pid]
+	path := process.path
+	module := process.module
+	if module == "" {
+		module = strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
+		if cache.typ == elf.ET_DYN && path == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
+			// Keep the executable identity and its mappings in the same snapshot.
+			module, _ = r.loadExecutableModule(pid)
+		}
+	}
 	groups := make(map[string]*pendingELFPCs)
 	for index, addr := range addrs {
-		path := r.processes[pid].path
-		module := strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
 		if cache.typ == elf.ET_DYN && module != "" {
 			if err = r.loadProcMaps(pid); err == nil {
 				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
@@ -342,6 +355,38 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*executableCache, error) {
 	return cache, nil
 }
 
+// loadExecutableModule snapshots the pathname together with the process maps.
+// A later unlink or rename must not pair a new pathname with old mappings.
+func (r *UsymResolver) loadExecutableModule(pid uint32) (string, error) {
+	process := r.processes[pid]
+	if process.module != "" {
+		return process.module, nil
+	}
+	for range 2 {
+		module, err := os.Readlink(process.path)
+		if err != nil {
+			return "", err
+		}
+		// Maps may already have been loaded for another address. Refresh them
+		// when establishing executable identity, and publish neither on failure.
+		maps, err := parseMaps(pid)
+		if err != nil {
+			return "", err
+		}
+		for _, m := range maps {
+			if m.Pathname == module {
+				process.module = module
+				r.processes[pid] = process
+				r.procmaps[pid] = maps
+				return module, nil
+			}
+		}
+		// A rename or unlink between readlink and reading maps can change the
+		// pathname. Retry once without caching an inconsistent pair.
+	}
+	return "", fmt.Errorf("executable pathname missing from process %d maps", pid)
+}
+
 func (r *UsymResolver) loadProcMaps(pid uint32) error {
 	_, ok := r.procmaps[pid]
 	if ok {
@@ -387,16 +432,11 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*elfSymbolCache
 }
 
 func (r *UsymResolver) exePath(pid uint32) (string, error) {
-	proc, err := procfs.NewProc(int(pid))
-	if err != nil {
+	if _, err := procfs.NewProc(int(pid)); err != nil {
 		return "", fmt.Errorf("procfs.NewProc %d: %w", pid, err)
 	}
-	bin, err := proc.Executable()
-	if err != nil {
-		return "", fmt.Errorf("proc.Executable %d: %w", pid, err)
-	}
-	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
-	return filepath.Join(rootDir, bin), nil
+	// The proc link retains the running ELF after its pathname is replaced.
+	return procfs.Path(fmt.Sprintf("%d/exe", pid)), nil
 }
 
 func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
@@ -439,6 +479,16 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 	inContainer, err := process.IsInContainer(int(pid))
 	if err != nil {
 		return "", err
+	}
+	if !inContainer && hostPath == procfs.Path(fmt.Sprintf("%d/exe", pid)) {
+		proc, err := procfs.NewProc(int(pid))
+		if err != nil {
+			return "", err
+		}
+		hostPath, err = proc.Executable()
+		if err != nil {
+			return "", err
+		}
 	}
 	if !inContainer {
 		return matchXfsMount(hostPath, mounts), nil
