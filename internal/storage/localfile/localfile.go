@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -46,18 +47,29 @@ var _ driver.Backend = (*Storage)(nil)
 // side-effect import.
 func init() {
 	driver.RegisterBackend("localfile", func(cfg *driver.Config) (driver.Backend, error) {
-		return NewBackend(cfg.LocalFilePath, cfg.LocalFileRotationSize, cfg.LocalFileMaxRotation), nil
+		backend, err := NewBackend(cfg.LocalFilePath, cfg.LocalFileRotationSize, cfg.LocalFileMaxRotation)
+		if err != nil {
+			return nil, err
+		}
+		return backend, nil
 	})
 }
 
 // NewBackend creates a local file backend.
-func NewBackend(path string, rotationSize, maxRotation int) *Storage {
+func NewBackend(path string, rotationSize, maxRotation int) (*Storage, error) {
+	if rotationSize <= 0 {
+		return nil, fmt.Errorf(
+			"%w: rotation size must be greater than zero, got %d",
+			filerotate.ErrInvalidRotationSize,
+			rotationSize,
+		)
+	}
 	return &Storage{
 		path:         path,
 		rotationSize: rotationSize,
 		maxRotation:  maxRotation,
 		files:        make(map[string]io.Writer),
-	}
+	}, nil
 }
 
 func (b *Storage) Init(_ context.Context, _ string, _ []driver.Index) error {
@@ -120,17 +132,21 @@ func (b *Storage) Close(_ context.Context) error {
 	return nil
 }
 
-func (b *Storage) newFileWriter(filename string) io.Writer {
+func (b *Storage) newFileWriter(filename string) (io.Writer, error) {
 	fp := path.Join(b.path, filename)
 
 	fileWriter, ok := b.writerCache.Load(fp)
 	if !ok {
-		fileWriter = filerotate.NewFileRotator(fp, b.maxRotation, b.rotationSize)
-		b.writerCache.Store(fp, fileWriter)
+		rotator, err := filerotate.NewFileRotator(fp, b.maxRotation, b.rotationSize)
+		if err != nil {
+			return nil, err
+		}
+		b.writerCache.Store(fp, rotator)
+		fileWriter = rotator
 	}
 
 	b.files[filename] = fileWriter.(io.Writer)
-	return b.files[filename]
+	return b.files[filename], nil
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
@@ -152,7 +168,7 @@ func (b *Storage) writerByName(name string) (io.Writer, error) {
 		}
 	}
 
-	return b.newFileWriter(name), nil
+	return b.newFileWriter(name)
 }
 
 func tracerFilename(rec driver.Record) string {

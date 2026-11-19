@@ -22,15 +22,56 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/filerotate"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 )
+
+// TestNewBackendRotationSizeValidation covers construction-time validation:
+// a non-positive rotation size must be rejected explicitly instead of
+// silently falling back to lumberjack's default, and a positive size keeps
+// constructing a usable backend.
+func TestNewBackendRotationSizeValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		rotationSize int
+		wantErr      bool
+	}{
+		{name: "zero silently falls back to default", rotationSize: 0, wantErr: true},
+		{name: "negative refuses every write", rotationSize: -1, wantErr: true},
+		{name: "positive is accepted", rotationSize: 1024},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, err := NewBackend(t.TempDir(), tt.rotationSize, 3)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("NewBackend(rotationSize=%d) returned error: %v", tt.rotationSize, err)
+				}
+				if backend == nil {
+					t.Fatal("NewBackend() returned nil backend")
+				}
+				return
+			}
+			if !errors.Is(err, filerotate.ErrInvalidRotationSize) {
+				t.Errorf("NewBackend(rotationSize=%d) error = %v, want ErrInvalidRotationSize", tt.rotationSize, err)
+			}
+			if backend != nil {
+				t.Errorf("NewBackend(rotationSize=%d) returned both a backend and an error", tt.rotationSize)
+			}
+		})
+	}
+}
 
 // TestBackendSave covers the localfile backend save behavior: verifies that fields.tracer_name is used as the filename and JSON content is pretty-printed before writing.
 func TestBackendSave(t *testing.T) {
 	dir := t.TempDir()
-	backend := NewBackend(dir, 1024, 3)
+	backend, err := NewBackend(dir, 1024, 3)
+	if err != nil {
+		t.Fatalf("NewBackend() returned error: %v", err)
+	}
 
-	err := backend.Save(t.Context(), driver.Record{
+	err = backend.Save(t.Context(), driver.Record{
 		ID:   "trace-20260424",
 		Data: []byte("{\"tracer_name\":\"kernel_sched_tick\"}\n"),
 		Fields: map[string]any{
@@ -78,9 +119,12 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 
 	// Use a subdirectory under the read-only dir that doesn't exist.
 	// MkdirAll will fail because the parent is read-only.
-	backend := NewBackend(filepath.Join(readOnlyDir, "nested", "data"), 1024, 3)
+	backend, err := NewBackend(filepath.Join(readOnlyDir, "nested", "data"), 1024, 3)
+	if err != nil {
+		t.Fatalf("NewBackend() returned error: %v", err)
+	}
 
-	err := backend.Save(t.Context(), driver.Record{
+	err = backend.Save(t.Context(), driver.Record{
 		ID:   "trace-permtest",
 		Data: []byte("{\"test\": true}"),
 		Fields: map[string]any{
@@ -96,12 +140,15 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 // fails, Save falls back to writing raw data and logs a warning.
 func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	dir := t.TempDir()
-	backend := NewBackend(dir, 1024, 3)
+	backend, err := NewBackend(dir, 1024, 3)
+	if err != nil {
+		t.Fatalf("NewBackend() returned error: %v", err)
+	}
 
 	const tracerName = "badjson_test"
 	want := []byte("not valid json {")
 
-	err := backend.Save(t.Context(), driver.Record{
+	err = backend.Save(t.Context(), driver.Record{
 		ID:   "trace-badjson",
 		Data: want,
 		Fields: map[string]any{
@@ -125,7 +172,10 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 // TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, DeleteByQuery, Query, Count, and Terms all return ErrUnsupported.
 func TestBackendUnsupportedOperations(t *testing.T) {
 	dir := t.TempDir()
-	backend := NewBackend(dir, 1024, 3)
+	backend, err := NewBackend(dir, 1024, 3)
+	if err != nil {
+		t.Fatalf("NewBackend() returned error: %v", err)
+	}
 
 	if _, err := backend.Get(t.Context(), "trace-20260424"); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Get() error = %v, want ErrUnsupported", err)
