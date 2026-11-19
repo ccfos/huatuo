@@ -32,7 +32,6 @@ const (
 	FormatJSON        OutputFormat = "json"
 	FormatSpeedscope  OutputFormat = "speedscope"
 	FormatChromeTrace OutputFormat = "chrometrace"
-	FormatDump        OutputFormat = "dump"
 	FormatRemoteStore OutputFormat = "remote-store" // upload to a remote storage backend
 )
 
