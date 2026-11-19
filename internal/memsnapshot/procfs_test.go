@@ -48,30 +48,46 @@ func TestProcessInstanceID(t *testing.T) {
 }
 
 func TestReadProcMapsPreservesPath(t *testing.T) {
-	for _, path := range []string{
-		"", "/opt/runtime/libjvm.so", "/opt/runtime with spaces/libjvm.so",
-		"/opt/runtime  with  spaces/libjvm.so", "/opt/runtime\twith\ttabs/libjvm.so",
-		"/opt/runtime\u00a0name/libjvm.so", "/opt/library.so ",
-		"/opt/runtime  name/libjvm.so (deleted)", "[heap]",
+	for name, path := range map[string]string{
+		"anonymous":                "",
+		"ordinary":                 "/opt/runtime/libjvm.so",
+		"single spaces":            "/opt/runtime with spaces/libjvm.so",
+		"consecutive spaces":       "/opt/runtime  with  spaces/libjvm.so",
+		"tabs":                     "/opt/runtime\twith\ttabs/libjvm.so",
+		"unicode whitespace":       "/opt/runtime\u00a0name/libjvm.so",
+		"trailing space":           "/opt/library.so ",
+		"trailing tab":             "/opt/library.so\t",
+		"carriage return":          "/opt/runtime\rname/libjvm.so",
+		"trailing carriage return": "/opt/library.so\r",
+		"deleted":                  "/opt/runtime  name/libjvm.so (deleted)",
+		"heap":                     "[heap]",
 	} {
-		t.Run(path, func(t *testing.T) {
-			mapsPath := filepath.Join(t.TempDir(), "maps")
-			line := "1000-2000 r-xp 00001000 08:01 42    " + path + "\n"
-			if err := os.WriteFile(mapsPath, []byte(line), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			mappings, err := ReadProcMaps(mapsPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := ProcMap{
-				Start: 0x1000, End: 0x2000, Offset: 0x1000,
-				DevMajor: 8, DevMinor: 1, Inode: 42, Perms: "r-xp", Path: path,
-			}
-			if len(mappings) != 1 || mappings[0] != want {
-				t.Fatalf("mappings = %#v, want %#v", mappings, want)
-			}
-		})
+		for ending, suffix := range map[string]string{"newline": "\n", "eof": ""} {
+			t.Run(name+"/"+ending, func(t *testing.T) {
+				mapsPath := filepath.Join(t.TempDir(), "maps")
+				line := "1000-2000 r-xp 00001000 08:01 42    " + path + suffix
+				if err := os.WriteFile(mapsPath, []byte(line), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				mappings, err := ReadProcMaps(mapsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := ProcMap{
+					Start:    0x1000,
+					End:      0x2000,
+					Offset:   0x1000,
+					DevMajor: 8,
+					DevMinor: 1,
+					Inode:    42,
+					Perms:    "r-xp",
+					Path:     path,
+				}
+				if len(mappings) != 1 || mappings[0] != want {
+					t.Fatalf("mappings = %#v, want %#v", mappings, want)
+				}
+			})
+		}
 	}
 }
 

@@ -16,6 +16,7 @@ package memsnapshot
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -97,6 +98,7 @@ func ReadProcMapsContext(ctx context.Context, path string,
 	limited := &io.LimitedReader{R: file, N: maxProcMapsBytes + 1}
 	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 4096), maxProcMapsLine)
+	scanner.Split(scanProcMapsLines)
 	var result []ProcMap
 	for lineNumber := 0; scanner.Scan(); lineNumber++ {
 		if lineNumber&127 == 0 {
@@ -158,6 +160,18 @@ func ReadProcMapsContext(ctx context.Context, path string,
 		return nil, err
 	}
 	return result, nil
+}
+
+// A carriage return can be part of a pathname; procfs terminates lines with LF.
+func scanProcMapsLines(data []byte, atEOF bool) (int, []byte, error) {
+	if end := bytes.IndexByte(data, '\n'); end >= 0 {
+		return end + 1, data[:end], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+
+	return 0, nil, nil
 }
 
 // FindLoadBias resolves an ELF load bias from a parsed maps entry.

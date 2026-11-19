@@ -676,3 +676,25 @@ EOF
 		write_config_bamai_elasticsearch "${STORAGE_ADDR}" "${STORAGE_USERNAME}" "${STORAGE_PASSWORD}" "${DLOAD_INDEX}"
 	fi
 }
+
+write_config_bamai_memburst() {
+	local go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
+	local blacklist_filter=''
+	if [[ ${burst_blacklist} == 1 ]]; then
+		blacklist_filter='s/^BlackList = \[/BlackList = ["memburst", /'
+	fi
+	write_config_bamai_memory_threshold_snapshot \
+		| sed -e 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' \
+			-e "${blacklist_filter}"
+	cat << CONFIG
+[AutoTracing.MemoryBurst]
+ DeltaMemoryBurst = ${burst_threshold}
+ DeltaAnonThreshold = ${burst_anon}
+ Interval = 1
+ IntervalTracing = ${burst_cooldown}
+ DumpProcessMaxNum = ${burst_top}
+CONFIG
+	if [[ -n ${burst_window} ]]; then
+		printf ' SlidingWindowLength = %s\n' "${burst_window}"
+	fi
+}

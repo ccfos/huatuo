@@ -22,17 +22,21 @@ snapshot_build_runtime_fixtures() {
 	if [[ ${MEMSNAP_OPTIONAL_RUNTIMES:-0} != 1 ]]; then
 		require_commands python3 java javac gcc g++
 	fi
-	cp "${ROOT_DIR}/integration/testdata/test_memsnapshot.py" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.py"
-	cp "${ROOT_DIR}/integration/testdata/TestMemsnapshotHeap.java" "${HUATUO_BAMAI_TEST_TMPDIR}/HeapFixture.java"
-	if command -v java > /dev/null && command -v javac > /dev/null; then
-		javac -source 8 -target 8 "${HUATUO_BAMAI_TEST_TMPDIR}/HeapFixture.java"
-	fi
+	snapshot_build_managed_runtime_fixtures
 	cp "${ROOT_DIR}/integration/testdata/test_memsnapshot.c" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.c"
 	if command -v gcc > /dev/null; then
 		gcc -O0 -o "${HUATUO_BAMAI_TEST_TMPDIR}/c-snapshot" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.c"
 	fi
 	if command -v g++ > /dev/null; then
 		g++ -x c++ -O0 -o "${HUATUO_BAMAI_TEST_TMPDIR}/cpp-snapshot" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.c"
+	fi
+}
+
+snapshot_build_managed_runtime_fixtures() {
+	cp "${ROOT_DIR}/integration/testdata/test_memsnapshot.py" "${HUATUO_BAMAI_TEST_TMPDIR}/snapshot.py"
+	cp "${ROOT_DIR}/integration/testdata/TestMemsnapshotHeap.java" "${HUATUO_BAMAI_TEST_TMPDIR}/HeapFixture.java"
+	if command -v java > /dev/null && command -v javac > /dev/null; then
+		javac -source 8 -target 8 "${HUATUO_BAMAI_TEST_TMPDIR}/HeapFixture.java"
 	fi
 }
 
@@ -242,9 +246,11 @@ assert_snapshot_runtime_payload() {
 		log_info "PASS: CPython unsupported-runtime result; object statistics unavailable on this runtime"
 		return
 	fi
+	# Empty entries are omitted by the snapshot JSON encoder.
 	jq -e --arg language "${language}" --argjson object_bytes "${object_bytes}" --arg python_version "${python_version}" --arg python_expectation "${python_expectation}" '
-  .tracer_data as $data | $data.snapshot as $s |
-  $data.language == $language
+  .tracer_data as $data | ($data.snapshot | .entries //= []) as $s |
+  ($data.snapshot.entries == null or ($data.snapshot.entries | type) == "array")
+  and $data.language == $language
   and $data.process_memory.rss_bytes >= 8388608
   and ($s.duration_ms | type == "number")
   and (if $language == "native" or $language == "cpp" then

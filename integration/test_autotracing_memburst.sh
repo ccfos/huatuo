@@ -16,76 +16,17 @@
 
 # Controlled procfs input, real processes, collector and daemon in a private PID namespace.
 set -euo pipefail
-source "${ROOT_DIR}/integration/lib.sh"
-source "${ROOT_DIR}/integration/config.sh"
-source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
+source "${ROOT_DIR}/integration/lib_memburst.sh"
 require_commands go jq mount umount awk timeout
-readonly MEMBURST_ROOT_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
+burst_setup
 readonly MEMBURST_STANDARD_BIN=${HUATUO_BAMAI_BIN}
-export MEMSNAP_ACCEPTANCE_ARTIFACTS="${MEMBURST_ROOT_WORKSPACE}/helpers"
-export MEMBURST_ACCEPTANCE_FIXTURE="${MEMSNAP_ACCEPTANCE_ARTIFACTS}/go-snapshot"
-mkdir -p "${MEMSNAP_ACCEPTANCE_ARTIFACTS}"
-cd "${ROOT_DIR}"
+trap burst_cleanup EXIT
 if [[ -n ${MEMBURST_ACCEPTANCE_PREBUILT_DIR:-} ]]; then
 	cp "${MEMBURST_ACCEPTANCE_PREBUILT_DIR}/go-snapshot" "${MEMBURST_ACCEPTANCE_FIXTURE}"
 fi
 if [[ ! -x ${MEMBURST_ACCEPTANCE_FIXTURE} ]]; then
 	go build -mod=vendor -o "${MEMBURST_ACCEPTANCE_FIXTURE}" ./integration/testdata/test_memory_threshold_snapshot_golang.go
 fi
-# Test only /proc/meminfo is replaced. RSS rankings and remote memory are real.
-for memburst_input_level in low high; do
-	memburst_input_value=100000
-	[[ ${memburst_input_level} != high ]] || memburst_input_value=400000
-	printf 'MemTotal: 1000000 kB\nMemFree: 500000 kB\nMemAvailable: 500000 kB\nActive(anon): %s kB\nInactive(anon): 10000 kB\n' "${memburst_input_value}" > "${MEMBURST_ROOT_WORKSPACE}/meminfo-${memburst_input_level}"
-done
-burst_mounted=0
-burst_workloads=()
-burst_fds=()
-burst_cleanup() {
-	local status=$? pid fd
-	huatuo_bamai_stop || status=1
-	for pid in "${burst_workloads[@]}"; do
-		kill -KILL "${pid}" 2> /dev/null || true
-		wait "${pid}" 2> /dev/null || true
-	done
-	for fd in "${burst_fds[@]}"; do eval "exec ${fd}>&-"; done
-	while ((burst_mounted > 0)); do
-		umount /proc/meminfo || {
-			status=1
-			break
-		}
-		burst_mounted=$((burst_mounted - 1))
-	done
-	return "${status}"
-}
-trap burst_cleanup EXIT
-# Stacked binds switch inputs atomically, without exposing host meminfo between samples.
-burst_input() {
-	burst_sample_offset=0
-	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
-		burst_sample_offset=$(wc -l < "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log")
-	fi
-	mount --bind "${MEMBURST_ROOT_WORKSPACE}/meminfo-$1" /proc/meminfo
-	burst_mounted=$((burst_mounted + 1))
-}
-
-burst_wait_samples() {
-	local memburst_input_level=$1 count=${2:-2} active=100000
-	[[ ${memburst_input_level} != high ]] || active=400000
-	memsnapshot_wait_memburst_samples "${burst_sample_offset}" "${count}" "${active}"
-}
-
-burst_count() {
-	if [[ ! -s ${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst ]]; then
-		echo 0
-		return
-	fi
-	jq -s length "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst" 2> /dev/null
-}
-burst_expected_count() { [[ $(burst_count) == "$1" ]]; }
-assert_burst_count() {
-	assert_eq "$(burst_count)" "$1" "${2:-memburst event count}"
-}
 
 assert_burst_cooldown() {
 	(($(date +%s) - memburst_first_started < 28)) || fatal "cooldown assertion exceeded budget"
@@ -97,59 +38,6 @@ assert_burst_configuration_rejected() {
 	[[ ${status} != 0 && ${status} != 124 && ${status} != 137 ]] || fatal "invalid ${name} did not fail promptly (status=${status})"
 	grep -Fq "${memburst_config_error}" "${file}" || fatal "missing ${name} diagnostic: ${memburst_config_error}"
 	! grep -q 'started successfully' "${file}" || fatal "daemon started with invalid ${name}"
-}
-
-GO_SNAPSHOT_KUBELET_PORT=10250
-go_snapshot_top_k=100
-KUBELET_CERT=${KUBELET_CERT:-unused}
-KUBELET_KEY=${KUBELET_KEY:-unused}
-burst_top=10
-burst_threshold=10
-burst_anon=0
-burst_blacklist=0
-burst_cooldown=30
-burst_window=2
-write_config_bamai_memburst() {
-	local go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
-	local blacklist_filter=''
-	if [[ ${burst_blacklist} == 1 ]]; then
-		blacklist_filter='s/^BlackList = \[/BlackList = ["memburst", /'
-	fi
-	write_config_bamai_memory_threshold_snapshot \
-		| sed -e 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' \
-			-e "${blacklist_filter}"
-	cat << CONFIG
-[AutoTracing.MemoryBurst]
- DeltaMemoryBurst = ${burst_threshold}
- DeltaAnonThreshold = ${burst_anon}
- Interval = 1
- IntervalTracing = ${burst_cooldown}
- DumpProcessMaxNum = ${burst_top}
-CONFIG
-	if [[ -n ${burst_window} ]]; then
-		printf ' SlidingWindowLength = %s\n' "${burst_window}"
-	fi
-}
-burst_start() {
-	local pid
-	for pid in "${burst_workloads[@]}"; do kill -0 "${pid}" || fatal "workload exited before scenario"; done
-	integration_huatuo_bamai_start write_config_bamai_memburst --region integration --disable-kubelet --log-debug
-	local enabled=1
-	[[ ${burst_blacklist} == 0 ]] || enabled=0
-	assert_memsnapshot_tracing_metrics memburst integration "${enabled}"
-}
-burst_stop() {
-	local signal=$1
-	assert_huatuo_bamai_shutdown_with_signal "${signal}" "${2:-}"
-	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/expected-storage-failure ]]; then
-		# Only the deliberate directory obstruction may produce a save warning.
-		awk '!(/level="warning"/ && /msg="save memburst snapshot"/ && /not a directory/)' \
-			"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" > "${HUATUO_BAMAI_TEST_TMPDIR}/checked.log"
-		assert_memsnapshot_logs "${HUATUO_BAMAI_TEST_TMPDIR}/checked.log"
-	else
-		assert_memsnapshot_logs "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
-	fi
-	mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-${signal}-${SECONDS}.log"
 }
 
 assert_burst_event() {
@@ -322,31 +210,8 @@ for pid in "${burst_workloads[@]}"; do
 	wait "${pid}" 2> /dev/null || true
 done
 burst_workloads=()
-readonly MEMBURST_RUNTIME_DIR="${MEMBURST_ROOT_WORKSPACE}/runtimes"
 mkdir -p "${MEMBURST_RUNTIME_DIR}"
 MEMSNAP_OPTIONAL_RUNTIMES=1 HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_RUNTIME_DIR}" snapshot_build_runtime_fixtures
-
-burst_start_runtime() {
-	local mode=$1
-	mkfifo "${HUATUO_BAMAI_TEST_TMPDIR}/commands"
-	exec {burst_runtime_fd}<> "${HUATUO_BAMAI_TEST_TMPDIR}/commands"
-	burst_fds+=("${burst_runtime_fd}")
-	case ${mode} in
-	go) burst_command=("${MEMBURST_ACCEPTANCE_FIXTURE}" 1) ;;
-	disabled) burst_command=("${MEMBURST_ACCEPTANCE_FIXTURE}" 0) ;;
-	churn) burst_command=(env MEMSNAPSHOT_CHURN=1 "${MEMBURST_ACCEPTANCE_FIXTURE}" 1) ;;
-	python) burst_command=(python3 "${MEMBURST_RUNTIME_DIR}/snapshot.py") ;;
-	java) burst_command=(java -XX:+UseG1GC -Xms32m -Xmx256m -cp "${MEMBURST_RUNTIME_DIR}" HeapFixture) ;;
-	c | cpp) burst_command=("${MEMBURST_RUNTIME_DIR}/${mode}-snapshot") ;;
-	esac
-	"${burst_command[@]}" < "${HUATUO_BAMAI_TEST_TMPDIR}/commands" > "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" 2>&1 &
-	burst_runtime_pid=$!
-	burst_workloads=("${burst_runtime_pid}")
-	printf a >&"${burst_runtime_fd}"
-	wait_until 30 .1 grep -qx ready "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" || fatal "${mode}: allocation not ready"
-	printf p >&"${burst_runtime_fd}"
-	wait_until 30 .1 grep -qx 'pressure ready' "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" || fatal "${mode}: pressure not ready"
-}
 
 assert_burst_runtime() {
 	local mode=$1 language=${1} count=$2
