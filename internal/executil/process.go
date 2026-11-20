@@ -40,9 +40,9 @@ const (
 	processRunStateClosedBeforeStart
 )
 
-// Process owns one command lifecycle and its process group. The group leader's
-// exit ends the command lifetime; remaining group members are killed before the
-// leader is reaped. Children must finish their work before the leader exits.
+// Process owns one command lifecycle and its process group. On natural exit,
+// remaining group members are killed before the leader is reaped. Stop allows
+// group members to finish within its grace period before escalating.
 // Process must be created with New and cannot be restarted; methods on its zero
 // value return an initialization error, except Stdout and Stderr (no data),
 // and Done (nil).
@@ -65,6 +65,7 @@ type Process struct {
 	// Only Start sets this marker; errors from writers cannot cancel launch.
 	startCancelErr  error
 	isStopRequested bool
+	groupStopDone   chan struct{}
 }
 
 // New validates and snapshots a command specification without starting it.
@@ -253,6 +254,13 @@ func (p *Process) reap(cmd *exec.Cmd) {
 	observeErr := waitForCommandExit(cmd.Process.Pid)
 
 	p.mu.Lock()
+	if stopDone := p.groupStopDone; observeErr == nil && stopDone != nil {
+		// Keep the leader waitable until Stop has observed or signaled its
+		// remaining group members, so the group ID cannot be reused.
+		p.mu.Unlock()
+		<-stopDone
+		p.mu.Lock()
+	}
 	var groupErr error
 	if observeErr != nil {
 		groupErr = fmt.Errorf("%w: observe command %q exit: %w", ErrStopFailed, p.spec.Path, observeErr)
