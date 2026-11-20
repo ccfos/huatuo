@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -62,6 +63,12 @@ func (c ElasticsearchConfig) Validate() error {
 		if err != nil || parsed.Host == "" ||
 			(parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return fmt.Errorf("invalid address %q", address)
+		}
+		if port := parsed.Port(); port != "" {
+			portNumber, err := strconv.Atoi(port)
+			if err != nil || portNumber < 1 || portNumber > 65535 {
+				return fmt.Errorf("invalid address %q", address)
+			}
 		}
 	}
 	return nil
