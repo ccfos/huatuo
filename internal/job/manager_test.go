@@ -468,6 +468,31 @@ func TestManagerRecoversAllBatchesWhileStatusesChange(t *testing.T) {
 	}
 }
 
+func TestManagerRecoverValidatesEveryJobBeforeStarting(t *testing.T) {
+	// "job-a-good" sorts first, so the buggy implementation starts it before it
+	// reaches the unsupported kind in "job-b-bad".
+	jobs := []*Job{
+		testJob("job-a-good", StatusRunning, time.Now()),
+		testJob("job-b-bad", StatusRunning, time.Now()),
+	}
+	jobs[1].Kind = Kind("bogus")
+	manager := testManager(newMemoryStore(jobs...), &stubNodeClient{})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if err := manager.recover(context.Background()); err == nil {
+		t.Fatal("recovery accepted a Job whose kind has no policy")
+	}
+	if active := manager.Stats().Active; len(active) != 0 {
+		t.Fatalf("recovery started %d Job(s) before rejecting the batch: %+v", len(active), active)
+	}
+}
+
 func TestManagerListPageZeroDoesNotReadProbe(t *testing.T) {
 	store := &recoveringStore{memoryStore: newMemoryStore(testJob("job-1", StatusRunning, time.Now()))}
 	manager := testManager(store, &stubNodeClient{})
