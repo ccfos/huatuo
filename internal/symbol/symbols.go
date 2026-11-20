@@ -16,6 +16,7 @@ package symbol
 
 import (
 	"bufio"
+	"cmp"
 	"debug/elf"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -346,6 +348,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 
 	// Open updates legacy .zdebug sizes before budget checks and cache keys.
 	stringsSection.Open()
+	section.Open()
 	symbolSize, metadataBytes, symbolCount, err := state.checkSymbolLimits(f, section)
 	if err != nil {
 		return nil, err
@@ -359,14 +362,10 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 		// expands every symbol name before callers can filter by type, so
 		// repeated offsets can multiply a bounded string table into unbounded
 		// allocations.
-		data, err := section.Data()
+		index, err = buildELFSymbolIndex(f, section, symbolSize)
 		if err != nil {
-			return nil, fmt.Errorf("load symbol section: %w", err)
+			return nil, err
 		}
-		if uint64(len(data)) != section.Size {
-			return nil, fmt.Errorf("ELF section data size differs from its declared size")
-		}
-		index = buildELFSymbolIndex(f, data, symbolSize)
 	}
 
 	candidates := selectELFSymbolCandidates(index, pcs)
@@ -453,38 +452,60 @@ func (state *elfSymbolParseState) checkSymbolLimits(f *elf.File, section *elf.Se
 	return symbolSize, metadataBytes, symbolCount, nil
 }
 
-func buildELFSymbolIndex(f *elf.File, data []byte, symbolSize uint64) []elfSymbolCandidate {
-	index := scanELFSymbolEntries(f, data, symbolSize)
-	sort.SliceStable(index, func(i, j int) bool {
-		return index[i].value < index[j].value
-	})
-	return index
-}
-
-func scanELFSymbolEntries(f *elf.File, data []byte, symbolSize uint64) []elfSymbolCandidate {
-	var candidates []elfSymbolCandidate
-	for offset := symbolSize; offset < uint64(len(data)); offset += symbolSize {
-		entry := data[offset : offset+symbolSize]
-		var nameOffset uint32
-		var info byte
-		var value, size uint64
-		if f.Class == elf.ELFCLASS32 {
-			nameOffset = f.ByteOrder.Uint32(entry[0:4])
-			value = uint64(f.ByteOrder.Uint32(entry[4:8]))
-			size = uint64(f.ByteOrder.Uint32(entry[8:12]))
-			info = entry[12]
-		} else {
-			nameOffset = f.ByteOrder.Uint32(entry[0:4])
-			info = entry[4]
-			value = f.ByteOrder.Uint64(entry[8:16])
-			size = f.ByteOrder.Uint64(entry[16:24])
+// The caller validates the section against the parsing budget before allocating.
+func buildELFSymbolIndex(f *elf.File, section *elf.Section, symbolSize uint64) ([]elfSymbolCandidate, error) {
+	reader := section.Open()
+	// A symbol record is at most 24 bytes; the buffer fits whole ELF32 and
+	// ELF64 records without keeping the original table beside the index.
+	var buffer [24 * 1024]byte
+	var index []elfSymbolCandidate
+	for offset := uint64(0); offset < section.Size; {
+		data := buffer[:min(section.Size-offset, uint64(len(buffer)))]
+		if _, err := io.ReadFull(reader, data); err != nil {
+			return nil, fmt.Errorf("load symbol section: %w", err)
 		}
-		if elf.ST_TYPE(info) != elf.STT_FUNC {
-			continue
+		start := uint64(0)
+		if offset == 0 {
+			// Skip the null record once, not the first record of each chunk.
+			start = symbolSize
 		}
-		candidates = append(candidates, elfSymbolCandidate{nameOffset: nameOffset, value: value, size: size})
+		for position := start; position < uint64(len(data)); position += symbolSize {
+			entry := data[position : position+symbolSize]
+			var info byte
+			if f.Class == elf.ELFCLASS32 {
+				info = entry[12]
+			} else {
+				info = entry[4]
+			}
+			if elf.ST_TYPE(info) != elf.STT_FUNC {
+				continue
+			}
+			if len(index) == cap(index) {
+				// Grow with discovered functions, not all remaining records.
+				// Start with at most one chunk and never reserve more entries
+				// than the validated table can still contribute.
+				remaining := (section.Size - offset - position) / symbolSize
+				capacity := min(max(uint64(len(buffer))/symbolSize, 2*uint64(cap(index))), uint64(len(index))+remaining)
+				grown := make([]elfSymbolCandidate, len(index), capacity)
+				copy(grown, index)
+				index = grown
+			}
+			candidate := elfSymbolCandidate{nameOffset: f.ByteOrder.Uint32(entry[:4])}
+			if f.Class == elf.ELFCLASS32 {
+				candidate.value = uint64(f.ByteOrder.Uint32(entry[4:8]))
+				candidate.size = uint64(f.ByteOrder.Uint32(entry[8:12]))
+			} else {
+				candidate.value = f.ByteOrder.Uint64(entry[8:16])
+				candidate.size = f.ByteOrder.Uint64(entry[16:24])
+			}
+			index = append(index, candidate)
+		}
+		offset += uint64(len(data))
 	}
-	return candidates
+	slices.SortStableFunc(index, func(a, b elfSymbolCandidate) int {
+		return cmp.Compare(a.value, b.value)
+	})
+	return index, nil
 }
 
 func selectELFSymbolCandidates(index []elfSymbolCandidate, pcs []uint64) []elfSymbolCandidate {
