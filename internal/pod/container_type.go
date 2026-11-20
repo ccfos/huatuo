@@ -43,7 +43,11 @@ var containerType2String = map[ContainerType]string{
 }
 
 func (t ContainerType) String() string {
-	return containerType2String[t]
+	if name, ok := containerType2String[t]; ok {
+		return name
+	}
+
+	return containerType2String[ContainerTypeUnknown]
 }
 
 // MarshalJSON marshal container type to json.
