@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 // Launcher options that consume the next argument as their value. Options

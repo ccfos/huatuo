@@ -19,7 +19,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/memsnapshot"
 
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 type processMemInfo struct {
