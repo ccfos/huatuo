@@ -17,6 +17,7 @@ package formatter
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -48,6 +49,15 @@ type Formatter interface {
 	Add(ctx context.Context, window *types.AggregationWindow) error
 	Complete(ctx context.Context) error
 	Close() error
+}
+
+// RequireWindow rejects a nil window before a formatter opens or mutates its
+// destination. Callers still own validation of the window contents.
+func RequireWindow(window *types.AggregationWindow) error {
+	if window == nil {
+		return fmt.Errorf("profiling aggregation window is required")
+	}
+	return nil
 }
 
 // Config selects the representation and its filesystem destination.

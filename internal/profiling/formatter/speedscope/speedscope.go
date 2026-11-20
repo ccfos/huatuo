@@ -119,6 +119,9 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := output.RequireWindow(w); err != nil {
+		return err
+	}
 
 	parts, err := profilewindow.Metadata(w.ProfileType)
 	if err != nil {
