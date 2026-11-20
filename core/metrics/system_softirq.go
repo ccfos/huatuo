@@ -162,12 +162,16 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 			labels["cpuid"] = strconv.Itoa(cpuid)
 			for zoneid, zone := range lat.LatencyCounts {
 				labels["zone"] = strconv.Itoa(zoneid)
-				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
+				metricData = append(metricData, newSoftirqLatencyMetric(labels, zone))
 			}
 		}
 	}
 
 	return metricData, nil
+}
+
+func newSoftirqLatencyMetric(labels map[string]string, zone uint64) *metric.Data {
+	return metric.NewCounterData("latency", float64(zone), "softirq latency", labels)
 }
 
 func (s *softirqLatency) Start(ctx context.Context) (retErr error) {
