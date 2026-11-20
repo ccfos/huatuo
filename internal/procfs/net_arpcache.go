@@ -16,6 +16,7 @@ package procfs
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -39,16 +40,34 @@ func NetArpCache() (*ArpCacheStats, error) {
 
 	scanner := bufio.NewScanner(file)
 	scanner.Scan()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
 	// First string is always a header for stats
-	var headers []string
-	headers = append(headers, strings.Fields(scanner.Text())...)
+	headers := strings.Fields(scanner.Text())
 
 	// Fast path ...
 	cache := &ArpCacheStats{Stats: make(map[string]uint64)}
 
 	scanner.Scan()
-	for num, counter := range strings.Fields(scanner.Text()) {
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	fields := strings.Fields(scanner.Text())
+	if len(fields) > len(headers) {
+		// Counters are keyed by header position, so a wider row would either
+		// panic on the header lookup or report unnamed counters. Reject the
+		// row instead of guessing the layout.
+		return nil, fmt.Errorf(
+			"arp cache data row has %d fields, header has %d fields",
+			len(fields),
+			len(headers),
+		)
+	}
+
+	for num, counter := range fields {
 		value, err := strconv.ParseUint(counter, 16, 64)
 		if err != nil {
 			return nil, err
