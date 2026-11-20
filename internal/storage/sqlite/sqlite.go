@@ -248,7 +248,9 @@ func (s *Storage) Query(ctx context.Context, q driver.Query, consume func([]driv
 	defer rows.Close()
 
 	batchSize := q.ReadSize()
-	records := make([]driver.Record, 0, batchSize)
+	// A batch size is an upper bound, not a prediction of matching rows.
+	initialCapacity := min(batchSize, driver.DefaultBatchSize)
+	records := make([]driver.Record, 0, initialCapacity)
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -270,7 +272,7 @@ func (s *Storage) Query(ctx context.Context, q driver.Query, consume func([]driv
 				return err
 			}
 			// Consumers may retain a batch after returning.
-			records = make([]driver.Record, 0, batchSize)
+			records = make([]driver.Record, 0, initialCapacity)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -316,7 +318,8 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 	defer rows.Close()
 
-	terms := make([]string, 0, size)
+	// The requested limit need not reflect the number of matching values.
+	terms := make([]string, 0, min(size, driver.DefaultBatchSize))
 	for rows.Next() {
 		var value any
 		if err := rows.Scan(&value); err != nil {
