@@ -50,11 +50,11 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
 ## 整体大图
 
-![](/docs/img/huatuo-arch-vendor.svg)
+![](docs/img/huatuo-arch-vendor.svg)
 
 ## 开源生态
 
-![](/docs/img/huatuo-ecosystem.svg)
+![](docs/img/huatuo-ecosystem.svg)
 
 ## 快速上手
 
@@ -78,7 +78,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
     ```
   服务启动后，通过浏览器访问 http://localhost:3000 即可查看监控大盘。
 
-    ![](/docs/img/quickstart-components.png)
+    ![](docs/img/quickstart-components.png)
   
     <div style="text-align: center; margin: 8px 0 20px 0; color: #777;">
     <small>
@@ -86,7 +86,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
     </small>
     </div>
 
-    ![](/docs/img/quickstart-autotracing-event.png)
+    ![](docs/img/quickstart-autotracing-event.png)
 
 - **注意**
   请勿将 latest 标签的镜像部署至生产环境，此为开发测试分支。请使用正式发版的镜像或二进制文件。
@@ -160,7 +160,7 @@ func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
 ## 联系我们
 - 微信群（备注姓名+单位）和公众号：
 
-![](/docs/img/contact-weixin.png)
+![](docs/img/contact-weixin.png)
 
 
 ## 开源协议
