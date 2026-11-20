@@ -15,8 +15,11 @@
 package driver
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 )
 
 // NormalizeFilterValue validates the operator and its operands and formats time
@@ -59,6 +62,8 @@ func NormalizeFilterValue(filter Filter) (any, error) {
 func normalizeComparisonValue(value any, ordered bool) (any, error) {
 	value = NormalizeValue(value)
 	switch v := value.(type) {
+	case json.Number:
+		return normalizeJSONNumber(v)
 	case string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return value, nil
 	case bool:
@@ -82,4 +87,26 @@ func normalizeComparisonValue(value any, ordered bool) (any, error) {
 	}
 
 	return nil, fmt.Errorf("%w: unsupported comparison value of type %T", ErrInvalidQuery, value)
+}
+
+func normalizeJSONNumber(number json.Number) (any, error) {
+	if json.Valid([]byte(number)) {
+		if strings.ContainsAny(number.String(), ".eE") {
+			value, err := number.Float64()
+			if err == nil && !math.IsNaN(value) && !math.IsInf(value, 0) {
+				return value, nil
+			}
+		} else {
+			// SQLite reads fields with UseNumber; integer predicates must not
+			// round through float64 when those values are used again.
+			if value, err := number.Int64(); err == nil {
+				return value, nil
+			}
+			if value, err := strconv.ParseUint(number.String(), 10, 64); err == nil {
+				return value, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("%w: JSON number %q is invalid or outside supported numeric ranges", ErrInvalidQuery, number)
 }

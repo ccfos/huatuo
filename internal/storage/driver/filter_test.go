@@ -15,6 +15,7 @@
 package driver
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
@@ -101,5 +102,57 @@ func TestNormalizeFilterValuePreservesInput(t *testing.T) {
 	normalized.([]any)[0] = "changed"
 	if values[0] != instant {
 		t.Fatalf("input value was modified: %v", values)
+	}
+}
+
+func TestNormalizeFilterJSONNumbers(t *testing.T) {
+	for _, test := range []struct {
+		value json.Number
+		want  any
+	}{
+		{"0", int64(0)},
+		{"-0", int64(0)},
+		{"9007199254740993", int64(9007199254740993)},
+		{"-9223372036854775808", int64(math.MinInt64)},
+		{"9223372036854775807", int64(math.MaxInt64)},
+		{"18446744073709551615", uint64(math.MaxUint64)},
+		{"1.25", 1.25},
+		{"-1.25e-2", -0.0125},
+		{"2E3", float64(2000)},
+	} {
+		t.Run(test.value.String(), func(t *testing.T) {
+			got, err := NormalizeFilterValue(Filter{Field: "value", Op: OpGte, Value: test.value})
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("comparison = (%#v, %v), want %#v", got, err, test.want)
+			}
+		})
+	}
+	values := []json.Number{"9007199254740993", "1.25"}
+	got, err := NormalizeFilterValue(Filter{Field: "value", Op: OpIn, Value: values})
+	if err != nil || !reflect.DeepEqual(got, []any{int64(9007199254740993), 1.25}) {
+		t.Fatalf("membership = (%#v, %v)", got, err)
+	}
+	if !reflect.DeepEqual(values, []json.Number{"9007199254740993", "1.25"}) {
+		t.Fatalf("membership modified caller values: %v", values)
+	}
+}
+
+func TestNormalizeFilterJSONNumbersRejectInvalidValues(t *testing.T) {
+	for _, text := range []string{
+		"", "01", "+1", "NaN", "Infinity", "null", "true", `"1"`, "[1]", " 1 ",
+		"1e309", "-9223372036854775809", "18446744073709551616",
+	} {
+		t.Run(text, func(t *testing.T) {
+			for _, op := range []Op{OpEq, OpGt, OpIn} {
+				var value any = json.Number(text)
+				if op == OpIn {
+					value = []any{1, value}
+				}
+				_, err := NormalizeFilterValue(Filter{Field: "value", Op: op, Value: value})
+				if !errors.Is(err, ErrInvalidQuery) {
+					t.Fatalf("%s comparison error = %v, want ErrInvalidQuery", op, err)
+				}
+			}
+		})
 	}
 }

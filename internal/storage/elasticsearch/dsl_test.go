@@ -90,6 +90,16 @@ func TestBuildClauseComparisons(t *testing.T) {
 			driver.Filter{Field: "n", Op: driver.OpEq, Value: int64(9007199254740993)},
 			`{"term":{"n":{"value":9007199254740993}}}`,
 		},
+		{
+			"JSON number equal",
+			driver.Filter{Field: "n", Op: driver.OpEq, Value: json.Number("9007199254740993")},
+			`{"term":{"n":{"value":9007199254740993}}}`,
+		},
+		{
+			"JSON number membership",
+			driver.Filter{Field: "n", Op: driver.OpIn, Value: []json.Number{"9007199254740993", "9007199254740994"}},
+			`{"terms":{"n":[9007199254740993,9007199254740994]}}`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -114,6 +124,8 @@ func TestBuildClauseRangePrecision(t *testing.T) {
 		want  string
 	}{
 		{"large int", int64(9007199254740993), "9007199254740993"},
+		{"JSON large int", json.Number("9007199254740993"), "9007199254740993"},
+		{"JSON max uint", json.Number("18446744073709551615"), "18446744073709551615"},
 		{"min int", int64(math.MinInt64), "-9223372036854775808"},
 		{"max int", int64(math.MaxInt64), "9223372036854775807"},
 		{"max uint", uint64(math.MaxUint64), "18446744073709551615"},
