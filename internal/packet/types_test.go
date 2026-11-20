@@ -125,7 +125,7 @@ func TestPacketJSONRoundTrip(t *testing.T) {
 			t.Fatalf("Unmarshal: %v", err)
 		}
 
-		if diff := cmp.Diff(want, &got); diff != "" {
+		if diff := cmp.Diff(want, &got, cmp.AllowUnexported(TCP{})); diff != "" {
 			t.Errorf("round-trip mismatch (-want +got):\n%s", diff)
 		}
 	}
