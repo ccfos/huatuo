@@ -30,8 +30,12 @@ func ValidateDestination(path string) error {
 }
 
 func isStdoutDestination(path string) bool {
+	if path == "-" || path == "stdout" {
+		return true
+	}
+
 	switch filepath.Clean(path) {
-	case "-", "stdout", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1":
+	case "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1":
 		return true
 	}
 	return false
