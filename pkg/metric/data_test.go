@@ -291,6 +291,46 @@ func TestNewContainerGaugeData(t *testing.T) {
 	}
 }
 
+func TestNewContainerGaugeDataHandlesHostNamespaceMetadata(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		labels map[string]any
+		want   string
+	}{
+		{name: "nil labels"},
+		{name: "missing label", labels: map[string]any{"other": "value"}},
+		{name: "non-string label", labels: map[string]any{"HostNamespace": 1}},
+		{name: "string label", labels: map[string]any{"HostNamespace": "host-ns"}, want: "host-ns"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &pod.Container{
+				Name:     "container",
+				Hostname: "host",
+				Type:     pod.ContainerTypeNormal,
+				Labels:   tt.labels,
+			}
+			var data *Data
+			func() {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						t.Fatalf("NewContainerGaugeData() panicked: %v", recovered)
+					}
+				}()
+				data = NewContainerGaugeData(container, "latency", 1, "latency help", nil)
+			}()
+			if data == nil {
+				t.Fatal("NewContainerGaugeData() = nil, want metric")
+			}
+			if got := data.Labels()[LabelContainerHostNamespace]; got != tt.want {
+				t.Fatalf("host namespace label = %q, want %q", got, tt.want)
+			}
+			if data.prometheusMetric("collector") == nil {
+				t.Fatal("prometheusMetric() = nil, want metric")
+			}
+		})
+	}
+}
+
 func TestPrometheusMetric(t *testing.T) {
 	defaultRegion = "huatuo-region"
 	metricDescCache = sync.Map{}
