@@ -114,6 +114,29 @@ func TestMonotonicRealtimeOffsetCacheRefresh(t *testing.T) {
 	}
 }
 
+func TestMonotonicRealtimeOffsetCacheRefreshesAfterClockMovesBackward(t *testing.T) {
+	var cache monotonicRealtimeOffsetCache
+	now := time.Now()
+	calls := 0
+	sample := func() (int64, error) {
+		calls++
+		return int64(calls) * 1000, nil
+	}
+
+	first, err := cache.loadOrRefresh(func() time.Time { return now }, sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(-time.Hour)
+	refreshed, err := cache.loadOrRefresh(func() time.Time { return now }, sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != 1000 || refreshed != 2000 || calls != 2 {
+		t.Fatalf("offsets = %d, %d; samples = %d", first, refreshed, calls)
+	}
+}
+
 func TestMonotonicRealtimeOffsetCacheRefreshCompletion(t *testing.T) {
 	var cache monotonicRealtimeOffsetCache
 	now := time.Now()
