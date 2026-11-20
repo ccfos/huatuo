@@ -145,6 +145,14 @@ hostPaths:
 
 ### 2.4 检查 Helm Chart
 
+`config.content` 为必填项。通过
+`--set-file config.content=./huatuo-bamai.conf` 提供非空配置文件；内容为空或仅有空白时，
+模板渲染会报错。部署前还需检查配置项的有效性。
+
+ConfigMap 名称默认由 release 的完整名称派生，允许不同 release 部署在同一命名空间。
+升级使用旧默认名称的 release 时，可在 values 文件中设置
+`config.name: huatuo-bamai-config`，以保留原名称。
+
 ```bash
 helm lint ./build/charts \
   -f ./values-production.yaml \
