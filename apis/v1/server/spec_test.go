@@ -16,10 +16,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/gin-gonic/gin"
@@ -47,6 +49,70 @@ func TestOpenAPIJSON(t *testing.T) {
 	if err := document.Validate(t.Context()); err != nil {
 		t.Errorf("Validate(OpenAPIJSON()) error = %v", err)
 	}
+}
+
+// TestProfilingAndTracingJobSchemasAcceptServerOutput guards against the
+// schemas becoming unsatisfiable again. The server always emits the Job fields
+// plus the profiling/tracing extras (see cmd/huatuo-apiserver/handlers/api.go),
+// so a realistic instance of the generated structs must validate against the
+// served document's ProfilingJob / TracingJob schemas.
+func TestProfilingAndTracingJobSchemasAcceptServerOutput(t *testing.T) {
+	t.Parallel()
+
+	loader := openapi3.NewLoader()
+	document, err := loader.LoadFromData(OpenAPIJSON())
+	if err != nil {
+		t.Fatalf("LoadFromData(OpenAPIJSON()) error = %v", err)
+	}
+
+	createdAt := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	instances := map[string]any{
+		"ProfilingJob": mustJSON(t, ProfilingJob{
+			RequestID:       "abc",
+			Hostname:        "h1",
+			DurationSeconds: 60,
+			Scope:           apiv1.ObservationScope("host"),
+			Status:          JobStatus("pending"),
+			CreatedAt:       createdAt,
+			UpdatedAt:       createdAt,
+			Type:            ProfilingType("cpu"),
+			Language:        ProfilingLanguage("go"),
+			Mode:            ProfilingMode("oncpu"),
+		}),
+		"TracingJob": mustJSON(t, TracingJob{
+			RequestID:       "abc",
+			Hostname:        "h1",
+			DurationSeconds: 60,
+			Scope:           apiv1.ObservationScope("host"),
+			Status:          JobStatus("pending"),
+			CreatedAt:       createdAt,
+			UpdatedAt:       createdAt,
+			Type:            TracingType("networking_drop"),
+		}),
+	}
+
+	for name, instance := range instances {
+		schema := document.Components.Schemas[name]
+		if schema == nil {
+			t.Fatalf("schema %q not found in served document", name)
+		}
+		if err := schema.Value.VisitJSON(instance); err != nil {
+			t.Errorf("%s schema rejects the server-emitted body: %v", name, err)
+		}
+	}
+}
+
+func mustJSON(t *testing.T, v any) any {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal error = %v", err)
+	}
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+	return out
 }
 
 func TestGeneratedContractsCompile(t *testing.T) {
