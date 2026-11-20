@@ -22,8 +22,6 @@ import (
 	"math"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
-	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
-
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -61,27 +59,7 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 		return err
 	}
 
-	var frames []types.ProfileFrame
-	a := &w.Aggregated
-	for i := range a.Samples {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		sample := &a.Samples[i]
-		var kernelStart int
-		frames, kernelStart = profilewindow.AppendFrames(frames[:0], a, sample)
-		if err := f.aggregator.Add(&aggregation.Sample{
-			UserFrames:   frames[:kernelStart],
-			KernelFrames: frames[kernelStart:],
-			Labels:       profilewindow.Labels(a, sample),
-			Value:        sample.Value,
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return f.aggregator.AddProfile(ctx, &w.Aggregated)
 }
 
 func (f *formatter) Complete(ctx context.Context) error {

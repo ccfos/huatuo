@@ -16,10 +16,15 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"math/bits"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -35,6 +40,14 @@ const (
 	footerLines   = 5
 )
 
+type viewMode uint8
+
+const (
+	viewGraph viewMode = iota
+	viewFrames
+	viewTopTable
+)
+
 // Node is one reconstructed flamegraph frame.
 type Node struct {
 	flamegraph.FrameData
@@ -42,94 +55,60 @@ type Node struct {
 	Children []*Node
 }
 
-// Run opens the interactive terminal viewer.
-func Run(data []flamegraph.FrameData) error {
-	model := newModel(BuildTree(data))
-	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
-	return err
+// Run opens the terminal viewer and reports whether the user quit with q.
+func Run(ctx context.Context, model *Model) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	result, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) && errors.Is(err, tea.ErrProgramKilled) {
+		return false, ctx.Err()
+	}
+	final, ok := result.(Model)
+	return ok && final.quitRequested, err
 }
 
 // Model is the Bubble Tea state for the flamegraph viewer.
 type Model struct {
-	isListView bool
-	focus      *Node
-	visible    []*Node
-	cursor     int
-	offset     int
-	width      int
-	height     int
-	searching  bool
-	query      string
-	lastSearch string
-	matches    map[*Node]bool
+	view          viewMode
+	focus         *Node
+	defaultRoot   *Node
+	mergedCPURoot *Node
+	visible       []*Node
+	cursor        int
+	offset        int
+	width         int
+	height        int
+	searching     bool
+	query         string
+	lastSearch    string
+	matches       map[*Node]bool
+	mergedCPU     bool
+	topTable      *topTableModel
+	quitRequested bool
 }
 
 func newModel(root *Node) Model {
-	model := Model{
-		focus:   root,
-		width:   defaultWidth,
-		height:  defaultHeight,
-		matches: map[*Node]bool{},
-	}
-	model.refreshVisible()
-	return model
+	return newModelWithVisible(root, slices.Collect(walkPreorder(root)))
 }
 
-// BuildTree reconstructs parent/child relationships from ordered FrameData.
-func BuildTree(data []flamegraph.FrameData) *Node {
-	if len(data) == 0 {
-		return &Node{FrameData: flamegraph.FrameData{Label: "empty", Value: 0}}
+func newModelWithVisible(root *Node, visible []*Node) Model {
+	return Model{
+		focus:       root,
+		defaultRoot: root,
+		visible:     visible,
+		width:       defaultWidth,
+		height:      defaultHeight,
+		matches:     map[*Node]bool{},
 	}
-
-	var roots []*Node
-	stack := make([]*Node, 0, 16)
-	for _, frame := range data {
-		node := &Node{FrameData: frame}
-		level := int(frame.Level)
-		if level < 0 {
-			level = 0
-		}
-
-		if level == 0 || len(stack) == 0 {
-			roots = append(roots, node)
-			stack = []*Node{node}
-			continue
-		}
-
-		if level > len(stack) {
-			level = len(stack)
-		}
-		parent := stack[level-1]
-		node.Parent = parent
-		parent.Children = append(parent.Children, node)
-
-		if level < len(stack) {
-			stack = stack[:level]
-		}
-		stack = append(stack, node)
-	}
-
-	if len(roots) == 0 {
-		return &Node{FrameData: flamegraph.FrameData{Label: "empty", Value: 0}}
-	}
-	if len(roots) == 1 {
-		return roots[0]
-	}
-
-	root := &Node{FrameData: flamegraph.FrameData{Label: "all"}}
-	for _, child := range roots {
-		child.Parent = root
-		root.Children = append(root.Children, child)
-		root.Value += child.Value
-	}
-	return root
 }
 
-func (m Model) Init() tea.Cmd { //nolint:gocritic // tea.Model interface requires value receiver
+func (m Model) Init() tea.Cmd { //nolint:gocritic // Update returns Model values to Bubble Tea.
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // tea.Model interface requires value receiver
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // Update returns Model values to Bubble Tea.
 	switch typed := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = typed.Width
@@ -146,25 +125,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // t
 }
 
 func (m *Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
-	switch key.String() {
-	case "ctrl+c", "q", "esc":
+	name := key.String()
+	switch name {
+	case "q":
+		m.quitRequested = true
 		return *m, tea.Quit
-	case "up", "k":
-		m.moveCursor(-1)
-	case "down", "j":
-		m.moveCursor(1)
-	case "pgup":
-		m.moveCursor(-m.viewportHeight())
-	case "pgdown":
-		m.moveCursor(m.viewportHeight())
+	case "ctrl+c", "esc":
+		return *m, tea.Quit
 	case "v":
-		m.isListView = !m.isListView
-	case "home":
-		m.cursor = 0
-		m.offset = 0
-	case "end":
-		m.cursor = len(m.visible) - 1
-		m.ensureCursorVisible()
+		m.cycleView()
+		return *m, nil
+	case "tab":
+		m.switchCPUView()
+		return *m, nil
+	case "r":
+		m.view = viewGraph
+		m.focusOn(m.activeRoot())
+		return *m, nil
+	}
+	if m.navigate(name) {
+		return *m, nil
+	}
+	if m.view == viewTopTable {
+		if name == "s" {
+			m.topTable.sortByTotal = !m.topTable.sortByTotal
+			m.topTable.sortRows()
+		}
+		return *m, nil
+	}
+
+	switch name {
 	case "right", "l":
 		m.moveHorizontal(1)
 	case "left", "h":
@@ -182,10 +172,63 @@ func (m *Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
 	return *m, nil
 }
 
-func (m *Model) moveCursor(delta int) {
-	m.cursor += delta
-	m.clampCursor()
-	m.ensureCursorVisible()
+func (m *Model) cycleView() {
+	switch m.view {
+	case viewGraph:
+		m.view = viewFrames
+	case viewFrames:
+		m.view = viewGraph
+		if m.topTable != nil {
+			m.view = viewTopTable
+		}
+	case viewTopTable:
+		m.view = viewGraph
+	}
+}
+
+func (m *Model) switchCPUView() {
+	if m.mergedCPURoot == nil {
+		return
+	}
+
+	m.mergedCPU = !m.mergedCPU
+	m.focusOn(m.activeRoot())
+}
+
+func (m *Model) activeRoot() *Node {
+	if m.mergedCPU {
+		return m.mergedCPURoot
+	}
+	return m.defaultRoot
+}
+
+func (m *Model) navigate(key string) bool {
+	cursor, count, page := &m.cursor, len(m.visible), m.viewportHeight()
+	if m.view == viewTopTable {
+		cursor, count, page = &m.topTable.cursor, len(m.topTable.rows), m.topTableHeight()
+	}
+	switch key {
+	case "up", "k":
+		*cursor--
+	case "down", "j":
+		*cursor++
+	case "pgup":
+		*cursor -= page
+	case "pgdown":
+		*cursor += page
+	case "home":
+		*cursor = 0
+	case "end":
+		*cursor = count - 1
+	default:
+		return false
+	}
+
+	*cursor = max(0, min(*cursor, count-1))
+	if m.view != viewTopTable {
+		m.ensureCursorVisible()
+	}
+	return true
 }
 
 func (m *Model) moveHorizontal(delta int) {
@@ -210,10 +253,7 @@ func (m *Model) zoomIn() {
 	if selected == nil || len(selected.Children) == 0 {
 		return
 	}
-	m.focus = selected
-	m.cursor = 0
-	m.offset = 0
-	m.refreshVisible()
+	m.focusOn(selected)
 }
 
 func (m *Model) zoomOut() {
@@ -223,11 +263,8 @@ func (m *Model) zoomOut() {
 	previous := m.focus
 	m.focus = m.focus.Parent
 	m.refreshVisible()
-	for index, node := range m.visible {
-		if node == previous {
-			m.cursor = index
-			break
-		}
+	if index := slices.Index(m.visible, previous); index >= 0 {
+		m.cursor = index
 	}
 	m.ensureCursorVisible()
 }
@@ -241,9 +278,8 @@ func (m *Model) updateSearch(key tea.KeyMsg) Model {
 		m.searching = false
 		m.applySearch()
 	case "backspace":
-		if m.query != "" {
-			m.query = m.query[:len(m.query)-1]
-		}
+		_, size := utf8.DecodeLastRuneInString(m.query)
+		m.query = m.query[:len(m.query)-size]
 	case "space":
 		m.query += " "
 	default:
@@ -295,21 +331,39 @@ func (m *Model) nextMatch() {
 	}
 }
 
+func (m *Model) focusOn(node *Node) {
+	m.focus = node
+	m.cursor = 0
+	m.offset = 0
+	m.refreshVisible()
+}
+
 func (m *Model) refreshVisible() {
-	m.visible = flatten(m.focus)
+	m.visible = slices.Collect(walkPreorder(m.focus))
 	m.refreshMatches()
 	m.clampCursor()
 }
 
-func flatten(root *Node) []*Node {
-	if root == nil {
-		return nil
+func walkPreorder(root *Node) iter.Seq[*Node] {
+	return func(yield func(*Node) bool) {
+		if root == nil {
+			return
+		}
+
+		pending := []*Node{root}
+		for len(pending) > 0 {
+			last := len(pending) - 1
+			node := pending[last]
+			pending = pending[:last]
+			if !yield(node) {
+				return
+			}
+
+			for _, child := range slices.Backward(node.Children) {
+				pending = append(pending, child)
+			}
+		}
 	}
-	result := []*Node{root}
-	for _, child := range root.Children {
-		result = append(result, flatten(child)...)
-	}
-	return result
 }
 
 func (m *Model) selectedNode() *Node {
@@ -320,32 +374,15 @@ func (m *Model) selectedNode() *Node {
 }
 
 func (m *Model) clampCursor() {
-	if len(m.visible) == 0 {
-		m.cursor = 0
-		m.offset = 0
-		return
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.visible) {
-		m.cursor = len(m.visible) - 1
-	}
+	m.cursor = max(0, min(m.cursor, len(m.visible)-1))
 	m.ensureCursorVisible()
 }
 
 func (m *Model) ensureCursorVisible() {
 	depth := nodeDepthFrom(m.selectedNode(), m.focus)
 	viewport := max(m.viewportHeight(), 1)
-	if depth < m.offset {
-		m.offset = depth
-	}
-	if depth >= m.offset+viewport {
-		m.offset = depth - viewport + 1
-	}
-	if m.offset < 0 {
-		m.offset = 0
-	}
+	minOffset := max(0, depth-viewport+1)
+	m.offset = max(minOffset, min(m.offset, depth))
 }
 
 func nodeDepthFrom(node, root *Node) int {
@@ -364,11 +401,17 @@ func (m *Model) safeWidth() int {
 	return max(m.width, 1)
 }
 
-func (m Model) View() string { //nolint:gocritic // tea.Model interface requires value receiver
+func (m Model) View() string { //nolint:gocritic // Update returns Model values to Bubble Tea.
+	if m.view == viewTopTable {
+		return m.fitView(m.renderTopTable())
+	}
 	var content, view string
-	if m.isListView {
+	if m.view == viewFrames {
 		content = m.renderList()
 		view = "all frames (v: graph)"
+		if m.topTable != nil {
+			view = "all frames (v: Top Table)"
+		}
 	} else {
 		var shown int
 		content, shown = m.renderFlamegraph()
@@ -378,8 +421,15 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 	var out strings.Builder
 	selected := m.selectedNode()
 	fmt.Fprintf(&out, "HUATUO tui flamegraph  frames=%d  focus=%s\n", len(m.visible), terminalText(m.focus.Label))
-	fmt.Fprintf(&out, "keys: v view  up/down select  left/right level  enter zoom  backspace back  / find  n next  q quit\n")
+	out.WriteString("keys: v view  ↑/↓ select  ←/→ level  enter zoom  backspace back  r root  / find  n next  q quit\n")
 	fmt.Fprintf(&out, "view: %s | ", view)
+	if m.mergedCPURoot != nil {
+		grouping := "by CPU"
+		if m.mergedCPU {
+			grouping = "merged CPUs"
+		}
+		fmt.Fprintf(&out, "%s (Tab) | ", grouping)
+	}
 	if m.searching {
 		fmt.Fprintf(&out, "search: %s_\n", terminalText(m.query))
 	} else if m.lastSearch != "" {
@@ -393,7 +443,11 @@ func (m Model) View() string { //nolint:gocritic // tea.Model interface requires
 
 	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
 	out.WriteString(renderDetails(selected, m.focus.Value))
-	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	return m.fitView(out.String())
+}
+
+func (m *Model) fitView(rendered string) string {
+	lines := strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
 	lines = lines[:min(len(lines), max(m.height, 1))]
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], m.safeWidth(), "")
@@ -458,17 +512,16 @@ func (m *Model) renderList() string {
 		}
 		suffix := fmt.Sprintf(" %.2f%%", percent(node.Value, m.focus.Value))
 		labelWidth := max(0, m.safeWidth()-len(marker)-len(suffix))
-		label := ansi.Truncate(terminalText(node.Label), labelWidth, "")
-		padding := strings.Repeat(" ", labelWidth-ansi.StringWidth(label))
-		line := marker + label + padding + suffix
-		out.WriteString(ansi.Truncate(line, m.safeWidth(), ""))
-		out.WriteByte('\n')
+		out.WriteString(marker + padLabel(node.Label, labelWidth) + suffix + "\n")
 	}
-	for index := end - start; index < viewport; index++ {
-		out.WriteByte('\n')
-	}
+	out.WriteString(strings.Repeat("\n", viewport-(end-start)))
 
 	return out.String()
+}
+
+func padLabel(name string, width int) string {
+	label := ansi.Truncate(terminalText(name), width, "")
+	return label + strings.Repeat(" ", width-ansi.StringWidth(label))
 }
 
 func (m *Model) renderBlock(node *Node, width int, selected bool) string {
@@ -540,9 +593,7 @@ func nodePath(node *Node) string {
 	for current := node; current != nil; current = current.Parent {
 		labels = append(labels, current.Label)
 	}
-	for left, right := 0, len(labels)-1; left < right; left, right = left+1, right-1 {
-		labels[left], labels[right] = labels[right], labels[left]
-	}
+	slices.Reverse(labels)
 	return strings.Join(labels, " > ")
 }
 

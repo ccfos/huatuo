@@ -17,14 +17,18 @@ package flamegraph
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
-	output "github.com/ccfos/huatuo/internal/profiling/formatter"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -50,14 +54,6 @@ func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	if !strings.Contains(content, `data-title="`) ||
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
-	}
-}
-
-func TestTUIRejectsFileDestination(t *testing.T) {
-	_, err := NewTUIFormatter(output.Config{Destination: t.TempDir()})
-	const want = "tui output requires --output-path to be omitted or set to stdout or -"
-	if err == nil || err.Error() != want {
-		t.Fatalf("destination validation=%v, want %q", err, want)
 	}
 }
 
@@ -158,4 +154,62 @@ func TestTUIPreservesFrameNamesThroughCompletion(t *testing.T) {
 			t.Fatalf("frame %q lost its name or independent weight: %q", name, view)
 		}
 	}
+}
+
+func TestTUIReportReplayMergesCPUAndSortsTopTable(t *testing.T) {
+	t.Parallel()
+
+	report := tuiReport{
+		Version:     tuiReportVersion,
+		ProfileType: profiling.ProfileTypeCpuSample,
+		Aggregated: types.AggregatedProfile{
+			Frames:    []types.ProfileFrame{{Name: "main"}, {Name: "work"}, {Name: "io"}},
+			Stacks:    [][]uint32{{0, 1}, {0, 2}},
+			LabelSets: [][]types.ProfileLabel{{types.ProfileCPULabel(0)}, {types.ProfileCPULabel(7)}},
+			Samples: []types.AggregatedSample{
+				{UserStack: 1, LabelSet: 1, Value: 2},
+				{UserStack: 1, LabelSet: 2, Value: 3},
+				{UserStack: 2, Value: 1},
+			},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "profile.json")
+	data, err := json.Marshal(&report)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	saved, err := readTUIReport(path)
+	require.NoError(t, err)
+	model, err := prepareViewer(t.Context(), &saved.Aggregated, "nanoseconds")
+	require.NoError(t, err)
+	require.NotNil(t, model)
+	require.Contains(t, model.View(), "focus=all")
+
+	viewer, _ := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	require.Contains(t, viewer.View(), "focus=main")
+	require.Contains(t, viewer.View(), "value: 6")
+
+	viewKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}}
+	viewer, _ = viewer.Update(viewKey)
+	viewer, _ = viewer.Update(viewKey)
+	selectedRow := func(view string) []string {
+		t.Helper()
+		_, selected, ok := strings.Cut(view, "\n> ")
+		require.True(t, ok, "table has no selected row")
+		row, _, _ := strings.Cut(selected, "\n")
+		return strings.Fields(row)
+	}
+	require.Contains(t, viewer.View(), "sort: Self")
+	require.Equal(t, []string{"work", "5", "5"}, selectedRow(viewer.View()))
+
+	viewer, _ = viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	require.Contains(t, viewer.View(), "sort: Total")
+	require.Equal(t, []string{"main", "0", "6"}, selectedRow(viewer.View()))
+}
+
+func TestReadTUIReportRejectsDirectory(t *testing.T) {
+	t.Parallel()
+
+	_, err := readTUIReport(t.TempDir())
+	require.ErrorContains(t, err, "report must be a regular file")
 }

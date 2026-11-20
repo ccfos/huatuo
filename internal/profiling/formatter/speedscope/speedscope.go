@@ -150,25 +150,5 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 		})
 	}
 
-	var frames []types.ProfileFrame
-	a := &w.Aggregated
-	for i := range a.Samples {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		sample := &a.Samples[i]
-		var kernelStart int
-		frames, kernelStart = profilewindow.AppendFrames(frames[:0], a, sample)
-		if err := f.pending[index].aggregator.Add(&aggregation.Sample{
-			UserFrames:   frames[:kernelStart],
-			KernelFrames: frames[kernelStart:],
-			Labels:       profilewindow.Labels(a, sample),
-			Value:        sample.Value,
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return f.pending[index].aggregator.AddProfile(ctx, &w.Aggregated)
 }

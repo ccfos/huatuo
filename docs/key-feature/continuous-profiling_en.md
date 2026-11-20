@@ -66,7 +66,7 @@ A flame graph shows call paths and their cumulative values. Width represents CPU
 
 View results in Grafana or export them locally as SVG, folded stacks, or JSON for offline analysis and further processing.
 
-The CLI supports `--output-format=tui` to open an interactive terminal flamegraph after collection without creating a result file. Press `v` to switch between the graph and a list of all frames, including nodes narrower than one terminal column. Left/right select frames at the same depth, Enter zooms in, Backspace zooms out, `/` searches, and `q` exits. Terminal stdin and stdout are required. `--output-path` may be omitted; when supplied, it accepts only `stdout` or `-`.
+Use `--output-format=tui` to open an interactive terminal flame graph after collection. Press `v` to cycle through the graph, the full frame list, and Top Table. The full frame list includes nodes narrower than one terminal column. Left/right select frames at the same depth, Enter zooms in, Backspace zooms out, `r` returns to the full graph, and `/` searches. With a file or directory set via `--output-path`, pressing `q` saves a JSON report that the `profiler report` subcommand can reopen. Omit `--output-path` or use `stdout` or `-` for terminal viewing only.
 
 ### Collection windows
 

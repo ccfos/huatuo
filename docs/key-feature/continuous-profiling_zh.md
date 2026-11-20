@@ -66,7 +66,7 @@ Python 当前仅支持 CPU 剖析。`physical_usage` 不包含采集前分配的
 
 结果可在 Grafana 中查看，也可输出为本地 SVG、折叠栈或 JSON，供离线分析和后续处理。
 
-命令行支持 `--output-format=tui`：采集结束后在交互终端显示火焰图，不生成结果文件。按 `v` 在火焰图与全部帧列表之间切换，列表可查看小于终端一列宽的节点。左右键选择同一深度的节点，Enter 放大，Backspace 返回，`/` 搜索，`q` 退出。该模式需要终端输入和输出，`--output-path` 可省略；指定时仅接受 `stdout` 或 `-`。
+使用 `--output-format=tui` 可在采集结束后打开交互式终端火焰图。按 `v` 在火焰图、全部帧列表和 Top Table 之间切换。全部帧列表可查看小于终端一列宽的节点。左右键选择同一深度的节点，Enter 放大，Backspace 返回，`r` 回到完整火焰图，`/` 搜索。用 `--output-path` 指定文件或目录后，按 `q` 退出时保存 JSON 报告，可通过 `profiler report` 子命令回看。省略 `--output-path` 或使用 `stdout`、`-` 时只在终端查看。
 
 ### 采集窗口
 

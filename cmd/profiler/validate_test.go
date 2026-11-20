@@ -788,9 +788,9 @@ func TestCLIOutputOptions(t *testing.T) {
 		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile.json"}},
 		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
 		{
-			name:      "tui file path",
-			args:      []string{"--output-format", "tui", "--output-path", "/tmp/result"},
-			wantError: "tui output requires --output-path to be omitted or set to stdout or -",
+			name:      "tui blank path",
+			args:      []string{"--output-format", "tui", "--output-path", " "},
+			wantError: "--output-path must not be empty",
 		},
 		{name: "removed storage flag", args: []string{"--output-storage", "/run/toolstream.sock"}, wantError: "flag provided but not defined"},
 	} {

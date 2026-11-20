@@ -435,7 +435,7 @@ func TestAllFramesViewKeepsSearchNavigationAndZoom(t *testing.T) {
 		t.Fatal("zoom did not preserve the tiny subtree")
 	}
 	m, _ = m.updateKey(tea.KeyMsg{Type: tea.KeyBackspace})
-	if m.focus != root || m.selectedNode().Label != "b" || !m.isListView {
+	if m.focus != root || m.selectedNode().Label != "b" || m.view != viewFrames {
 		t.Fatal("zoom out lost selection or list mode")
 	}
 	cursor := m.cursor
@@ -443,7 +443,7 @@ func TestAllFramesViewKeepsSearchNavigationAndZoom(t *testing.T) {
 		Type:  tea.KeyRunes,
 		Runes: []rune{'v'},
 	})
-	if m.isListView || m.cursor != cursor || m.focus != root {
+	if m.view != viewGraph || m.cursor != cursor || m.focus != root {
 		t.Fatal("returning to the graph changed selection or focus")
 	}
 }
@@ -499,8 +499,8 @@ func TestViewEscapesFrameNames(t *testing.T) {
 	for _, width := range []int{40, 100} {
 		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
 			model.width = width
-			for _, list := range []bool{false, true} {
-				model.isListView = list
+			for _, mode := range []viewMode{viewGraph, viewFrames} {
+				model.view = mode
 				for _, searching := range []bool{false, true} {
 					model.searching = searching
 					view := model.View()
@@ -516,7 +516,7 @@ func TestViewEscapesFrameNames(t *testing.T) {
 							}
 						}
 						marker := ">"
-						if list {
+						if mode == viewFrames {
 							marker = "> "
 						}
 						if !strings.Contains(lines[headerLines+1], marker+`子\x1b]0;bad\a\r\n`) {

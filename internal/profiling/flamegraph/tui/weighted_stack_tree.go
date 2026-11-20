@@ -28,7 +28,7 @@ type childKey struct {
 	name   string
 }
 
-// StackTree accumulates structured stacks without changing their frame names.
+// StackTree accumulates weighted stacks without changing their frame names.
 // Add borrows frame slices only for the duration of the call.
 type StackTree struct {
 	ctx   context.Context
@@ -107,6 +107,45 @@ func (t *StackTree) findOrCreateChild(parent *Node, name string) *Node {
 // BuildModel transfers the tree to a new viewer model. It returns nil when all
 // stacks have zero weight. After a model is returned, the builder is consumed.
 func (t *StackTree) BuildModel() (*Model, error) {
+	root, err := t.buildRoot()
+	if err != nil || root == nil {
+		return nil, err
+	}
+
+	var visible []*Node
+	for node := range walkPreorder(root) {
+		if err := t.ctx.Err(); err != nil {
+			return nil, err
+		}
+		visible = append(visible, node)
+	}
+	if err := t.ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	model := newModelWithVisible(root, visible)
+	return &model, nil
+}
+
+// BuildProfileModel adds the profiler views to the default flamegraph.
+func (t *StackTree) BuildProfileModel(mergedCPU *StackTree, table TopTable, unit string) (*Model, error) {
+	model, err := t.BuildModel()
+	if err != nil || model == nil {
+		return nil, err
+	}
+	if mergedCPU != nil {
+		model.mergedCPURoot, err = mergedCPU.buildRoot()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := model.setTopTable(t.ctx, table, unit); err != nil {
+		return nil, err
+	}
+	return model, nil
+}
+
+func (t *StackTree) buildRoot() (*Node, error) {
 	if err := t.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -139,13 +178,9 @@ func (t *StackTree) BuildModel() (*Model, error) {
 		root = root.Children[0]
 	}
 
-	model := newModel(root)
-	if err := t.ctx.Err(); err != nil {
-		return nil, err
-	}
 	root.Parent = nil
 	t.root = nil
 	t.nodes = nil
 
-	return &model, nil
+	return root, nil
 }

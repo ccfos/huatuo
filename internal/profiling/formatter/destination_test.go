@@ -49,8 +49,12 @@ func TestValidateTUIDestination(t *testing.T) {
 			path: "-",
 		},
 		{
-			name:    "file path",
-			path:    "/tmp/result",
+			name: "file path",
+			path: "/tmp/result",
+		},
+		{
+			name:    "blank path",
+			path:    " ",
 			wantErr: true,
 		},
 	} {

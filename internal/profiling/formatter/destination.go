@@ -29,14 +29,12 @@ func ValidateDestination(path string) error {
 	return nil
 }
 
-// ValidateTUIDestination accepts an omitted path or an explicit stdout alias.
+// ValidateTUIDestination also accepts an omitted path for terminal-only output.
 func ValidateTUIDestination(path string) error {
-	switch path {
-	case "", "stdout", "-":
+	if path == "" {
 		return nil
-	default:
-		return fmt.Errorf("tui output requires --output-path to be omitted or set to stdout or -")
 	}
+	return ValidateDestination(path)
 }
 
 func isStdoutDestination(path string) bool {

@@ -43,9 +43,12 @@ func main() {
 		Usage:         "Sample CPU and memory profiles for a process or container, with eBPF-based userland and Linux kernel stack collection",
 		AllowExtFlags: true,
 		Flags:         appFlags,
-		Before:        runBefore,
+		Commands:      []*cli.Command{reportCommand},
 		After:         closeLogging,
 		Action: func(cliCtx *cli.Context) error {
+			if err := runBefore(cliCtx); err != nil {
+				return err
+			}
 			return runAction(cliCtx, signalLog)
 		},
 	}
