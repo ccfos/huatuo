@@ -10,6 +10,7 @@ fullnameOverride: ""
 config:
   name: huatuo-bamai-config
   fileName: huatuo-bamai.conf
+  # Full container path; also determines the collector's config arguments.
   mountPath: /home/huatuo-bamai/conf/huatuo-bamai.conf
   content: ""
 
