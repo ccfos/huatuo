@@ -21,24 +21,67 @@ require_commands python3 jq curl ss flock
 
 assert_native_pid_prerequisite() (
 	source "${ROOT_DIR}/integration/lib_profiler.sh"
-	local container_status status expected output
+	local container_status namespace status expected output
 	output="${HUATUO_BAMAI_TEST_TMPDIR}/native-pid-prerequisite.log"
 	for container_status in 0 1; do
 		is_container() { return "${container_status}"; }
+		for namespace in host isolated unavailable; do
+			stat() {
+				case ${namespace} in
+				host) printf '4026531836\n' ;;
+				isolated) printf '4026533000\n' ;;
+				unavailable) return 1 ;;
+				esac
+			}
+			status=0
+			(
+				require_native_pid_profiling
+				printf 'collection reached\n'
+			) > "${output}" 2>&1 || status=$?
+			expected=77
+			[[ ${namespace} != host ]] || expected=0
+			assert_eq "${status}" "${expected}" "container=${container_status} namespace=${namespace}: native PID prerequisite"
+			if [[ ${expected} == 0 ]]; then
+				grep -Fq 'collection reached' "${output}" || fatal "host PID namespace was skipped"
+			else
+				if [[ ${namespace} == isolated ]]; then
+					grep -Fq 'requires the host PID namespace' "${output}" || fatal "PID namespace skip reason is missing"
+				else
+					grep -Fq 'cannot inspect PID namespace' "${output}" || fatal "PID namespace inspection failure reason is missing"
+				fi
+				! grep -Fq 'collection reached' "${output}" || fatal "native PID collection ran after skip"
+			fi
+		done
+	done
+)
+
+assert_profiler_bpf_prerequisite() (
+	source "${ROOT_DIR}/integration/lib_profiler.sh"
+	local mode fixture_caps hard_limit expected reason status output
+	output="${HUATUO_BAMAI_TEST_TMPDIR}/profiler-bpf-prerequisite.log"
+	for mode in admin modern missing_bpf missing_perfmon missing_memlock resource; do
+		fixture_caps=$(((1 << 39) | (1 << 38)))
+		hard_limit=unlimited expected=0 reason=''
+		case ${mode} in
+		admin) fixture_caps=$((1 << 21)) ;;
+		missing_bpf) fixture_caps=$((1 << 38)) expected=77 reason=CAP_BPF ;;
+		missing_perfmon) fixture_caps=$((1 << 39)) expected=77 reason=CAP_PERFMON ;;
+		missing_memlock) hard_limit=64 expected=77 reason=CAP_SYS_RESOURCE ;;
+		resource) hard_limit=64 fixture_caps=$((fixture_caps | (1 << 24))) ;;
+		esac
+		awk() { printf '%x\n' "${fixture_caps}"; }
+		ulimit() { printf '%s\n' "${hard_limit}"; }
 		status=0
 		(
-			require_native_pid_profiling
+			require_profiler_bpf_sampling
 			printf 'collection reached\n'
 		) > "${output}" 2>&1 || status=$?
-		expected=0
-		[[ ${container_status} != 0 ]] || expected=77
-		assert_eq "${status}" "${expected}" "native PID prerequisite exit status"
-		if [[ ${container_status} == 0 ]]; then
-			grep -Fq 'native PID profiling is unsupported inside containers' "${output}" \
-				|| fatal "native PID skip reason is missing"
-			! grep -Fq 'collection reached' "${output}" || fatal "native PID collection ran after skip"
+		assert_eq "${status}" "${expected}" "${mode}: profiler BPF prerequisite exit status"
+		if [[ ${expected} == 0 ]]; then
+			grep -Fq 'collection reached' "${output}" || fatal "${mode}: capable profiler was skipped"
 		else
-			grep -Fq 'collection reached' "${output}" || fatal "host native PID collection was skipped"
+			grep -Fq "${reason}" "${output}" || fatal "${mode}: missing capability diagnostic"
+			! grep -Fq 'collection reached' "${output}" || fatal "${mode}: profiler ran after skip"
 		fi
 	done
 )
@@ -473,6 +516,7 @@ grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image
 	|| fatal "CPU image pull failure lacks registry diagnostics"
 
 assert_native_pid_prerequisite
+assert_profiler_bpf_prerequisite
 assert_helper_log_levels
 assert_helper_toml_values
 assert_helper_http_defaults
