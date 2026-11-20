@@ -52,34 +52,66 @@ func Load(path string, dst any) error {
 	return toml.NewDecoder(f).Strict(true).Decode(dst)
 }
 
-// Sync atomically replaces the configuration target with the TOML encoding of
-// src, following existing symlinks. Broken symlinks are rejected. Callers must
-// prevent concurrent mutation of src until Sync returns. Sync does not coordinate
-// concurrent filesystem changes by other processes.
-func Sync(path string, src any) (retErr error) {
-	info, err := os.Lstat(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspecting config path %q: %w", path, err)
-	}
+// maxSymlinkDepth bounds symlink chain resolution. Linux caps a single lookup
+// at 40 links; a wider limit keeps long deployment chains working while still
+// stopping cycles.
+const maxSymlinkDepth = 255
 
-	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		// Rename must replace the target rather than the configured link.
-		resolved, resolveErr := filepath.EvalSymlinks(path)
-		if resolveErr != nil {
-			return fmt.Errorf("resolving config symlink %q: %w", path, resolveErr)
-		}
+// resolveConfigPath follows the symlink chain at path and returns the file a
+// write should replace. Relative targets are resolved against the directory
+// holding the link, matching kernel lookup. A missing final target is returned
+// unchanged so the first write creates the file the link points at, which is
+// how a deployment bootstraps "active.toml -> target.toml" before target.toml
+// exists. Cycles fail with the configured path in the error.
+func resolveConfigPath(path string) (string, error) {
+	configured := path
 
-		info, err = os.Stat(resolved)
+	for range maxSymlinkDepth {
+		info, err := os.Lstat(path)
 		if err != nil {
-			return fmt.Errorf("inspecting config target %q: %w", resolved, err)
+			if errors.Is(err, os.ErrNotExist) {
+				return path, nil
+			}
+			return "", fmt.Errorf("inspecting config path %q: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
 		}
 
-		path = resolved
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", fmt.Errorf("reading config symlink %q: %w", path, err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
 	}
+
+	return "", fmt.Errorf(
+		"resolving config path %q: too many levels of symbolic links (at %q)",
+		configured, path,
+	)
+}
+
+// Sync atomically replaces the configuration target with the TOML encoding of
+// src, following existing symlinks. A dangling link is created through: its
+// target is written as a new file. Callers must prevent concurrent mutation of
+// src until Sync returns. Sync does not coordinate concurrent filesystem
+// changes by other processes.
+func Sync(path string, src any) (retErr error) {
+	// Rename must replace the target rather than the configured link.
+	resolved, err := resolveConfigPath(path)
+	if err != nil {
+		return err
+	}
+	path = resolved
 
 	mode := os.FileMode(0o600)
-	if err == nil {
+	if info, statErr := os.Stat(path); statErr == nil {
 		mode = info.Mode().Perm()
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("inspecting config target %q: %w", path, statErr)
 	}
 
 	dir := filepath.Dir(path)
