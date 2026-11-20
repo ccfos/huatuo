@@ -78,8 +78,11 @@ func findOrAdd(strA string, b []string) (int, []string) {
 
 func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	items, err := b.DumpMapByName("counts")
-	if err != nil || items == nil {
+	if err != nil {
 		return nil, err
+	}
+	if len(items) == 0 {
+		return []flamegraph.FrameData{}, nil
 	}
 
 	var keyValuePairs []struct {
