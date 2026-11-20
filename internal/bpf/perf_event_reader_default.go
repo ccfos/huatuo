@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccfos/huatuo/pkg/types"
@@ -32,9 +33,10 @@ import (
 
 // perfEventReader reads the eBPF perf_event_array.
 type perfEventReader struct {
-	done   <-chan struct{}
-	rd     *perf.Reader
-	cancel context.CancelFunc
+	done             <-chan struct{}
+	rd               *perf.Reader
+	cancel           context.CancelFunc
+	totalLostSamples atomic.Uint64
 }
 
 // _ is a type assertion
@@ -113,6 +115,7 @@ func (r *perfEventReader) ReadBatch(newEvent func() any, opts ...ReadBatchOption
 		}
 
 		if rec.LostSamples != 0 {
+			r.totalLostSamples.Add(rec.LostSamples)
 			batch.LostSamples += rec.LostSamples
 			continue
 		}
@@ -129,6 +132,11 @@ func (r *perfEventReader) ReadBatch(newEvent func() any, opts ...ReadBatchOption
 	}
 }
 
+// TotalLostSamples returns the cumulative count of perf event samples lost.
+func (r *perfEventReader) TotalLostSamples() uint64 {
+	return r.totalLostSamples.Load()
+}
+
 // ReadInto reads the next eBPF perf event into dst.
 func (r *perfEventReader) ReadInto(dst any) error {
 	var record perf.Record
@@ -143,6 +151,7 @@ func (r *perfEventReader) ReadInto(dst any) error {
 		}
 
 		if record.LostSamples != 0 {
+			r.totalLostSamples.Add(record.LostSamples)
 			return &PerfEventSamplesLostError{Count: record.LostSamples}
 		}
 
