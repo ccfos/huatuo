@@ -203,6 +203,8 @@ func TestSetRejectsInvalidAssignments(t *testing.T) {
 		{name: "fractional integer", dst: cfg, key: "Count", val: json.RawMessage("1.5")},
 		{name: "integer overflow", dst: cfg, key: "Count", val: json.RawMessage("18446744073709551616")},
 		{name: "null", dst: cfg, key: "Name", val: json.RawMessage("null")},
+		{name: "trailing scalar garbage", dst: cfg, key: "Count", val: json.RawMessage("8 true")},
+		{name: "trailing object garbage", dst: cfg, key: "Count", val: json.RawMessage(`8 {"Unknown":"value"}`)},
 		{
 			name: "unknown nested field",
 			dst:  cfg,
