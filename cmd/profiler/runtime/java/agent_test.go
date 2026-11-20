@@ -62,9 +62,9 @@ func TestCopyAgentLibPreservesSourceMode(t *testing.T) {
 			)
 
 			targetDir := t.TempDir()
-			target := filepath.Join(targetDir, "libasyncProfiler.so")
+			target := filepath.Join(targetDir, "libasyncProfiler-test-session.so")
 
-			if err := copyAgentLib(toolPath, targetDir); err != nil {
+			if err := copyAgentLib(toolPath, targetDir, "test-session"); err != nil {
 				t.Fatalf("copyAgentLib() error=%v", err)
 			}
 
@@ -104,7 +104,7 @@ func TestCopyAgentLibReplacesSymlink(t *testing.T) {
 	)
 
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
+	targetPath := filepath.Join(targetDir, "libasyncProfiler-test-session.so")
 	if err := os.Symlink(externalPath, targetPath); err != nil {
 		t.Fatalf(
 			"Symlink(%q, %q) error=%v",
@@ -114,7 +114,7 @@ func TestCopyAgentLibReplacesSymlink(t *testing.T) {
 		)
 	}
 
-	if err := copyAgentLib(toolPath, targetDir); err != nil {
+	if err := copyAgentLib(toolPath, targetDir, "test-session"); err != nil {
 		t.Fatalf("copyAgentLib() error=%v", err)
 	}
 
@@ -158,12 +158,12 @@ func TestCopyAgentLibRemovesTempFileAfterInstallFailure(t *testing.T) {
 	)
 
 	targetDir := t.TempDir()
-	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
+	targetPath := filepath.Join(targetDir, "libasyncProfiler-test-session.so")
 	if err := os.Mkdir(targetPath, 0o755); err != nil {
 		t.Fatalf("Mkdir(%q) error=%v", targetPath, err)
 	}
 
-	if err := copyAgentLib(toolPath, targetDir); err == nil {
+	if err := copyAgentLib(toolPath, targetDir, "test-session"); err == nil {
 		t.Fatal("copyAgentLib() error=nil, want non-nil")
 	}
 
@@ -241,16 +241,16 @@ func TestInstallJavaAgentsRollsBackPartialDeployment(t *testing.T) {
 	writeAgentSource(t, toolPath, []byte("agent"), 0o600)
 	first, second := t.TempDir(), t.TempDir()
 	// A directory at the destination forces the second atomic rename to fail.
-	blocked := filepath.Join(second, "libasyncProfiler.so")
+	blocked := filepath.Join(second, "libasyncProfiler-test-session.so")
 	if err := os.Mkdir(blocked, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	installed, err := installJavaAgents(toolPath, []string{first, second})
+	installed, err := installJavaAgents(toolPath, []string{first, second}, "test-session")
 	if err == nil || installed != nil {
 		t.Fatalf("installJavaAgents() = %v, %v; want no retained handles and an error", installed, err)
 	}
-	if _, err := os.Stat(filepath.Join(first, "libasyncProfiler.so")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(first, "libasyncProfiler-test-session.so")); !os.IsNotExist(err) {
 		t.Fatalf("first agent remains after rollback: %v", err)
 	}
 	if info, err := os.Stat(blocked); err != nil || !info.IsDir() {
@@ -275,7 +275,7 @@ func TestInstallJavaAgentsDeduplicatesDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	installed, err := installJavaAgents(toolPath, []string{directory, alias})
+	installed, err := installJavaAgents(toolPath, []string{directory, alias}, "test-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,10 +292,10 @@ func TestInstallJavaAgentsDeduplicatesDirectories(t *testing.T) {
 	if err := os.Rename(directory, moved); err != nil {
 		t.Fatal(err)
 	}
-	if err := cleanupJavaAgents(installed); err != nil {
+	if err := cleanupJavaAgents(installed, "test-session"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(moved, "libasyncProfiler.so")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(moved, "libasyncProfiler-test-session.so")); !os.IsNotExist(err) {
 		t.Fatalf("agent remains after its original directory path disappeared: %v", err)
 	}
 	if _, err := installed[0].Stat(); err == nil {
@@ -309,7 +309,7 @@ func TestCleanupJavaAgentsContinuesAfterFailure(t *testing.T) {
 	toolPath := t.TempDir()
 	writeAgentSource(t, toolPath, []byte("agent"), 0o600)
 	first, second := t.TempDir(), t.TempDir()
-	installed, err := installJavaAgents(toolPath, []string{first, second})
+	installed, err := installJavaAgents(toolPath, []string{first, second}, "test-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestCleanupJavaAgentsContinuesAfterFailure(t *testing.T) {
 			_ = directory.Close()
 		}
 	})
-	blocked := filepath.Join(first, "libasyncProfiler.so")
+	blocked := filepath.Join(first, "libasyncProfiler-test-session.so")
 	if err := os.Remove(blocked); err != nil {
 		t.Fatal(err)
 	}
@@ -327,15 +327,54 @@ func TestCleanupJavaAgentsContinuesAfterFailure(t *testing.T) {
 	}
 	writeFileWithMode(t, filepath.Join(blocked, "keep"), []byte("keep"), 0o600)
 
-	if err := cleanupJavaAgents(installed); err == nil {
+	if err := cleanupJavaAgents(installed, "test-session"); err == nil {
 		t.Fatal("cleanup ignored a removal failure")
 	}
-	if _, err := os.Stat(filepath.Join(second, "libasyncProfiler.so")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(second, "libasyncProfiler-test-session.so")); !os.IsNotExist(err) {
 		t.Fatalf("second agent remains after cleanup: %v", err)
 	}
 	for _, directory := range installed {
 		if _, err := directory.Stat(); err == nil {
 			t.Fatal("cleanup left a directory handle open")
 		}
+	}
+}
+
+func TestAgentLibrarySessionsDoNotShareFiles(t *testing.T) {
+	t.Parallel()
+
+	targetDir := t.TempDir()
+	firstTool, secondTool := t.TempDir(), t.TempDir()
+	writeAgentSource(t, firstTool, []byte("first-agent"), 0o600)
+	writeAgentSource(t, secondTool, []byte("second-agent"), 0o600)
+	first, err := installJavaAgents(firstTool, []string{targetDir}, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := installJavaAgents(secondTool, []string{targetDir}, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, directories := range [][]*os.File{first, second} {
+			for _, directory := range directories {
+				_ = directory.Close()
+			}
+		}
+	})
+
+	firstPath := filepath.Join(targetDir, filepath.Base(agentTargetPath("first")))
+	if got, err := os.ReadFile(firstPath); err != nil || string(got) != "first-agent" {
+		t.Fatalf("first agent=%q, error=%v", got, err)
+	}
+	if err := cleanupJavaAgents(first, "first"); err != nil {
+		t.Fatal(err)
+	}
+	secondPath := filepath.Join(targetDir, filepath.Base(agentTargetPath("second")))
+	if got, err := os.ReadFile(secondPath); err != nil || string(got) != "second-agent" {
+		t.Fatalf("second agent after first cleanup=%q, error=%v", got, err)
+	}
+	if err := cleanupJavaAgents(second, "second"); err != nil {
+		t.Fatal(err)
 	}
 }
