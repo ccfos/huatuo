@@ -104,6 +104,24 @@ func appFlags() []cli.Flag {
 	}
 }
 
+// maxStackLimit bounds --max-stack: its value sizes the ring of retained IO
+// stack traces (trace.go allocates make([]types.IOScheduleEvent, maxStack), 80
+// bytes each), so a value from the command line can reach make() with a length
+// it cannot allocate and the tool dies with "makeslice: len out of range" after
+// the BPF programs are already attached.
+const maxStackLimit = 1 << 20
+
+func validateMaxStack(maxStack uint64) error {
+	if maxStack > maxStackLimit {
+		return fmt.Errorf(
+			"--max-stack %d too large; want 0..%d",
+			maxStack,
+			maxStackLimit,
+		)
+	}
+	return nil
+}
+
 // validateFlags rejects invalid --output values and the --output / --output-storage
 // conflict before the BPF stack is touched.
 func validateFlags(c *cli.Context) error {
@@ -113,6 +131,10 @@ func validateFlags(c *cli.Context) error {
 
 	if c.IsSet(cliFlagOutput) && c.String(cliFlagOutputStorage) != "" {
 		return errors.New("--output and --output-storage are mutually exclusive")
+	}
+
+	if err := validateMaxStack(c.Uint64(cliFlagMaxStack)); err != nil {
+		return err
 	}
 
 	return nil
