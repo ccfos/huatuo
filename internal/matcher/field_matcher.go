@@ -51,7 +51,7 @@ func NewFieldMatcher[T any](specs []FieldSpec[T]) (*FieldMatcher[T], error) {
 		if s.Pattern == "" {
 			continue
 		}
-		re, err := regexp.Compile(s.Pattern)
+		re, err := compile(s.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("invalid pattern %q for field %q: %w", s.Pattern, s.Name, err)
 		}
