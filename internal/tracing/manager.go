@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -48,9 +49,10 @@ func NewManager(blacklist []string) (*Manager, error) {
 				name,
 			)
 		}
-		if registration.Interval <= 0 {
+		if registration.Interval <= 0 ||
+			int64(registration.Interval) > math.MaxInt64/int64(time.Second) {
 			return nil, fmt.Errorf(
-				"%w: %q restart interval must be positive",
+				"%w: %q restart interval must fit in a positive duration",
 				ErrInvalidTracer,
 				name,
 			)
