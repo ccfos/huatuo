@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/huatuo-logo-v4.png" alt="Cube Sandbox Logo" width="140" />
+  <img src="docs/img/huatuo-logo-v4.png" alt="HUATUO Logo" width="140" />
 </p>
 
 <h1 align="center">HUATUO 华佗</h1>
