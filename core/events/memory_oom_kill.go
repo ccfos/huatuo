@@ -85,16 +85,25 @@ func newOOMCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *oomCollector) Update() ([]*metric.Data, error) {
+	var metrics []*metric.Data
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// Read the snapshot under the same lock that guards the counters. A
+	// snapshot taken outside would race containerCounterUpdate and could drop
+	// the first counter recorded for a container that just appeared.
 	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("get normal container: %w", err)
 	}
 
-	var metrics []*metric.Data
-
-	mutex.Lock()
-
 	metrics = append(metrics, metric.NewCounterData("host_total", outOfMemoryCounterHost, "host oom counter", nil))
+	for id := range outOfMemoryCounterContainer {
+		if _, ok := containers[id]; !ok {
+			delete(outOfMemoryCounterContainer, id)
+		}
+	}
 	for _, container := range containers {
 		if val, exists := outOfMemoryCounterContainer[container.ID]; exists {
 			metrics = append(
@@ -104,7 +113,6 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 		}
 	}
 
-	mutex.Unlock()
 	return metrics, nil
 }
 
