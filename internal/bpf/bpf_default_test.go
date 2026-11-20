@@ -69,6 +69,7 @@ var rejectedNames = []string{
 	"",
 	"..",
 	"../x.o",
+	"./../x.o",
 	"../../etc/passwd",
 	"x/../../y.o", // cleans to "../y.o"
 }
