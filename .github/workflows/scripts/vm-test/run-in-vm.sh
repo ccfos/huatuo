@@ -149,9 +149,9 @@ quiesce_apt_updates() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package toml_repo='' toml_repo_package=''
-	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat "linux-headers-$(uname -r)")
+	local -a deb_packages=(curl gdb e2fsprogs fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers stress-ng sysstat
+		curl gdb e2fsprogs fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers stress-ng sysstat
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
