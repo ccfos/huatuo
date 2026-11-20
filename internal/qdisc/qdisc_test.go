@@ -68,6 +68,38 @@ func TestDecodeNetlinkMessageStats2(t *testing.T) {
 	}
 }
 
+func TestDecodeNetlinkMessageUsesHardwareBasicStats(t *testing.T) {
+	stats2 := marshalAttributes(t, []netlink.Attribute{
+		{Type: tcaStatsBasicHardware, Data: basicStats(777, 888)},
+		{Type: tcaStatsPacket64, Data: uint64Stats(999)},
+		{Type: tcaStatsQueue, Data: queueStats(1, 2, 3, 4, 5)},
+	})
+	message := qdiscMessage(t, 1, math.MaxUint32, []netlink.Attribute{
+		{Type: unix.TCA_KIND, Data: []byte("mq\x00")},
+		{Type: unix.TCA_STATS2, Data: stats2},
+	})
+
+	got, err := decodeMessage(message, map[int]string{1: "eth0"})
+	if err != nil {
+		t.Fatalf("decode qdisc message: %v", err)
+	}
+	want := Stats{
+		Netdev:       "eth0",
+		Parent:       math.MaxUint32,
+		Kind:         "mq",
+		Bytes:        777,
+		Packets:      999,
+		Drops:        3,
+		Requeues:     4,
+		Overlimits:   5,
+		QueueLength:  1,
+		BacklogBytes: 2,
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("qdisc statistics mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestDecodeNetlinkMessageFallsBackToBasicPackets(t *testing.T) {
 	stats2 := marshalAttributes(t, []netlink.Attribute{
 		{Type: tcaStatsBasic, Data: basicStats(100, 200)},

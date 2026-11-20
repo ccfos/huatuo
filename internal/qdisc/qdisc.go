@@ -186,6 +186,7 @@ func decodeStats2(attributes []byte) (counters, error) {
 	var basicPackets uint32
 	var packets64 uint64
 	var hasPackets64 bool
+	var hasSoftwareBasic bool
 	var previousType uint16
 	for len(attributes) > 0 {
 		attributeType, payload, remaining, err := nextAttribute(attributes)
@@ -199,6 +200,19 @@ func decodeStats2(attributes []byte) (counters, error) {
 			if len(payload) < 12 {
 				return counters{}, fmt.Errorf(
 					"qdisc basic statistics length is %d bytes, want at least 12",
+					len(payload),
+				)
+			}
+			decoded.bytes = nlenc.Uint64(payload[0:8])
+			basicPackets = nlenc.Uint32(payload[8:12])
+			hasSoftwareBasic = true
+		case tcaStatsBasicHardware:
+			if hasSoftwareBasic {
+				break
+			}
+			if len(payload) < 12 {
+				return counters{}, fmt.Errorf(
+					"qdisc hardware basic statistics length is %d bytes, want at least 12",
 					len(payload),
 				)
 			}
@@ -224,6 +238,9 @@ func decodeStats2(attributes []byte) (counters, error) {
 				)
 			}
 			if previousType == tcaStatsBasic {
+				packets64 = nlenc.Uint64(payload[0:8])
+				hasPackets64 = true
+			} else if previousType == tcaStatsBasicHardware && !hasSoftwareBasic {
 				packets64 = nlenc.Uint64(payload[0:8])
 				hasPackets64 = true
 			}
