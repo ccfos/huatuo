@@ -87,6 +87,7 @@ func (r *runtime) reconcileJobWithError(
 		}, now)
 	case client.NodeErrorCodeTransport,
 		apiv1.ErrorCodeInternal,
+		apiv1.ErrorCodeRateLimited,
 		apiv1.ErrorCodeServiceUnavailable:
 		nodeUnavailable = true
 	case nodeapi.ErrorCodeOperationLimitExceeded:

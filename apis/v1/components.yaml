@@ -16,6 +16,9 @@ x-error-codes:
   permission_denied:
     httpStatus: 403
     description: The authenticated principal cannot perform the request.
+  rate_limited:
+    httpStatus: 429
+    description: The request rate exceeds the allowed limit.
   request_too_large:
     httpStatus: 413
     description: The request body exceeds the configured limit.
