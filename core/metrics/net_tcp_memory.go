@@ -52,6 +52,13 @@ type tcpMemoryStat struct {
 	memoryLimit float64
 }
 
+func tcpMemoryLimit(values []int) (float64, error) {
+	if len(values) < 3 {
+		return 0, fmt.Errorf("tcp memory sysctl returned %d values, want at least 3", len(values))
+	}
+	return float64(values[2]), nil
+}
+
 func parseTcpMemory() (*tcpMemoryStat, error) {
 	fs, err := procfs.NewDefaultFS()
 	if err != nil {
@@ -59,6 +66,10 @@ func parseTcpMemory() (*tcpMemoryStat, error) {
 	}
 
 	values, err := fs.SysctlInts("net.ipv4.tcp_mem")
+	if err != nil {
+		return nil, err
+	}
+	memoryLimit, err := tcpMemoryLimit(values)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +88,7 @@ func parseTcpMemory() (*tcpMemoryStat, error) {
 			return &tcpMemoryStat{
 				memoryPages: float64(*p.Mem),
 				memoryBytes: float64(*p.Mem) * float64(defaultHostPageSize),
-				memoryLimit: float64(values[2]), // tcpMemLimit
+				memoryLimit: memoryLimit, // tcpMemLimit
 			}, nil
 		}
 
