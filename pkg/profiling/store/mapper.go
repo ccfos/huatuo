@@ -55,11 +55,10 @@ func (mapper) Fields(document *Document) (map[string]any, error) {
 	if err := document.validate(); err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	fields := map[string]any{
 		types.DocumentFieldHostname:               document.Hostname,
 		types.DocumentFieldRegion:                 document.Region,
 		types.DocumentFieldUploadedTimestamp:      document.UploadedTimestamp,
-		types.DocumentFieldStartedTimestamp:       *document.StartedTimestamp,
 		types.DocumentFieldContainerID:            document.ContainerID,
 		types.DocumentFieldContainerHostname:      document.ContainerHostname,
 		types.DocumentFieldContainerHostNamespace: document.ContainerHostNamespace,
@@ -69,7 +68,13 @@ func (mapper) Fields(document *Document) (map[string]any, error) {
 		types.DocumentFieldTracerID:               document.TracerID,
 		types.DocumentFieldTracerType:             document.TracerRunType,
 		fieldProfileType:                          document.ProfileData.ProfileType,
-	}, nil
+	}
+	// validate() only requires StartedTimestamp for profiling run types; event
+	// documents carry ObservedTimestamp instead, so the started field is absent.
+	if document.StartedTimestamp != nil {
+		fields[types.DocumentFieldStartedTimestamp] = *document.StartedTimestamp
+	}
+	return fields, nil
 }
 
 func (mapper) Indexes() []driver.Index {
