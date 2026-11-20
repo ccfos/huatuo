@@ -29,7 +29,7 @@ import (
 	"github.com/prometheus/procfs"
 )
 
-func capture(ctx context.Context, opts *captureOptions) error {
+func capture(ctx context.Context, opts *captureOptions) (returnErr error) {
 	base, endpoints, err := parseCaptureURLs(opts)
 	if err != nil {
 		return err
@@ -38,6 +38,14 @@ func capture(ctx context.Context, opts *captureOptions) error {
 	if err := os.Mkdir(opts.directory, 0o700); err != nil {
 		return err
 	}
+
+	defer func() {
+		if returnErr == nil {
+			return
+		}
+
+		returnErr = errors.Join(returnErr, os.RemoveAll(opts.directory))
+	}()
 
 	transport := &http.Transport{
 		Proxy:               http.ProxyFromEnvironment,
