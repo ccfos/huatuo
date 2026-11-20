@@ -18,7 +18,25 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
+	"github.com/ccfos/huatuo/internal/pod"
 )
+
+type cpuStatCgroupStub struct {
+	cgroups.Cgroup
+	raw   map[string]uint64
+	usage stats.CpuUsage
+}
+
+func (c *cpuStatCgroupStub) CpuStatRaw(string) (map[string]uint64, error) {
+	return c.raw, nil
+}
+
+func (c *cpuStatCgroupStub) CpuUsage(string) (*stats.CpuUsage, error) {
+	return &c.usage, nil
+}
 
 func TestDurationNanoseconds(t *testing.T) {
 	tests := []struct {
@@ -183,5 +201,49 @@ func TestNewCPUStatSample(t *testing.T) {
 				t.Fatalf("newCPUStatSample() availability = %+v, want %+v", availability, tt.wantAvailability)
 			}
 		})
+	}
+}
+
+func TestCPUStatUpdateDataCacheRetainsAvailabilityOnSubSecondScrape(t *testing.T) {
+	raw := map[string]uint64{
+		"nr_throttled":   3,
+		"throttled_usec": 4,
+		"wait_sum":       100,
+		"nr_bursts":      1,
+		"burst_usec":     2,
+	}
+	container := &pod.Container{CgroupPath: "/sys/fs/cgroup/test"}
+	collector := &cpuStatCollector{
+		cgroup: &cpuStatCgroupStub{
+			raw:   raw,
+			usage: stats.CpuUsage{Usage: 1000},
+		},
+	}
+	// Fresh life-resource cache has a zero lastUpdate; only then is
+	// wait_sum_percent suppressed until a delta window exists.
+	cache := &cpuStat{}
+
+	first, err := collector.updateDataCache(cache, container)
+	if err != nil {
+		t.Fatalf("first updateDataCache() error = %v", err)
+	}
+	if !first.nrThrottled || !first.throttledTime || !first.nrBursts || !first.burstTime {
+		t.Fatalf("first availability = %+v, want throttle/burst series", first)
+	}
+	if first.waitPercent {
+		t.Fatal("first sample should not expose wait_sum_percent until a delta window exists")
+	}
+
+	// Simulate a second scrape inside the 1s refresh window.
+	cache.lastUpdate = time.Now()
+	second, err := collector.updateDataCache(cache, container)
+	if err != nil {
+		t.Fatalf("sub-second updateDataCache() error = %v", err)
+	}
+	if second != first {
+		t.Fatalf("sub-second availability = %+v, want retained %+v", second, first)
+	}
+	if second != cache.availability {
+		t.Fatalf("cache availability = %+v, want %+v", cache.availability, second)
 	}
 }
