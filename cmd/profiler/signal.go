@@ -36,6 +36,9 @@ func newSignalContext(parent context.Context, logBuf *bytes.Buffer) (context.Con
 		select {
 		case <-ctx.Done():
 		case sig := <-signals:
+			// Let later signals reach their default action or the terminal viewer.
+			signal.Stop(signals)
+
 			// Ctrl+C preserves final samples. SIGTERM is also used by API stop,
 			// so it must abort without publishing a completion marker.
 			if sig == syscall.SIGINT {

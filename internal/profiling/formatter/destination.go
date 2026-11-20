@@ -29,6 +29,14 @@ func ValidateDestination(path string) error {
 	return nil
 }
 
+// ValidateTUIDestination also accepts an omitted path for terminal-only output.
+func ValidateTUIDestination(path string) error {
+	if path == "" {
+		return nil
+	}
+	return ValidateDestination(path)
+}
+
 func isStdoutDestination(path string) bool {
 	switch filepath.Clean(path) {
 	case "-", "stdout", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1":

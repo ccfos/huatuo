@@ -12,15 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tui renders flamegraph FrameData in an interactive terminal viewer.
+// Package tui renders profiling stacks in an interactive terminal viewer.
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"iter"
 	"math/bits"
+	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 )
@@ -28,9 +36,16 @@ import (
 const (
 	defaultWidth  = 100
 	defaultHeight = 30
-	barMinWidth   = 1
 	headerLines   = 4
 	footerLines   = 5
+)
+
+type viewMode uint8
+
+const (
+	viewGraph viewMode = iota
+	viewFrames
+	viewTopTable
 )
 
 // Node is one reconstructed flamegraph frame.
@@ -40,96 +55,60 @@ type Node struct {
 	Children []*Node
 }
 
-// Run opens the interactive terminal viewer.
-func Run(data []flamegraph.FrameData) error {
-	program := tea.NewProgram(NewModel(data), tea.WithAltScreen())
-	_, err := program.Run()
-	return err
+// Run opens the terminal viewer and reports whether the user quit with q.
+func Run(ctx context.Context, model *Model) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	result, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) && errors.Is(err, tea.ErrProgramKilled) {
+		return false, ctx.Err()
+	}
+	final, ok := result.(Model)
+	return ok && final.quitRequested, err
 }
 
 // Model is the Bubble Tea state for the flamegraph viewer.
 type Model struct {
-	focus      *Node
-	visible    []*Node
-	cursor     int
-	offset     int
-	width      int
-	height     int
-	searching  bool
-	query      string
-	lastSearch string
-	matches    map[*Node]bool
+	view          viewMode
+	focus         *Node
+	defaultRoot   *Node
+	mergedCPURoot *Node
+	visible       []*Node
+	cursor        int
+	offset        int
+	width         int
+	height        int
+	searching     bool
+	query         string
+	lastSearch    string
+	matches       map[*Node]bool
+	mergedCPU     bool
+	topTable      *topTableModel
+	quitRequested bool
 }
 
-// NewModel creates a TUI model from nested-set flamegraph data.
-func NewModel(data []flamegraph.FrameData) Model {
-	root := BuildTree(data)
-	model := Model{
-		focus:   root,
-		width:   defaultWidth,
-		height:  defaultHeight,
-		matches: map[*Node]bool{},
-	}
-	model.refreshVisible()
-	return model
+func newModel(root *Node) Model {
+	return newModelWithVisible(root, slices.Collect(walkPreorder(root)))
 }
 
-// BuildTree reconstructs parent/child relationships from ordered FrameData.
-func BuildTree(data []flamegraph.FrameData) *Node {
-	if len(data) == 0 {
-		return &Node{FrameData: flamegraph.FrameData{Label: "empty", Value: 0}}
+func newModelWithVisible(root *Node, visible []*Node) Model {
+	return Model{
+		focus:       root,
+		defaultRoot: root,
+		visible:     visible,
+		width:       defaultWidth,
+		height:      defaultHeight,
+		matches:     map[*Node]bool{},
 	}
-
-	var roots []*Node
-	stack := make([]*Node, 0, 16)
-	for _, frame := range data {
-		node := &Node{FrameData: frame}
-		level := int(frame.Level)
-		if level < 0 {
-			level = 0
-		}
-
-		if level == 0 || len(stack) == 0 {
-			roots = append(roots, node)
-			stack = []*Node{node}
-			continue
-		}
-
-		if level > len(stack) {
-			level = len(stack)
-		}
-		parent := stack[level-1]
-		node.Parent = parent
-		parent.Children = append(parent.Children, node)
-
-		if level < len(stack) {
-			stack = stack[:level]
-		}
-		stack = append(stack, node)
-	}
-
-	if len(roots) == 0 {
-		return &Node{FrameData: flamegraph.FrameData{Label: "empty", Value: 0}}
-	}
-	if len(roots) == 1 {
-		return roots[0]
-	}
-
-	root := &Node{FrameData: flamegraph.FrameData{Label: "all"}}
-	for _, child := range roots {
-		child.Parent = root
-		root.Children = append(root.Children, child)
-		root.Value += child.Value
-		root.Self += child.Self
-	}
-	return root
 }
 
-func (m Model) Init() tea.Cmd { //nolint:gocritic // tea.Model interface requires value receiver
+func (m Model) Init() tea.Cmd { //nolint:gocritic // Update returns Model values to Bubble Tea.
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // tea.Model interface requires value receiver
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // Update returns Model values to Bubble Tea.
 	switch typed := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = typed.Width
@@ -146,26 +125,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // t
 }
 
 func (m *Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
-	switch key.String() {
-	case "ctrl+c", "q", "esc":
+	name := key.String()
+	switch name {
+	case "q":
+		m.quitRequested = true
 		return *m, tea.Quit
-	case "up", "k":
-		m.moveCursor(-1)
-	case "down", "j":
-		m.moveCursor(1)
-	case "pgup":
-		m.moveCursor(-m.viewportHeight())
-	case "pgdown":
-		m.moveCursor(m.viewportHeight())
-	case "home":
-		m.cursor = 0
-		m.offset = 0
-	case "end":
-		m.cursor = len(m.visible) - 1
-		m.ensureCursorVisible()
-	case "enter", "right", "l":
+	case "ctrl+c", "esc":
+		return *m, tea.Quit
+	case "v":
+		m.cycleView()
+		return *m, nil
+	case "tab":
+		m.switchCPUView()
+		return *m, nil
+	case "r":
+		m.view = viewGraph
+		m.focusOn(m.activeRoot())
+		return *m, nil
+	}
+	if m.navigate(name) {
+		return *m, nil
+	}
+	if m.view == viewTopTable {
+		if name == "s" {
+			m.topTable.sortByTotal = !m.topTable.sortByTotal
+			m.topTable.sortRows()
+		}
+		return *m, nil
+	}
+
+	switch name {
+	case "right", "l":
+		m.moveHorizontal(1)
+	case "left", "h":
+		m.moveHorizontal(-1)
+	case "enter":
 		m.zoomIn()
-	case "backspace", "left", "h":
+	case "backspace":
 		m.zoomOut()
 	case "/":
 		m.searching = true
@@ -174,6 +170,103 @@ func (m *Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
 		m.nextMatch()
 	}
 	return *m, nil
+}
+
+func (m *Model) cycleView() {
+	switch m.view {
+	case viewGraph:
+		m.view = viewFrames
+	case viewFrames:
+		m.view = viewGraph
+		if m.topTable != nil {
+			m.view = viewTopTable
+		}
+	case viewTopTable:
+		m.view = viewGraph
+	}
+}
+
+func (m *Model) switchCPUView() {
+	if m.mergedCPURoot == nil {
+		return
+	}
+
+	m.mergedCPU = !m.mergedCPU
+	m.focusOn(m.activeRoot())
+}
+
+func (m *Model) activeRoot() *Node {
+	if m.mergedCPU {
+		return m.mergedCPURoot
+	}
+	return m.defaultRoot
+}
+
+func (m *Model) navigate(key string) bool {
+	cursor, count, page := &m.cursor, len(m.visible), m.viewportHeight()
+	if m.view == viewTopTable {
+		cursor, count, page = &m.topTable.cursor, len(m.topTable.rows), m.topTableHeight()
+	}
+	switch key {
+	case "up", "k":
+		*cursor--
+	case "down", "j":
+		*cursor++
+	case "pgup":
+		*cursor -= page
+	case "pgdown":
+		*cursor += page
+	case "home":
+		*cursor = 0
+	case "end":
+		*cursor = count - 1
+	default:
+		return false
+	}
+
+	*cursor = max(0, min(*cursor, count-1))
+	if m.view != viewTopTable {
+		m.ensureCursorVisible()
+	}
+	return true
+}
+
+func (m *Model) moveHorizontal(delta int) {
+	selected := m.selectedNode()
+	if selected == nil || selected == m.focus {
+		return
+	}
+
+	depth := nodeDepthFrom(selected, m.focus)
+	// The visible list is depth-first; skip nodes at other depths.
+	for index := m.cursor + delta; index >= 0 && index < len(m.visible); index += delta {
+		if nodeDepthFrom(m.visible[index], m.focus) == depth {
+			m.cursor = index
+			m.ensureCursorVisible()
+			return
+		}
+	}
+}
+
+func (m *Model) zoomIn() {
+	selected := m.selectedNode()
+	if selected == nil || len(selected.Children) == 0 {
+		return
+	}
+	m.focusOn(selected)
+}
+
+func (m *Model) zoomOut() {
+	if m.focus == nil || m.focus.Parent == nil {
+		return
+	}
+	previous := m.focus
+	m.focus = m.focus.Parent
+	m.refreshVisible()
+	if index := slices.Index(m.visible, previous); index >= 0 {
+		m.cursor = index
+	}
+	m.ensureCursorVisible()
 }
 
 func (m *Model) updateSearch(key tea.KeyMsg) Model {
@@ -185,9 +278,8 @@ func (m *Model) updateSearch(key tea.KeyMsg) Model {
 		m.searching = false
 		m.applySearch()
 	case "backspace":
-		if m.query != "" {
-			m.query = m.query[:len(m.query)-1]
-		}
+		_, size := utf8.DecodeLastRuneInString(m.query)
+		m.query = m.query[:len(m.query)-size]
 	case "space":
 		m.query += " "
 	default:
@@ -198,177 +290,19 @@ func (m *Model) updateSearch(key tea.KeyMsg) Model {
 	return *m
 }
 
-func (m Model) View() string { //nolint:gocritic // tea.Model interface requires value receiver
-	var out strings.Builder
-	selected := m.selectedNode()
-	rootValue := m.focus.Value
-	if rootValue <= 0 {
-		rootValue = selected.Value
-	}
-
-	fmt.Fprintf(&out, "HUATUO perf flamegraph  frames=%d  focus=%s\n", len(m.visible), m.focus.Label)
-	fmt.Fprintf(&out, "keys: up/down scroll  enter zoom  backspace back  / search  n next  q quit\n")
-	if m.searching {
-		fmt.Fprintf(&out, "search: %s_\n", m.query)
-	} else if m.lastSearch != "" {
-		fmt.Fprintf(&out, "search: %s  matches=%d\n", m.lastSearch, len(m.matches))
-	} else {
-		out.WriteString("search: none\n")
-	}
-	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
-
-	viewport := m.viewportHeight()
-	end := m.offset + viewport
-	if end > len(m.visible) {
-		end = len(m.visible)
-	}
-	for index := m.offset; index < end; index++ {
-		node := m.visible[index]
-		cursor := " "
-		if index == m.cursor {
-			cursor = ">"
-		}
-		match := " "
-		if m.matches[node] {
-			match = "*"
-		}
-		out.WriteString(m.renderRow(cursor, match, node, rootValue))
-		out.WriteByte('\n')
-	}
-	for index := end - m.offset; index < viewport; index++ {
-		out.WriteByte('\n')
-	}
-
-	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
-	out.WriteString(renderDetails(selected, m.focus.Value))
-	return out.String()
-}
-
-func (m *Model) renderRow(cursor, match string, node *Node, rootValue int64) string {
-	depth := nodeDepthFrom(node, m.focus)
-	indent := strings.Repeat("  ", depth)
-	barWidth := m.barWidth(node.Value, rootValue)
-	percent := percent(node.Value, rootValue)
-	labelWidth := m.safeWidth() - len(cursor) - len(match) - len(indent) - barWidth - 16
-	if labelWidth < 12 {
-		labelWidth = 12
-	}
-	label := truncate(node.Label, labelWidth)
-	bar := strings.Repeat("#", barWidth)
-	return fmt.Sprintf("%s%s%s%s %-*s %6.2f%%", cursor, match, indent, bar, labelWidth, label, percent)
-}
-
-func renderDetails(node *Node, focusValue int64) string {
-	if node == nil {
-		return "selected: none\n"
-	}
-	return fmt.Sprintf("selected: %s\nvalue: %d  self: %d  focus: %.2f%%  children: %d\npath: %s\n",
-		node.Label, node.Value, node.Self, percent(node.Value, focusValue), len(node.Children), nodePath(node))
-}
-
-func (m *Model) refreshVisible() {
-	m.visible = flatten(m.focus)
-	m.clampCursor()
-}
-
-func flatten(root *Node) []*Node {
-	if root == nil {
-		return nil
-	}
-	result := []*Node{root}
-	for _, child := range root.Children {
-		result = append(result, flatten(child)...)
-	}
-	return result
-}
-
-func (m *Model) moveCursor(delta int) {
-	m.cursor += delta
-	m.clampCursor()
-	m.ensureCursorVisible()
-}
-
-func (m *Model) clampCursor() {
-	if len(m.visible) == 0 {
-		m.cursor = 0
-		m.offset = 0
-		return
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-	if m.cursor >= len(m.visible) {
-		m.cursor = len(m.visible) - 1
-	}
-	m.ensureCursorVisible()
-}
-
-func (m *Model) ensureCursorVisible() {
-	viewport := m.viewportHeight()
-	if m.cursor < m.offset {
-		m.offset = m.cursor
-	}
-	if m.cursor >= m.offset+viewport {
-		m.offset = m.cursor - viewport + 1
-	}
-	if m.offset < 0 {
-		m.offset = 0
-	}
-}
-
-func (m *Model) zoomIn() {
-	selected := m.selectedNode()
-	if selected == nil || len(selected.Children) == 0 {
-		return
-	}
-	m.focus = selected
-	m.cursor = 0
-	m.offset = 0
-	m.refreshVisible()
-	m.refreshMatches()
-}
-
-func (m *Model) zoomOut() {
-	if m.focus == nil || m.focus.Parent == nil {
-		return
-	}
-	previous := m.focus
-	m.focus = m.focus.Parent
-	m.refreshVisible()
-	m.refreshMatches()
-	for index, node := range m.visible {
-		if node == previous {
-			m.cursor = index
-			break
-		}
-	}
-	m.ensureCursorVisible()
-}
-
-// refreshMatches recomputes the active search over the now-visible frames so
-// zooming in or out rediscovers matches that entered or left the viewport set.
-func (m *Model) refreshMatches() {
-	if m.lastSearch == "" {
-		return
-	}
-	query := m.query
-	m.query = m.lastSearch
-	m.applySearch()
-	m.query = query
-}
-
-func (m *Model) selectedNode() *Node {
-	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
-		return m.focus
-	}
-	return m.visible[m.cursor]
-}
-
 func (m *Model) applySearch() {
 	m.lastSearch = strings.TrimSpace(m.query)
+	firstMatch := m.refreshMatches()
+	if firstMatch >= 0 {
+		m.cursor = firstMatch
+		m.ensureCursorVisible()
+	}
+}
+
+func (m *Model) refreshMatches() int {
 	m.matches = map[*Node]bool{}
 	if m.lastSearch == "" {
-		return
+		return -1
 	}
 	needle := strings.ToLower(m.lastSearch)
 	firstMatch := -1
@@ -380,10 +314,7 @@ func (m *Model) applySearch() {
 			}
 		}
 	}
-	if firstMatch >= 0 {
-		m.cursor = firstMatch
-		m.ensureCursorVisible()
-	}
+	return firstMatch
 }
 
 func (m *Model) nextMatch() {
@@ -400,43 +331,240 @@ func (m *Model) nextMatch() {
 	}
 }
 
-func (m *Model) viewportHeight() int {
-	height := m.height - headerLines - footerLines
-	if height < 3 {
-		return 3
+func (m *Model) focusOn(node *Node) {
+	m.focus = node
+	m.cursor = 0
+	m.offset = 0
+	m.refreshVisible()
+}
+
+func (m *Model) refreshVisible() {
+	m.visible = slices.Collect(walkPreorder(m.focus))
+	m.refreshMatches()
+	m.clampCursor()
+}
+
+func walkPreorder(root *Node) iter.Seq[*Node] {
+	return func(yield func(*Node) bool) {
+		if root == nil {
+			return
+		}
+
+		pending := []*Node{root}
+		for len(pending) > 0 {
+			last := len(pending) - 1
+			node := pending[last]
+			pending = pending[:last]
+			if !yield(node) {
+				return
+			}
+
+			for _, child := range slices.Backward(node.Children) {
+				pending = append(pending, child)
+			}
+		}
 	}
-	return height
+}
+
+func (m *Model) selectedNode() *Node {
+	if len(m.visible) == 0 || m.cursor < 0 || m.cursor >= len(m.visible) {
+		return m.focus
+	}
+	return m.visible[m.cursor]
+}
+
+func (m *Model) clampCursor() {
+	m.cursor = max(0, min(m.cursor, len(m.visible)-1))
+	m.ensureCursorVisible()
+}
+
+func (m *Model) ensureCursorVisible() {
+	depth := nodeDepthFrom(m.selectedNode(), m.focus)
+	viewport := max(m.viewportHeight(), 1)
+	minOffset := max(0, depth-viewport+1)
+	m.offset = max(minOffset, min(m.offset, depth))
+}
+
+func nodeDepthFrom(node, root *Node) int {
+	depth := 0
+	for current := node; current != nil && current != root; current = current.Parent {
+		depth++
+	}
+	return depth
+}
+
+func (m *Model) viewportHeight() int {
+	return max(m.height-headerLines-footerLines, 0)
 }
 
 func (m *Model) safeWidth() int {
-	if m.width < 40 {
-		return 40
-	}
-	return m.width
+	return max(m.width, 1)
 }
 
-func (m *Model) barWidth(value, rootValue int64) int {
-	available := m.safeWidth() / 3
-	if available < 10 {
-		available = 10
+func (m Model) View() string { //nolint:gocritic // Update returns Model values to Bubble Tea.
+	if m.view == viewTopTable {
+		return m.fitView(m.renderTopTable())
+	}
+	var content, view string
+	if m.view == viewFrames {
+		content = m.renderList()
+		view = "all frames (v: graph)"
+		if m.topTable != nil {
+			view = "all frames (v: Top Table)"
+		}
+	} else {
+		var shown int
+		content, shown = m.renderFlamegraph()
+		view = fmt.Sprintf("graph, %d shown (v: ALL frames, including tiny)", shown)
 	}
 
-	if rootValue <= 0 || value <= 0 {
-		return barMinWidth
+	var out strings.Builder
+	selected := m.selectedNode()
+	fmt.Fprintf(&out, "HUATUO tui flamegraph  frames=%d  focus=%s\n", len(m.visible), terminalText(m.focus.Label))
+	out.WriteString("keys: v view  ↑/↓ select  ←/→ level  enter zoom  backspace back  r root  / find  n next  q quit\n")
+	fmt.Fprintf(&out, "view: %s | ", view)
+	if m.mergedCPURoot != nil {
+		grouping := "by CPU"
+		if m.mergedCPU {
+			grouping = "merged CPUs"
+		}
+		fmt.Fprintf(&out, "%s (Tab) | ", grouping)
+	}
+	if m.searching {
+		fmt.Fprintf(&out, "search: %s_\n", terminalText(m.query))
+	} else if m.lastSearch != "" {
+		fmt.Fprintf(&out, "search: %s  matches=%d\n", terminalText(m.lastSearch), len(m.matches))
+	} else {
+		out.WriteString("search: none\n")
+	}
+	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
+
+	out.WriteString(content)
+
+	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
+	out.WriteString(renderDetails(selected, m.focus.Value))
+	return m.fitView(out.String())
+}
+
+func (m *Model) fitView(rendered string) string {
+	lines := strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
+	lines = lines[:min(len(lines), max(m.height, 1))]
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], m.safeWidth(), "")
 	}
 
-	if value >= rootValue {
-		return available
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// renderFlamegraph packs siblings horizontally and places children one row below.
+func (m *Model) renderFlamegraph() (string, int) {
+	rows := make([]strings.Builder, m.viewportHeight())
+	columns := make([]int, len(rows))
+	shown := 0
+	selected := m.selectedNode()
+	var draw func(node *Node, left, right, depth int)
+	draw = func(node *Node, left, right, depth int) {
+		if left >= right || depth >= m.offset+len(rows) || node.Value <= 0 {
+			return
+		}
+		if depth >= m.offset {
+			row := depth - m.offset
+			rows[row].WriteString(strings.Repeat(" ", left-columns[row]))
+			rows[row].WriteString(m.renderBlock(node, right-left, node == selected))
+			columns[row] = right
+			shown++
+		}
+
+		// Cumulative boundaries keep adjacent blocks aligned and preserve self time.
+		consumed := min(max(node.Self, 0), node.Value)
+		for _, child := range node.Children {
+			start := left + frameColumn(consumed, node.Value, right-left)
+			consumed += min(max(child.Value, 0), node.Value-consumed)
+			end := left + frameColumn(consumed, node.Value, right-left)
+			draw(child, start, end, depth+1)
+		}
+	}
+	draw(m.focus, 0, m.safeWidth(), 0)
+
+	var out strings.Builder
+	for i := range rows {
+		out.WriteString(rows[i].String())
+		out.WriteByte('\n')
 	}
 
-	// Keep integer rounding without overflowing on large profile weights.
-	hi, lo := bits.Mul64(uint64(value), uint64(available))
-	width, _ := bits.Div64(hi, lo, uint64(rootValue))
-	if width < barMinWidth {
-		return barMinWidth
-	}
+	return out.String(), shown
+}
 
-	return int(width)
+// renderList exposes every frame independently of its proportional graph width.
+func (m *Model) renderList() string {
+	viewport := m.viewportHeight()
+	start := max(0, m.cursor-viewport+1)
+	end := min(len(m.visible), start+viewport)
+	var out strings.Builder
+	for index := start; index < end; index++ {
+		node := m.visible[index]
+		marker := "  "
+		if m.matches[node] {
+			marker = "* "
+		}
+		if index == m.cursor {
+			marker = "> "
+		}
+		suffix := fmt.Sprintf(" %.2f%%", percent(node.Value, m.focus.Value))
+		labelWidth := max(0, m.safeWidth()-len(marker)-len(suffix))
+		out.WriteString(marker + padLabel(node.Label, labelWidth) + suffix + "\n")
+	}
+	out.WriteString(strings.Repeat("\n", viewport-(end-start)))
+
+	return out.String()
+}
+
+func padLabel(name string, width int) string {
+	label := ansi.Truncate(terminalText(name), width, "")
+	return label + strings.Repeat(" ", width-ansi.StringWidth(label))
+}
+
+func (m *Model) renderBlock(node *Node, width int, selected bool) string {
+	label := terminalText(node.Label)
+	var hash uint32
+	for _, char := range label {
+		hash = hash*31 + uint32(char)
+	}
+	style := lipgloss.NewStyle().
+		Background(lipgloss.Color(fmt.Sprint(166 + hash%12))).
+		Foreground(lipgloss.Color("0"))
+	if m.matches[node] {
+		style = style.Background(lipgloss.Color("226"))
+	}
+	if selected {
+		label = ">" + label
+		style = style.Background(lipgloss.Color("33")).Foreground(lipgloss.Color("15"))
+	}
+	label = ansi.Truncate(truncate(label, width), width, "")
+	label += strings.Repeat(" ", width-ansi.StringWidth(label))
+
+	return style.Render(label)
+}
+
+func renderDetails(node *Node, focusValue int64) string {
+	if node == nil {
+		return "selected: none\n"
+	}
+	return fmt.Sprintf("selected: %s\nvalue: %d  self: %d  focus: %.2f%%  children: %d\npath: %s\n",
+		terminalText(node.Label), node.Value, node.Self, percent(node.Value, focusValue), len(node.Children), terminalText(nodePath(node)))
+}
+
+// frameColumn scales weights without overflowing or losing int64 precision.
+func frameColumn(value, total int64, width int) int {
+	if value <= 0 || total <= 0 {
+		return 0
+	}
+	if value >= total {
+		return width
+	}
+	hi, lo := bits.Mul64(uint64(value), uint64(width))
+	column, _ := bits.Div64(hi, lo, uint64(total))
+	return int(column)
 }
 
 func percent(value, total int64) float64 {
@@ -460,21 +588,17 @@ func truncate(value string, width int) string {
 	return string(runes[:width-3]) + "..."
 }
 
-func nodeDepthFrom(node, root *Node) int {
-	depth := 0
-	for current := node; current != nil && current != root; current = current.Parent {
-		depth++
-	}
-	return depth
-}
-
 func nodePath(node *Node) string {
 	var labels []string
 	for current := node; current != nil; current = current.Parent {
 		labels = append(labels, current.Label)
 	}
-	for left, right := 0, len(labels)-1; left < right; left, right = left+1, right-1 {
-		labels[left], labels[right] = labels[right], labels[left]
-	}
+	slices.Reverse(labels)
 	return strings.Join(labels, " > ")
+}
+
+// terminalText makes untrusted text printable before styling or truncation.
+func terminalText(value string) string {
+	quoted := strconv.Quote(value)
+	return quoted[1 : len(quoted)-1]
 }

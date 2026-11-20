@@ -787,10 +787,25 @@ func TestCLIOutputOptions(t *testing.T) {
 		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
 		{name: "json", args: []string{"--output-format", "json", "--output-path", "profile.json"}},
 		{name: "remote-store", args: []string{"--output-format", "remote-store", "--output-path", "/run/toolstream.sock", "--task-id", "task"}},
+		{
+			name:      "tui blank path",
+			args:      []string{"--output-format", "tui", "--output-path", " "},
+			wantError: "--output-path must not be empty",
+		},
 		{name: "removed storage flag", args: []string{"--output-storage", "/run/toolstream.sock"}, wantError: "flag provided but not defined"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			app := &cli.App{Flags: appFlags, Before: runBefore, Writer: io.Discard, ErrWriter: io.Discard, Action: func(*cli.Context) error { return nil }}
+			actionCalled := false
+			app := &cli.App{
+				Flags:     appFlags,
+				Before:    runBefore,
+				Writer:    io.Discard,
+				ErrWriter: io.Discard,
+				Action: func(*cli.Context) error {
+					actionCalled = true
+					return nil
+				},
+			}
 			args := []string{"profiler", "--type", "cpu", "--language", "c", "--pid", strconv.Itoa(os.Getpid())}
 			err := app.Run(append(args, tc.args...))
 			if tc.wantError == "" {
@@ -798,6 +813,7 @@ func TestCLIOutputOptions(t *testing.T) {
 			} else {
 				require.ErrorContains(t, err, tc.wantError)
 			}
+			require.Equal(t, tc.wantError == "", actionCalled, "CLI action must run only after successful validation")
 		})
 	}
 }

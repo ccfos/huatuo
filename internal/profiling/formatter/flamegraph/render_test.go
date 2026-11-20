@@ -16,8 +16,20 @@ package flamegraph
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/require"
+
+	"github.com/ccfos/huatuo/internal/profiling/aggregation"
+	"github.com/ccfos/huatuo/pkg/profiling"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
@@ -43,4 +55,161 @@ func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
 		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
 	}
+}
+
+func TestTUIKeepsSignedTotalsAcrossWindows(t *testing.T) {
+	f := &tuiFormatter{aggregator: aggregation.New()}
+	w := &types.AggregationWindow{Aggregated: types.AggregatedProfile{
+		Frames: []types.ProfileFrame{{Name: "root"}, {Name: "leaf"}},
+		Stacks: [][]uint32{{0, 1}},
+		Samples: []types.AggregatedSample{{
+			UserStack: 1,
+			Value:     10,
+		}},
+	}}
+	if err := f.Add(t.Context(), w); err != nil {
+		t.Fatal(err)
+	}
+	w.Aggregated.Samples[0].Value = -10
+	if err := f.Add(t.Context(), w); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatalf("balanced profile must not open a viewer: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !f.aggregator.Empty() {
+		t.Fatal("close retained profile")
+	}
+}
+
+func TestTUICancellationDoesNotPublish(t *testing.T) {
+	f := &tuiFormatter{aggregator: aggregation.New()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := f.Add(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Add cancellation=%v", err)
+	}
+	if err := f.Complete(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Complete cancellation=%v", err)
+	}
+	if !f.aggregator.Empty() {
+		t.Fatal("cancellation changed the profile")
+	}
+}
+
+func TestTUICompletePreparesWithoutOpeningTerminal(t *testing.T) {
+	f := &tuiFormatter{aggregator: aggregation.New()}
+	if err := f.aggregator.Add(&aggregation.Sample{
+		UserFrames: []types.ProfileFrame{{Name: "main"}},
+		Value:      1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if f.model == nil || !strings.Contains(f.model.View(), "main") {
+		t.Fatal("completion did not prepare the sampled frame")
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := f.View(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled viewing must not open a terminal: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if f.model != nil || !f.aggregator.Empty() {
+		t.Fatal("close retained the prepared model or samples")
+	}
+}
+
+func TestTUIPreservesFrameNamesThroughCompletion(t *testing.T) {
+	f := &tuiFormatter{aggregator: aggregation.New()}
+	t.Cleanup(func() { _ = f.Close() })
+	for _, name := range []string{"foo;bar", "foo:bar", "foo\nbar", "foo bar"} {
+		if err := f.aggregator.Add(&aggregation.Sample{
+			UserFrames: []types.ProfileFrame{{Name: "main"}, {Name: name}},
+			Value:      10,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if f.model == nil || !strings.Contains(f.model.View(), "children: 4") {
+		t.Fatal("completion merged distinct source frames")
+	}
+
+	var model tea.Model = f.model
+	for _, name := range []string{`foo\nbar`, "foo bar", "foo:bar", "foo;bar"} {
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		view := model.View()
+		if !strings.Contains(view, "selected: "+name) || !strings.Contains(view, "value: 10  self: 10  focus: 25.00%") {
+			t.Fatalf("frame %q lost its name or independent weight: %q", name, view)
+		}
+	}
+}
+
+func TestTUIReportReplayMergesCPUAndSortsTopTable(t *testing.T) {
+	t.Parallel()
+
+	report := tuiReport{
+		Version:     tuiReportVersion,
+		ProfileType: profiling.ProfileTypeCpuSample,
+		Aggregated: types.AggregatedProfile{
+			Frames:    []types.ProfileFrame{{Name: "main"}, {Name: "work"}, {Name: "io"}},
+			Stacks:    [][]uint32{{0, 1}, {0, 2}},
+			LabelSets: [][]types.ProfileLabel{{types.ProfileCPULabel(0)}, {types.ProfileCPULabel(7)}},
+			Samples: []types.AggregatedSample{
+				{UserStack: 1, LabelSet: 1, Value: 2},
+				{UserStack: 1, LabelSet: 2, Value: 3},
+				{UserStack: 2, Value: 1},
+			},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "profile.json")
+	data, err := json.Marshal(&report)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+
+	saved, err := readTUIReport(path)
+	require.NoError(t, err)
+	model, err := prepareViewer(t.Context(), &saved.Aggregated, "nanoseconds")
+	require.NoError(t, err)
+	require.NotNil(t, model)
+	require.Contains(t, model.View(), "focus=all")
+
+	viewer, _ := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	require.Contains(t, viewer.View(), "focus=main")
+	require.Contains(t, viewer.View(), "value: 6")
+
+	viewKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}}
+	viewer, _ = viewer.Update(viewKey)
+	viewer, _ = viewer.Update(viewKey)
+	selectedRow := func(view string) []string {
+		t.Helper()
+		_, selected, ok := strings.Cut(view, "\n> ")
+		require.True(t, ok, "table has no selected row")
+		row, _, _ := strings.Cut(selected, "\n")
+		return strings.Fields(row)
+	}
+	require.Contains(t, viewer.View(), "sort: Self")
+	require.Equal(t, []string{"work", "5", "5"}, selectedRow(viewer.View()))
+
+	viewer, _ = viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	require.Contains(t, viewer.View(), "sort: Total")
+	require.Equal(t, []string{"main", "0", "6"}, selectedRow(viewer.View()))
+}
+
+func TestReadTUIReportRejectsDirectory(t *testing.T) {
+	t.Parallel()
+
+	_, err := readTUIReport(t.TempDir())
+	require.ErrorContains(t, err, "report must be a regular file")
 }

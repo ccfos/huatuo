@@ -81,6 +81,11 @@ func run(
 		defer finalMu.Unlock()
 		if finalTimer == nil && !finished {
 			finalTimer = time.AfterFunc(finalizationTimeout, func() {
+				finalMu.Lock()
+				defer finalMu.Unlock()
+				if finished {
+					return
+				}
 				cancelProcess(fmt.Errorf("profiling finalization timed out: %w", context.DeadlineExceeded))
 			})
 		}
@@ -196,5 +201,30 @@ func run(
 		return err
 	}
 
-	return formatter.Complete(processCtx)
+	return completeOutput(processCtx, formatter, func() error {
+		finalMu.Lock()
+		defer finalMu.Unlock()
+		finished = true
+		if finalTimer != nil {
+			finalTimer.Stop()
+		}
+		return context.Cause(processCtx)
+	})
+}
+
+// completeOutput keeps preparation within the finalization budget; only user-paced
+// viewing may outlive it. A failed preparation must never open a viewer.
+func completeOutput(ctx context.Context, formatter output.Formatter, beginViewing func() error) error {
+	if err := formatter.Complete(ctx); err != nil {
+		return errors.Join(context.Cause(ctx), err)
+	}
+
+	if viewer, ok := formatter.(output.Viewer); ok {
+		if err := beginViewing(); err != nil {
+			return err
+		}
+		return viewer.View(ctx)
+	}
+
+	return nil
 }

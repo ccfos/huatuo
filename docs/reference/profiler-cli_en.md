@@ -8,7 +8,7 @@ weight: 6
 
 This reference lists `profiler` parameters, defaults, and applicability. See [CLI Collection](/docs/best-practice/continuous-profiling_en.md#cli-collection) for prerequisites and examples, and [Output Formats](/docs/best-practice/continuous-profiling_en.md#output-formats) to choose a format.
 
-Both `--output-path` and `--output-format` must be explicit. The declared default for `--output-format` is `collapsed`, but validation does not allow the flag to be omitted.
+Specify `--output-format` explicitly. You can omit `--output-path` with `--output-format=tui`. Other formats require an output path.
 
 ## General
 
@@ -21,8 +21,8 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--duration`, `-d` | `10` | All | Total collection duration in seconds, minimum 1 |
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; cannot exceed duration |
 | `--freq`, `-F` | `99` | CPU | Samples per second; Java maximum: 1000 |
-| `--output-path` | Required | All | Local file, directory, or `stdout`; Unix socket for `remote-store`. End new directory paths with `/` |
-| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `json`, or `remote-store`; must be explicit together with `--output-path` |
+| `--output-path` | Optional for TUI | All | Local file, directory, or `stdout`. Use a Unix socket for `remote-store`. End new directory paths with `/` |
+| `--output-format` | Required | All | `collapsed`, `flamegraph`, `svg`, `tui`, `json`, or `remote-store` |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
 | `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
@@ -33,6 +33,20 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--version`, `-v` | - | All | Show version and build information |
 
 These pprof endpoints describe the profiler process's own Go runtime, not the `--pid` target or Java/Python collector subprocesses. The listener is now restricted to loopback rather than all interfaces; an occupied port fails startup.
+
+## Terminal flame graph and replay
+
+`--output-format=tui` opens the flame graph in an interactive terminal after collection. If samples include CPU labels, press `Tab` to toggle merging identical stacks from the same process across CPUs. Press `v` to cycle through the flame graph, the full frame list, and Top Table. Press `r` to return to the full flame graph for the current CPU grouping. Top Table sorts by descending `Self` by default. Press `s` to switch to descending `Total`.
+
+Top Table covers the entire collection. `Self` counts weight at the stack leaf. `Total` counts weight for every occurrence of the function in a stack, including recursive calls.
+
+Use `--output-path` to save a JSON report when you exit with `q`. A file path replaces the existing result at that path. A directory gets an automatically named `profile_*.json` file. Omit the path or use `stdout` or `-` for terminal viewing only.
+
+```sh
+profiler report p.json
+```
+
+`report` opens the offline viewer. Pass the saved report file as `p.json`. Replay requires a readable file and an interactive terminal.
 
 ## Collection
 

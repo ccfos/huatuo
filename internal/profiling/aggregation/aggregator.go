@@ -16,6 +16,7 @@
 package aggregation
 
 import (
+	"context"
 	"fmt"
 	"hash/maphash"
 	"slices"
@@ -166,6 +167,35 @@ func (a *Aggregator) Add(sample *Sample) error {
 		LabelSet:    key.labelSet,
 		Value:       sample.Value,
 	})
+
+	return nil
+}
+
+// AddProfile merges samples from a profile with valid dictionary indexes.
+// Samples merged before an error remain in the aggregator.
+func (a *Aggregator) AddProfile(ctx context.Context, profile *types.AggregatedProfile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	var frames []types.ProfileFrame
+	for i := range profile.Samples {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		sample := &profile.Samples[i]
+		var kernelStart int
+		frames, kernelStart = window.AppendFrames(frames[:0], profile, sample)
+		if err := a.Add(&Sample{
+			UserFrames:   frames[:kernelStart],
+			KernelFrames: frames[kernelStart:],
+			Labels:       window.Labels(profile, sample),
+			Value:        sample.Value,
+		}); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

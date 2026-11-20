@@ -1299,3 +1299,55 @@ func TestRunFinalLossPreventsPhysicalUsagePublication(t *testing.T) {
 		)
 	}
 }
+
+// Only completion and viewing participate in this runner boundary.
+type viewingFormatter struct {
+	output.Formatter
+	complete func(context.Context) error
+	view     func(context.Context) error
+}
+
+func (f viewingFormatter) Complete(ctx context.Context) error { return f.complete(ctx) }
+func (f viewingFormatter) View(ctx context.Context) error     { return f.view(ctx) }
+
+func TestCompleteOutputKeepsPreparationTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	budgetExpired := errors.New("preparation budget expired")
+	timer := time.AfterFunc(time.Millisecond, func() { stop(budgetExpired) })
+	defer timer.Stop()
+	f := viewingFormatter{
+		complete: func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		view: func(context.Context) error {
+			t.Fatal("viewer opened after preparation timed out")
+			return nil
+		},
+	}
+	err := completeOutput(ctx, f, func() error {
+		timer.Stop()
+		t.Fatal("finalization timeout stopped before preparation completed")
+		return nil
+	})
+	if !errors.Is(err, budgetExpired) {
+		t.Fatalf("completion error = %v, want preparation budget expiry", err)
+	}
+}
+
+func TestCompleteOutputRejectsExpiredTransition(t *testing.T) {
+	f := viewingFormatter{
+		complete: func(context.Context) error { return nil },
+		view: func(context.Context) error {
+			t.Fatal("viewer opened after finalization expired")
+			return nil
+		},
+	}
+	err := completeOutput(t.Context(), f, func() error { return context.DeadlineExceeded })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("transition error = %v, want deadline exceeded", err)
+	}
+}

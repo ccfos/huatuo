@@ -48,15 +48,28 @@ func DisplayLabels(dst []string, labels []types.ProfileLabel) []string {
 
 // WalkWindow creates display frames without changing shared frame identities.
 func WalkWindow(ctx context.Context, w *types.AggregationWindow, visit func([]string, int64) error) error {
+	var path []string
+	return WalkSamples(ctx, &w.Aggregated, func(frames []string, labels []types.ProfileLabel, weight int64) error {
+		path = append(DisplayLabels(path[:0], labels), frames...)
+		return visit(path, weight)
+	})
+}
+
+// WalkSamples passes each root-first stack separately from its labels. The
+// callback borrows frames and labels only for the duration of the call.
+func WalkSamples(
+	ctx context.Context,
+	a *types.AggregatedProfile,
+	visit func([]string, []types.ProfileLabel, int64) error,
+) error {
 	var frames []string
-	a := &w.Aggregated
 	for i := range a.Samples {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
 		sample := &a.Samples[i]
-		frames = DisplayLabels(frames[:0], window.Labels(a, sample))
+		frames = frames[:0]
 		if sample.UserStack != 0 {
 			for _, id := range a.Stacks[sample.UserStack-1] {
 				frames = append(frames, a.Frames[id].Name)
@@ -73,7 +86,7 @@ func WalkWindow(ctx context.Context, w *types.AggregationWindow, visit func([]st
 			frames = append(frames, "[unknown]")
 		}
 
-		if err := visit(frames, sample.Value); err != nil {
+		if err := visit(frames, window.Labels(a, sample), sample.Value); err != nil {
 			return err
 		}
 	}

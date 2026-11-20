@@ -30,3 +30,38 @@ func TestValidateDestination(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTUIDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{
+			name: "omitted path",
+		},
+		{
+			name: "stdout",
+			path: "stdout",
+		},
+		{
+			name: "stdout alias",
+			path: "-",
+		},
+		{
+			name: "file path",
+			path: "/tmp/result",
+		},
+		{
+			name:    "blank path",
+			path:    " ",
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateTUIDestination(tc.path); (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateTUIDestination(%q) = %v, want error: %t", tc.path, err, tc.wantErr)
+			}
+		})
+	}
+}

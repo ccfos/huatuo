@@ -8,7 +8,7 @@ weight: 6
 
 本文列出 `profiler` 的参数、默认值和适用范围。构建条件与采集示例见[命令行采集](/docs/best-practice/continuous-profiling_zh.md#命令行采集)，格式选择见[输出格式](/docs/best-practice/continuous-profiling_zh.md#输出格式)。
 
-`--output-path` 和 `--output-format` 都必须显式传入。`--output-format` 的声明默认值为 `collapsed`，但不能依靠该默认值省略参数。
+`--output-format` 必须显式传入。使用 `--output-format=tui` 时可省略 `--output-path`，其余格式需要指定输出路径。
 
 ## 通用参数
 
@@ -21,8 +21,8 @@ weight: 6
 | `--duration`, `-d` | `10` | 全部 | 总采集时长，单位为秒，最小为 1 |
 | `--aggr-interval` | `10` | 全部 | 聚合周期，单位为秒，不得大于采集时长 |
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
-| `--output-path` | 必填 | 全部 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket；新目录路径以 `/` 结尾 |
-| `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg`、`json` 或 `remote-store`；必须与 `--output-path` 一起显式指定 |
+| `--output-path` | TUI 可省略 | 全部 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket。新目录路径以 `/` 结尾 |
+| `--output-format` | 必填 | 全部 | `collapsed`、`flamegraph`、`svg`、`tui`、`json` 或 `remote-store` |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
@@ -33,6 +33,20 @@ weight: 6
 | `--version`, `-v` | - | 全部 | 显示版本与构建信息 |
 
 这些 pprof 接口描述 profiler 进程自身的 Go runtime，不是 `--pid` 指定的目标或 Java/Python 采集子进程。监听范围由所有网卡收紧为 loopback；端口被占用时启动失败。
+
+## 终端火焰图和回看
+
+`--output-format=tui` 在采集完成后打开终端火焰图，需要交互终端。带 CPU 标签的结果可按 `Tab` 切换是否合并同一进程跨 CPU 的相同调用栈。按 `v` 在火焰图、全部帧列表和 Top Table 之间循环。按 `r` 返回当前 CPU 分组的完整火焰图。Top Table 默认按 `Self` 降序，按 `s` 切换到 `Total` 降序。
+
+Top Table 统计整次采集。`Self` 只累加栈叶的权重，`Total` 按函数在调用栈中的每次出现累加权重，包含递归调用。
+
+用 `--output-path` 指定保存位置，按 `q` 退出后写入 JSON 报告。指定文件时覆盖同一目标，指定目录时自动生成 `profile_*.json`。省略路径或使用 `stdout`、`-` 时只打开查看器。
+
+```sh
+profiler report p.json
+```
+
+`report` 打开离线查看器，`p.json` 是采集时保存的报告文件。回看需要交互终端和文件读取权限。
 
 ## 采集参数
 
