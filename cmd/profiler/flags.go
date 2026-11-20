@@ -103,7 +103,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format: collapsed|flamegraph|svg|json|remote-store",
+		Usage: "Output format: collapsed|flamegraph|svg|json|speedscope|chrometrace|remote-store",
 		Value: "collapsed",
 	},
 	&cli.StringFlag{
