@@ -15,10 +15,14 @@
 package kmsgutil
 
 import (
+	"bytes"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ccfos/huatuo/internal/log"
 )
 
 func parseFormattedKmsgLine(line string) (time.Time, string, error) {
@@ -191,7 +195,35 @@ func TestGetBootTime(t *testing.T) {
 	}
 }
 
-// Note: GetSysrqMsg, GetAllCPUsBT, and GetBlockedProcessesBT involve system I/O (/dev/kmsg, /proc/sysrq-trigger)
-// and are better suited for integration tests with mocked file systems (e.g., using afero or test containers).
-// Unit tests for these would require dependency injection for os.Open, syscall.Read, etc., to isolate logic.
-// For brevity, they are omitted here; focus on pure functions above.
+// TestSetNonblockRejectsInvalidDescriptor verifies that a descriptor whose flags
+// cannot be read is reported. GetSysrqMsg used to discard the fcntl errno and
+// return the stale nil error left by the earlier write, so a failure here gave
+// the caller an empty backtrace together with a nil error.
+func TestSetNonblockRejectsInvalidDescriptor(t *testing.T) {
+	if err := setNonblock(^uintptr(0)); err == nil {
+		t.Fatal("setNonblock() error = nil, want the fcntl failure to surface")
+	}
+}
+
+// TestFormatKmsgsReportsInvalidEntryToLogger verifies that a record the parser
+// cannot read is reported through the logger. It previously went to
+// fmt.Printf, which writes to the process stdout and bypasses the logger's
+// configured output, so the diagnostic never reached the agent's log.
+func TestFormatKmsgsReportsInvalidEntryToLogger(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stdout) })
+
+	if got := formatKmsgs("invalid\n"); got != "" {
+		t.Fatalf("formatKmsgs() = %q, want empty output", got)
+	}
+
+	if output := logged.String(); !strings.Contains(output, "Error formatting kmsg line") {
+		t.Fatalf("logger output = %q, want it to report the unparsable record", output)
+	}
+}
+
+// Note: GetAllCPUsBT and GetBlockedProcessesBT read /dev/kmsg and write
+// /proc/sysrq-trigger, which needs a real kernel. They remain integration-test
+// territory; setNonblock is covered above because the flag handling is where the
+// error was lost.
