@@ -27,10 +27,17 @@ import (
 // Measure the whole task, including deferred rendering and filesystem output.
 // Positive CPU weights keep this workload comparable with the pre-live baseline.
 func BenchmarkSummaryFormatter(b *testing.B) {
-	for _, format := range []output.OutputFormat{output.FormatCollapsed, output.FormatSVG, output.FormatSpeedscope} {
+	for _, format := range []output.OutputFormat{output.FormatCollapsed, output.FormatSVG, output.FormatSpeedscope, output.FormatChromeTrace} {
 		for _, workload := range []string{"repeated", "unique"} {
 			b.Run(string(format)+"/"+workload, func(b *testing.B) {
 				windows := summaryBenchmarkWindows(workload)
+				if format == output.FormatChromeTrace {
+					for i := range windows {
+						for j := range windows[i].Aggregated.Samples {
+							windows[i].Aggregated.Samples[j].Value = 1500
+						}
+					}
+				}
 				cfg := output.Config{
 					Format:      format,
 					Destination: filepath.Join(b.TempDir(), "profile"),

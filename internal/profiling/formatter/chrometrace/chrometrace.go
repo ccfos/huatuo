@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 
 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
 
@@ -31,7 +32,7 @@ import (
 // TODO: preserve observation timestamps before aggregation to recover chronology.
 type formatter struct {
 	events      []event
-	endUS       int64
+	endNS       int64
 	destination *output.LocalDestination
 }
 
@@ -40,12 +41,30 @@ type event struct {
 	Phase       string            `json:"ph"`
 	PID         int64             `json:"pid"`
 	TID         int64             `json:"tid"`
-	TimestampUS int64             `json:"ts"`
-	DurationUS  *int64            `json:"dur,omitempty"`
+	TimestampUS traceTime         `json:"ts"`
+	DurationUS  *traceTime        `json:"dur,omitempty"`
 	Args        map[string]string `json:"args,omitempty"`
 }
 
 const maxExactInteger int64 = 1<<53 - 1
+
+// traceTime keeps nanoseconds for arithmetic and emits fractional microseconds.
+type traceTime int64
+
+func (value traceTime) MarshalJSON() ([]byte, error) {
+	if value < 0 {
+		return nil, fmt.Errorf("chrometrace: negative event time %d", value)
+	}
+	nanos := int64(value)
+	data := strconv.AppendInt(make([]byte, 0, 24), nanos/1000, 10)
+	if fraction := nanos % 1000; fraction != 0 {
+		data = append(data, '.', byte('0'+fraction/100), byte('0'+fraction/10%10), byte('0'+fraction%10))
+		for data[len(data)-1] == '0' {
+			data = data[:len(data)-1]
+		}
+	}
+	return data, nil
+}
 
 var _ output.Formatter = (*formatter)(nil)
 
@@ -78,15 +97,15 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 
 	unit := parts[2]
 
-	multiplier, divisor := int64(1), int64(1)
+	multiplier := int64(1)
 	switch unit {
 	case "nanoseconds":
-		divisor = 1000
 	case "microseconds":
-	case "milliseconds":
 		multiplier = 1000
-	case "seconds":
+	case "milliseconds":
 		multiplier = 1000000
+	case "seconds":
+		multiplier = 1000000000
 	default:
 		return fmt.Errorf("chrometrace: cannot estimate duration from unit %q", unit)
 	}
@@ -100,12 +119,11 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 			return nil
 		}
 
-		duration := value / divisor
-		if duration > (maxExactInteger-f.endUS)/multiplier {
+		if value > (maxExactInteger*1000-f.endNS)/multiplier {
 			return fmt.Errorf("chrometrace: estimated timeline exceeds 2^53-1 microseconds")
 		}
 
-		duration *= multiplier
+		duration := traceTime(value * multiplier)
 		if len(f.events) == 0 {
 			f.events = append(f.events, event{
 				Name:  "thread_name",
@@ -118,12 +136,12 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 			f.events = append(f.events, event{
 				Name:        name,
 				Phase:       "X",
-				TimestampUS: f.endUS,
+				TimestampUS: traceTime(f.endNS),
 				DurationUS:  &duration,
 			})
 		}
 
-		f.endUS += duration
+		f.endNS += int64(duration)
 
 		return nil
 	})
