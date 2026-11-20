@@ -203,6 +203,7 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 func configureRuntime(opts *Options) error {
 	bpf.DefaultObjDir = opts.BPFObjDir
 	internalconfig.CoreBinDir = opts.ToolBinDir
+	internalconfig.CoreBpfDir = opts.BPFObjDir
 
 	if err := config.Load(filepath.Join(opts.ConfigDir, opts.ConfigFile)); err != nil {
 		return fmt.Errorf("load config: %w", err)
