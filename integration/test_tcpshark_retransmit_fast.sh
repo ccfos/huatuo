@@ -61,7 +61,7 @@ log_info "netns topology ready: ${NETNS_SERVER}(${S_ADDR}) ←→ ${NETNS_CLIENT
 #    server→client data segment). Subsequent segments arrive out-of-order
 #    → receiver sends 3 dup ACKs → sender enters Recovery and
 #    fast-retransmits the lost segment.
-ip netns exec "${NETNS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
+ip netns exec "${NETNS_CLIENT}" iptables -w 5 -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
 	-m connbytes --connbytes 30:30 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 log_info "connbytes rule: drop reply packet #30 in client netns"

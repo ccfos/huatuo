@@ -88,7 +88,7 @@ CLI_PID=$!
 # 4. Wait for handshake to complete, then drop ACKs to the server.
 #    Must happen before the server's 3s send delay expires.
 sleep 1
-ip netns exec "${NETNS_CLIENT}" iptables -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags ACK ACK -j DROP
+ip netns exec "${NETNS_CLIENT}" iptables -w 5 -I OUTPUT 1 -p tcp --dport "${TEST_PORT}" --tcp-flags ACK ACK -j DROP
 log_info "iptables: DROP ACK (dport=${TEST_PORT}) — client ACKs will be dropped"
 
 # 5. Wait for data send + TLP (PTO ~10ms on loopback; generous window).
