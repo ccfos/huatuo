@@ -181,6 +181,43 @@ func TestRateLimiterCloseEventPipe(t *testing.T) {
 			t.Fatalf("reader close calls = %d, want 1", reader.closes)
 		}
 	})
+
+	t.Run("success clears reader and is idempotent", func(t *testing.T) {
+		t.Parallel()
+
+		reader := &rateLimitReaderStub{}
+		limiter := NewRateLimiter("tcp_retransmit", 100)
+		limiter.reader = reader
+
+		if err := limiter.CloseEventPipe(); err != nil {
+			t.Fatalf("first CloseEventPipe() error = %v, want nil", err)
+		}
+		if err := limiter.CloseEventPipe(); err != nil {
+			t.Fatalf("second CloseEventPipe() error = %v, want nil", err)
+		}
+		if reader.closes != 1 {
+			t.Fatalf("reader close calls = %d, want 1 (second call must short-circuit)", reader.closes)
+		}
+	})
+
+	t.Run("reader error keeps reference for retry", func(t *testing.T) {
+		t.Parallel()
+
+		closeErr := errors.New("close failed")
+		reader := &rateLimitReaderStub{closeErr: closeErr}
+		limiter := NewRateLimiter("tcp_retransmit", 100)
+		limiter.reader = reader
+
+		if err := limiter.CloseEventPipe(); !errors.Is(err, closeErr) {
+			t.Fatalf("first CloseEventPipe() error = %v, want %v", err, closeErr)
+		}
+		if err := limiter.CloseEventPipe(); !errors.Is(err, closeErr) {
+			t.Fatalf("retry CloseEventPipe() error = %v, want %v", err, closeErr)
+		}
+		if reader.closes != 2 {
+			t.Fatalf("reader close calls = %d, want 2 (failed close must not clear reader)", reader.closes)
+		}
+	})
 }
 
 type rateLimitReaderStub struct {
