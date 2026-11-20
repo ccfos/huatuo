@@ -101,6 +101,7 @@ func TestFoldedSampleSyntax(t *testing.T) {
 		{name: "frame with spaces", output: "root with spaces;leaf 2\n", frames: []string{"root with spaces", "leaf"}, value: 2},
 		{name: "empty frames and signed weight", output: "root; ; leaf; -2\n", frames: []string{"root", "leaf"}, value: -2},
 		{name: "missing weight separator", output: "root;leaf\n", wantErr: true},
+		{name: "missing frames", output: " ; \t2\n", wantErr: true},
 		{name: "invalid weight", output: "root;leaf invalid\n", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
