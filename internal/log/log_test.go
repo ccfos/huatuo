@@ -24,8 +24,6 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
-
-	"github.com/ccfos/huatuo/internal/timeutil"
 )
 
 // Test SetLevel and GetLevel behavior (valid, invalid, case-insensitive)
@@ -336,16 +334,10 @@ func TestFormat(t *testing.T) {
 // Test SetFormatter applies a custom formatter to log output.
 func TestSetFormatter(t *testing.T) {
 	originalLevel := GetLevel()
+	originalFormatter := logger.Formatter
 	defer func() {
 		SetLevel(originalLevel.String())
-		// Restore the default formatter so other tests are unaffected.
-		SetFormatter(&logrus.TextFormatter{
-			DisableColors:   true,
-			ForceQuote:      true,
-			FullTimestamp:   true,
-			TimestampFormat: timeutil.Layout,
-			DisableSorting:  false,
-		})
+		SetFormatter(originalFormatter)
 	}()
 
 	var buf bytes.Buffer
