@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/pod"
@@ -284,10 +285,13 @@ func (d *Data) prometheusMetric(collector string) prometheus.Metric {
 	}
 
 	metricName := prometheus.BuildFQName(DefaultNamespace, collector, d.name)
-	desc, ok := metricDescCache.Load(metricName)
+	// A metric name can be emitted with different optional label keys. Reusing a
+	// descriptor from another label schema mislabels values or panics on count.
+	key := [3]string{metricName, d.help, strings.Join(d.labelKey, "\x00")}
+	desc, ok := metricDescCache.Load(key)
 	if !ok {
 		desc = prometheus.NewDesc(metricName, d.help, d.labelKey, nil)
-		metricDescCache.Store(metricName, desc)
+		metricDescCache.Store(key, desc)
 	}
 
 	return prometheus.MustNewConstMetric(
