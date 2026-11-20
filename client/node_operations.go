@@ -43,6 +43,7 @@ func (c *NodeClient) StartOperation(
 		address,
 		"operation.start",
 		request.RequestID,
+		request.Kind,
 		nodeSuccessResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StartOperation(ctx, *request)
@@ -61,6 +62,7 @@ func (c *NodeClient) GetOperation(
 		address,
 		"operation.get",
 		requestID,
+		"",
 		nodeSuccessResponseOK,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.GetOperation(ctx, requestID)
@@ -79,6 +81,7 @@ func (c *NodeClient) StopOperation(
 		address,
 		"operation.stop",
 		requestID,
+		"",
 		nodeSuccessResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StopOperation(ctx, requestID)
@@ -91,6 +94,7 @@ func (c *NodeClient) executeOperation(
 	address NodeAddress,
 	operationName string,
 	requestID string,
+	expectedKind nodeapi.OperationKind,
 	successMode nodeSuccessResponseMode,
 	send sendNodeOperationRequest,
 ) (result *nodeapi.Operation, returnedErr error) {
@@ -121,5 +125,5 @@ func (c *NodeClient) executeOperation(
 			Message: operationName + " Node API request",
 		}, err)
 	}
-	return parseNodeOperationResponse(response, requestID, successMode)
+	return parseNodeOperationResponse(response, requestID, expectedKind, successMode)
 }
