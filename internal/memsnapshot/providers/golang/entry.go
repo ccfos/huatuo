@@ -37,7 +37,7 @@ func buildEntries(ctx context.Context,
 		}
 		entries = append(entries, memsnapshot.Entry{
 			Kind: "inuse_space_objects", Name: name,
-			Bytes: uint64(candidate.inuseBytes), Objects: uint64(candidate.inuseObjects), AverageBytes: average, Stack: stack,
+			Bytes: candidate.inuseBytes, Objects: candidate.inuseObjects, AverageBytes: average, Stack: stack,
 		})
 	}
 	if err := ctx.Err(); err != nil {
