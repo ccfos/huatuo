@@ -145,3 +145,15 @@ func TestContainerJSONUnknownValues(t *testing.T) {
 		t.Errorf("container qos = %v, want unknown", qos)
 	}
 }
+
+func TestContainerStringNilReceiver(t *testing.T) {
+	var container *Container
+	if got := container.String(); got != "<nil>" {
+		t.Fatalf("nil Container.String() = %q, want <nil>", got)
+	}
+
+	container = &Container{ID: "abc", Name: "app", Type: ContainerTypeNormal}
+	if got, want := container.String(), "abc:/app/normal:unknown/"; got != want {
+		t.Fatalf("Container.String() = %q, want %q", got, want)
+	}
+}
