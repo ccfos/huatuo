@@ -16,6 +16,8 @@ package transport
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -142,5 +144,57 @@ func TestListenerCloseRemovesOwnedSocket(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Lstat after Close error = %v, want not exist", err)
+	}
+}
+
+func TestListenAndDialUDSExchangesData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "toolstream.sock")
+	listener, err := ListenUDS(path)
+	if err != nil {
+		t.Fatalf("ListenUDS: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer conn.Close()
+
+		payload := make([]byte, 4)
+		if _, err := io.ReadFull(conn, payload); err != nil {
+			serverDone <- err
+			return
+		}
+		if string(payload) != "ping" {
+			serverDone <- fmt.Errorf("unexpected client payload %q", payload)
+			return
+		}
+		_, err = conn.Write([]byte("pong"))
+		serverDone <- err
+	}()
+
+	client, err := DialUDS(path)
+	if err != nil {
+		t.Fatalf("DialUDS: %v", err)
+	}
+	if _, err := client.Write([]byte("ping")); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	response := make([]byte, 4)
+	if _, err := io.ReadFull(client, response); err != nil {
+		t.Fatalf("client read: %v", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("client close: %v", err)
+	}
+	if string(response) != "pong" {
+		t.Fatalf("response = %q, want pong", response)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("server: %v", err)
 	}
 }
