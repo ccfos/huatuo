@@ -285,6 +285,69 @@ func TestNormalizePage(t *testing.T) {
 	}
 }
 
+func TestNormalizeRawProfilePage(t *testing.T) {
+	positiveLimit := 25
+	zeroLimit := 0
+	negativeLimit := -1
+	positiveOffset := 50
+	negativeOffset := -1
+
+	tests := []struct {
+		name       string
+		limit      *int
+		offset     *int
+		wantLimit  int
+		wantOffset int
+	}{
+		{
+			name:       "omitted values",
+			wantLimit:  defaultRawProfilePageSize,
+			wantOffset: 0,
+		},
+		{
+			name:       "positive values",
+			limit:      &positiveLimit,
+			offset:     &positiveOffset,
+			wantLimit:  positiveLimit,
+			wantOffset: positiveOffset,
+		},
+		{
+			name:       "zero limit",
+			limit:      &zeroLimit,
+			wantLimit:  defaultRawProfilePageSize,
+			wantOffset: 0,
+		},
+		{
+			name:       "negative limit and offset",
+			limit:      &negativeLimit,
+			offset:     &negativeOffset,
+			wantLimit:  defaultRawProfilePageSize,
+			wantOffset: 0,
+		},
+		{
+			name:       "negative offset",
+			limit:      &positiveLimit,
+			offset:     &negativeOffset,
+			wantLimit:  positiveLimit,
+			wantOffset: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			limit, offset := NormalizeRawProfilePage(tt.limit, tt.offset)
+			if limit != tt.wantLimit || offset != tt.wantOffset {
+				t.Fatalf(
+					"NormalizeRawProfilePage() = (%d, %d), want (%d, %d)",
+					limit,
+					offset,
+					tt.wantLimit,
+					tt.wantOffset,
+				)
+			}
+		})
+	}
+}
+
 func TestNewServiceRequiresJobManager(t *testing.T) {
 	_, err := NewService(nil, nil, Config{})
 	if err == nil || !strings.Contains(err.Error(), "job manager is required") {
