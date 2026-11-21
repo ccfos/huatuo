@@ -126,7 +126,7 @@ func TestResolveExecutablePath(t *testing.T) {
 		},
 		{
 			name:    "replacement at the original path",
-			path:    newExecutable + unlinkedExecutableMarker,
+			path:    newExecutable + procfs.DeletedMarker,
 			procExe: oldExecutable,
 			want:    newExecutable,
 		},
@@ -247,7 +247,7 @@ func TestResolveExecutablePathKeepsAnAmbiguousHardLink(t *testing.T) {
 	// the original name is unlinked. /proc/<pid>/exe then reports the same text
 	// for a kernel marker and for this literal name, so the contract is that the
 	// live path is returned unchanged.
-	linked := original + unlinkedExecutableMarker
+	linked := original + procfs.DeletedMarker
 	if err := os.Link(original, linked); err != nil {
 		t.Fatalf("Link(%q, %q) error = %v", original, linked, err)
 	}
