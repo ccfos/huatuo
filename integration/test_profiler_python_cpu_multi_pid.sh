@@ -36,10 +36,18 @@ PROFILER_CHILD_PID=""
 PROFILER_INDEPENDENT_PID=""
 
 cleanup() {
+	local status=$?
 	[[ -n "${PROFILER_PARENT_PID}" ]] && stop_by_pid "${PROFILER_PARENT_PID}" 5 || true
 	[[ -n "${PROFILER_CHILD_PID}" ]] && stop_by_pid "${PROFILER_CHILD_PID}" 5 || true
 	[[ -n "${PROFILER_INDEPENDENT_PID}" ]] && stop_by_pid "${PROFILER_INDEPENDENT_PID}" 5 || true
+	if [[ ${status} -eq 0 || ${status} -eq 77 ]]; then
+		rm -rf -- "${WORK_DIR}"
+	else
+		log_error "integration test failed; artifacts preserved at ${WORK_DIR}"
+	fi
+	return "${status}"
 }
+
 trap cleanup EXIT
 
 py_spy_supports_target() {
@@ -82,18 +90,12 @@ if ! "${TOOL_BIN}" \
 fi
 
 # A nonexistent destination without a trailing slash is an explicit file.
-assert_profiler_output_file() {
-	[[ -s "$1" && -f "$1" ]] || fatal "expected a nonempty profile file at $1"
-}
 assert_profiler_output_file "${WORK_DIR}/python.folded"
 FOLDED_FILES=("${WORK_DIR}/python.folded")
 
-grep -qh "pid=\"${PROFILER_PARENT_PID}\";.*parent_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "parent workload stack not found for PID ${PROFILER_PARENT_PID}"
-grep -qh "pid=\"${PROFILER_CHILD_PID}\";.*child_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
-grep -qh "pid=\"${PROFILER_INDEPENDENT_PID}\";.*independent_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
+assert_profiler_stack_contains "${WORK_DIR}/python.folded" "${PROFILER_PARENT_PID}" parent_hot_method
+assert_profiler_stack_contains "${WORK_DIR}/python.folded" "${PROFILER_CHILD_PID}" child_hot_method
+assert_profiler_stack_contains "${WORK_DIR}/python.folded" "${PROFILER_INDEPENDENT_PID}" independent_hot_method
 
 if grep -Eq 'py-spy>|Wrote raw flamegraph data|Sampling process .* times a second|You can use the flamegraph\.pl' "${FOLDED_FILES[@]}"; then
 	fatal "py-spy status output was included in folded samples"
