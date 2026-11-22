@@ -314,3 +314,80 @@ func TestCompileMalformedNetReturnsInvalidFilter(t *testing.T) {
 		})
 	}
 }
+
+func dumpExpr(n *exprNode) string {
+	if n == nil {
+		return "<nil>"
+	}
+	switch n.op {
+	case exprLeaf:
+		return n.text
+	case exprNot:
+		return "not(" + dumpExpr(n.left) + ")"
+	case exprAnd:
+		return "and(" + dumpExpr(n.left) + "," + dumpExpr(n.right) + ")"
+	case exprOr:
+		return "or(" + dumpExpr(n.left) + "," + dumpExpr(n.right) + ")"
+	default:
+		return "<unknown>"
+	}
+}
+
+func TestParseFilterExpression(t *testing.T) {
+	tests := []struct {
+		expr string
+		want string
+	}{
+		{"tcp", "tcp"},
+		{"tcp and port 80", "and(tcp,port 80)"},
+		{"tcp or udp", "or(tcp,udp)"},
+		{"tcp or udp and port 53", "and(or(tcp,udp),port 53)"},
+		{"tcp and port 80 or port 443", "or(and(tcp,port 80),port 443)"},
+		{"not tcp", "not(tcp)"},
+		{"not not tcp", "not(not(tcp))"},
+		{"not (ip or arp)", "not(or(ip,arp))"},
+		{"(ip or arp) and (tcp or udp)", "and(or(ip,arp),or(tcp,udp))"},
+		{"ip and src net 10.0.0.0/8 and tcp dst port 3306",
+			"and(and(ip,src net 10.0.0.0/8),tcp dst port 3306)"},
+		{"src and dst host 10.9.9.9", "src and dst host 10.9.9.9"},
+		{"src or dst port 80", "src or dst port 80"},
+		{"tcp and (port 80 or port 443)", "and(tcp,or(port 80,port 443))"},
+		{"not host 10.9.9.9 and port 80", "and(not(host 10.9.9.9),port 80)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			node, err := parseFilterExpression(tt.expr)
+			if err != nil {
+				t.Fatalf("parseFilterExpression: %v", err)
+			}
+			if got := dumpExpr(node); got != tt.want {
+				t.Fatalf("parsed = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	errTests := []struct {
+		expr string
+		want error
+	}{
+		{"", ErrEmptyFilter},
+		{"   ", ErrEmptyFilter},
+		{"tcp and", ErrInvalidFilter},
+		{"tcp or", ErrInvalidFilter},
+		{"not", ErrInvalidFilter},
+		{"tcp and not", ErrInvalidFilter},
+		{"(tcp or udp", ErrInvalidFilter},
+		{"tcp )", ErrInvalidFilter},
+		{"()", ErrInvalidFilter},
+		{"tcp not udp", ErrInvalidFilter},
+	}
+	for _, tt := range errTests {
+		t.Run("err/"+tt.expr, func(t *testing.T) {
+			_, err := parseFilterExpression(tt.expr)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("parseFilterExpression(%q) error = %v, want %v",
+					tt.expr, err, tt.want)
+			}
+		})
+	}
+}
