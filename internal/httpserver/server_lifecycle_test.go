@@ -24,6 +24,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestServerStartReportsBindFailure(t *testing.T) {
@@ -82,54 +84,7 @@ func TestServerServesPProfOnAPIListener(t *testing.T) {
 }
 
 func TestServerRejectsOperationsWhileStopping(t *testing.T) {
-	srv := NewServer(nil)
-	handlerStarted := make(chan struct{})
-	releaseHandler := make(chan struct{})
-	release := sync.OnceFunc(func() { close(releaseHandler) })
-	t.Cleanup(release)
-	srv.MustRegisterRoutes("", []Route{{
-		Method: http.MethodGet,
-		Path:   "/block",
-		Handler: func(ctx *Context) error {
-			close(handlerStarted)
-			select {
-			case <-releaseHandler:
-			case <-ctx.Request().Context().Done():
-			}
-			ctx.Status(http.StatusNoContent)
-			return nil
-		},
-	}})
-
-	if err := srv.Start("127.0.0.1:0"); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	request, err := http.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"http://"+testServerAddr(t, srv)+"/block",
-		http.NoBody,
-	)
-	if err != nil {
-		t.Fatalf("NewRequestWithContext() error = %v", err)
-	}
-	requestDone := make(chan error, 1)
-	go func() {
-		response, requestErr := http.DefaultClient.Do(request)
-		if requestErr != nil {
-			requestDone <- requestErr
-			return
-		}
-		requestDone <- response.Body.Close()
-	}()
-
-	select {
-	case <-handlerStarted:
-	case <-time.After(time.Second):
-		t.Fatal("request handler did not start")
-	}
-
+	srv, release, requestDone := startServerWithBlockedRequest(t)
 	serveDone := srv.Done()
 	shutdownCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -165,6 +120,119 @@ func TestServerRejectsOperationsWhileStopping(t *testing.T) {
 	if err := srv.Shutdown(t.Context()); err != nil {
 		t.Fatalf("second lifecycle Shutdown() error = %v", err)
 	}
+}
+
+func TestServerShutdownTimeoutAllowsRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		forceClose bool
+	}{
+		{name: "drain"},
+		{name: "force close", forceClose: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, release, requestDone := startServerWithBlockedRequest(t)
+			shutdownCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+			defer cancel()
+			require.ErrorIs(t, srv.Shutdown(shutdownCtx), context.DeadlineExceeded)
+			require.ErrorIs(t, srv.Shutdown(shutdownCtx), ErrServerStopping)
+			require.ErrorIs(t, srv.Start("127.0.0.1:0"), ErrServerStopping)
+
+			if tc.forceClose {
+				require.NoError(t, srv.Close())
+			} else {
+				release()
+			}
+			select {
+			case err := <-requestDone:
+				if tc.forceClose {
+					require.Error(t, err, "Close() did not interrupt the blocked request")
+				} else {
+					require.NoError(t, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("blocked request did not finish")
+			}
+
+			require.Eventually(t, func() bool { return srv.Done() == nil }, 5*time.Second, 10*time.Millisecond,
+				"server stayed in stopping state after the request finished")
+			require.NoError(t, srv.Shutdown(t.Context()))
+			require.NoError(t, srv.Start("127.0.0.1:0"))
+			require.NoError(t, srv.Shutdown(t.Context()))
+		})
+	}
+}
+
+func TestServerShutdownOrCloseTimeout(t *testing.T) {
+	srv, _, requestDone := startServerWithBlockedRequest(t)
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, srv.ShutdownOrClose(shutdownCtx), context.DeadlineExceeded)
+	select {
+	case err := <-requestDone:
+		require.Error(t, err, "ShutdownOrClose() did not interrupt the blocked request")
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked request did not finish")
+	}
+
+	require.Nil(t, srv.Done(), "execution was not cleared before ShutdownOrClose() returned")
+	require.NoError(t, srv.Start("127.0.0.1:0"))
+	require.NoError(t, srv.ShutdownOrClose(t.Context()))
+	require.NoError(t, srv.ShutdownOrClose(t.Context()))
+}
+
+func startServerWithBlockedRequest(t *testing.T) (*Server, func(), <-chan error) {
+	t.Helper()
+	srv := NewServer(nil)
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	release := sync.OnceFunc(func() { close(releaseHandler) })
+	t.Cleanup(release)
+	srv.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/block",
+		Handler: func(ctx *Context) error {
+			close(handlerStarted)
+			select {
+			case <-releaseHandler:
+			case <-ctx.Request().Context().Done():
+			}
+			ctx.Status(http.StatusNoContent)
+			return nil
+		},
+	}})
+
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	request, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodGet,
+		"http://"+testServerAddr(t, srv)+"/block",
+		http.NoBody,
+	)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	requestDone := make(chan error, 1)
+	go func() {
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			requestDone <- requestErr
+			return
+		}
+		requestDone <- response.Body.Close()
+	}()
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("request handler did not start")
+	}
+
+	return srv, release, requestDone
 }
 
 func testServerAddr(t *testing.T, srv *Server) string {

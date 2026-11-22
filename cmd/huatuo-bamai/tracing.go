@@ -117,14 +117,10 @@ func startHandlers(d *Daemon) (func(context.Context) error, error) {
 		// register work after shutdown begins.
 		d.operationManager.BeginShutdown()
 		drainCtx, cancel := context.WithTimeout(ctx, defaultHTTPDrainTimeout)
-		drainErr := runningServer.Shutdown(drainCtx)
-		cancel()
-		if drainErr == nil {
-			return nil
+		defer cancel()
+		if err := runningServer.ShutdownOrClose(drainCtx); err != nil {
+			return fmt.Errorf("drain HTTP server: %w", err)
 		}
-		return errors.Join(
-			fmt.Errorf("drain HTTP server: %w", drainErr),
-			runningServer.Close(),
-		)
+		return nil
 	}, nil
 }
