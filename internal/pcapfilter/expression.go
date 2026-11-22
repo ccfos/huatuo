@@ -68,9 +68,10 @@ func parseFilterExpression(src string) (*exprNode, error) {
 }
 
 type exprParser struct {
-	src    string
-	tokens []exprToken
-	pos    int
+	src           string
+	tokens        []exprToken
+	pos           int
+	lastQualifier string
 }
 
 func (p *exprParser) parseExpr() (*exprNode, error) {
@@ -117,6 +118,7 @@ func (p *exprParser) parseOperand() (*exprNode, error) {
 		return &exprNode{op: exprNot, left: child}, nil
 	case "(":
 		p.pos++
+		p.lastQualifier = ""
 		node, err := p.parseExpr()
 		if err != nil {
 			return nil, err
@@ -125,6 +127,12 @@ func (p *exprParser) parseOperand() (*exprNode, error) {
 			return nil, p.errorf(token.pos, "unclosed parenthesis")
 		}
 		p.pos++
+		// tcpdump's "most recent keyword" rule is lexical, so a following
+		// primitive inherits from the group's rightmost primitive.
+		p.lastQualifier = ""
+		if leaf := lastLeaf(node); leaf != nil {
+			p.lastQualifier = filterQualifierPrefix(lexFilterExpression(leaf.text))
+		}
 		return node, nil
 	case ")", "and", "or":
 		return nil, p.errorf(token.pos, "unexpected token %q", token.text)
@@ -134,7 +142,7 @@ func (p *exprParser) parseOperand() (*exprNode, error) {
 scan:
 	for p.pos < len(p.tokens) {
 		switch p.tokens[p.pos].text {
-		case "and", "or", "not", "(", ")":
+		case "and", "or", "(", ")":
 			break scan
 		}
 		p.pos++
@@ -143,7 +151,93 @@ scan:
 		return nil, p.errorf(token.pos, "expected filter primitive")
 	}
 
-	return &exprNode{op: exprLeaf, text: joinExprTokens(p.tokens[start:p.pos])}, nil
+	return &exprNode{op: exprLeaf, text: p.expandLeaf(p.tokens[start:p.pos])}, nil
+}
+
+// expandLeaf reapplies tcpdump's omitted-qualifier shorthand. go-pcap copies
+// the previous primitive's qualifiers onto a primitive with none of its own,
+// so a bare operand after "tcp dst port 80 or" means "tcp dst port 443".
+func (p *exprParser) expandLeaf(tokens []exprToken) string {
+	text := joinExprTokens(tokens)
+	if len(tokens) == 1 && !isFilterKeyword(tokens[0].text) && p.lastQualifier != "" {
+		return p.lastQualifier + " " + text
+	}
+	if prefix := filterQualifierPrefix(tokens); prefix != "" {
+		p.lastQualifier = prefix
+	} else {
+		p.lastQualifier = ""
+	}
+	return text
+}
+
+func filterQualifierPrefix(tokens []exprToken) string {
+	lastType := -1
+	for i, token := range tokens {
+		switch token.text {
+		case "host", "net", "port", "portrange", "proto":
+			lastType = i
+		}
+	}
+	if lastType >= 0 {
+		if lastType+1 >= len(tokens) {
+			return ""
+		}
+		prefix := make([]exprToken, 0, lastType+1)
+		for _, token := range tokens[:lastType+1] {
+			if token.text != "not" {
+				prefix = append(prefix, token)
+			}
+		}
+		return joinExprTokens(prefix)
+	}
+	if len(tokens) == 1 && isProtocolKeyword(tokens[0].text) {
+		return tokens[0].text
+	}
+	return ""
+}
+
+var filterKeywords = map[string]bool{
+	"ether": true, "fddi": true, "tr": true, "wlan": true,
+	"ip": true, "ip4": true, "ip6": true, "arp": true, "rarp": true,
+	"decnet": true, "tcp": true, "udp": true, "icmp": true, "icmp6": true,
+	"igmp": true, "igrp": true, "pim": true, "ah": true, "esp": true,
+	"vrrp": true, "stp": true, "sctp": true,
+	"host": true, "net": true, "port": true, "portrange": true, "proto": true,
+	"src": true, "dst": true, "src and dst": true, "src or dst": true,
+	"gateway": true, "multicast": true, "broadcast": true, "less": true,
+	"greater": true, "vlan": true, "mpls": true, "pppoes": true,
+	"inbound": true, "outbound": true, "ifindex": true, "llc": true,
+	"and": true, "or": true, "not": true,
+}
+
+var filterProtocolKeywords = map[string]bool{
+	"ether": true, "fddi": true, "tr": true, "wlan": true,
+	"ip": true, "ip4": true, "ip6": true, "arp": true, "rarp": true,
+	"decnet": true, "tcp": true, "udp": true, "icmp": true, "icmp6": true,
+	"igmp": true, "igrp": true, "pim": true, "ah": true, "esp": true,
+	"vrrp": true, "stp": true,
+}
+
+func isFilterKeyword(word string) bool {
+	return filterKeywords[word]
+}
+
+func isProtocolKeyword(word string) bool {
+	return filterProtocolKeywords[word]
+}
+
+func lastLeaf(node *exprNode) *exprNode {
+	if node == nil {
+		return nil
+	}
+	switch node.op {
+	case exprLeaf:
+		return node
+	case exprNot:
+		return lastLeaf(node.left)
+	default:
+		return lastLeaf(node.right)
+	}
 }
 
 func (p *exprParser) errorf(pos int, format string, args ...any) error {
@@ -291,9 +385,23 @@ func compileLeaf(text string) (filterProgram, error) {
 		)
 	}
 
-	keep, keepOK := insns[len(insns)-2].(cbpf.RetConstant)
-	drop, dropOK := insns[len(insns)-1].(cbpf.RetConstant)
-	if !keepOK || !dropOK || keep.Val == 0 || drop.Val != 0 {
+	secondLast, secondLastOK := insns[len(insns)-2].(cbpf.RetConstant)
+	last, lastOK := insns[len(insns)-1].(cbpf.RetConstant)
+	if !secondLastOK || !lastOK {
+		return filterProgram{}, fmt.Errorf(
+			"%w: leaf %q has an unsupported return layout",
+			ErrInvalidFilter,
+			text,
+		)
+	}
+
+	var keepIdx, dropIdx int
+	switch {
+	case secondLast.Val != 0 && last.Val == 0:
+		keepIdx, dropIdx = len(insns)-2, len(insns)-1
+	case secondLast.Val == 0 && last.Val != 0:
+		keepIdx, dropIdx = len(insns)-1, len(insns)-2
+	default:
 		return filterProgram{}, fmt.Errorf(
 			"%w: leaf %q has an unsupported return layout",
 			ErrInvalidFilter,
@@ -311,11 +419,11 @@ func compileLeaf(text string) (filterProgram, error) {
 		}
 	}
 
-	insns = boundJumps(insns)
+	insns = boundJumpsTo(insns, dropIdx)
 	return filterProgram{
 		insts:   insns,
-		keepIdx: len(insns) - 2,
-		dropIdx: len(insns) - 1,
+		keepIdx: keepIdx,
+		dropIdx: dropIdx,
 	}, nil
 }
 

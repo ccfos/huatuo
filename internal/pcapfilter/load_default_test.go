@@ -353,6 +353,21 @@ func TestParseFilterExpression(t *testing.T) {
 		{"src or dst port 80", "src or dst port 80"},
 		{"tcp and (port 80 or port 443)", "and(tcp,or(port 80,port 443))"},
 		{"not host 10.9.9.9 and port 80", "and(not(host 10.9.9.9),port 80)"},
+		{"tcp not port 80", "tcp not port 80"},
+		{"src not host 10.0.0.1", "src not host 10.0.0.1"},
+		{"host not 10.0.0.1", "host not 10.0.0.1"},
+		{"tcp not udp", "tcp not udp"},
+		{"tcp and not port 80", "and(tcp,not(port 80))"},
+		{"tcp dst port 80 or 443", "or(tcp dst port 80,tcp dst port 443)"},
+		{"tcp not port 80 or 443", "or(tcp not port 80,tcp port 443)"},
+		{"host 10.0.0.1 or 10.0.0.2", "or(host 10.0.0.1,host 10.0.0.2)"},
+		{"port 80 or 443", "or(port 80,port 443)"},
+		{"src host 10.0.0.1 or 10.0.0.2", "or(src host 10.0.0.1,src host 10.0.0.2)"},
+		{"tcp and (dst port 80 or 443)", "and(tcp,or(dst port 80,dst port 443))"},
+		{"ip proto tcp or udp", "or(ip proto tcp,udp)"},
+		{"(host 10.0.0.1) or 10.0.0.2", "or(host 10.0.0.1,host 10.0.0.2)"},
+		{"(host 10.0.0.1 or host 10.0.0.2) or 10.0.0.3",
+			"or(or(host 10.0.0.1,host 10.0.0.2),host 10.0.0.3)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -379,7 +394,6 @@ func TestParseFilterExpression(t *testing.T) {
 		{"(tcp or udp", ErrInvalidFilter},
 		{"tcp )", ErrInvalidFilter},
 		{"()", ErrInvalidFilter},
-		{"tcp not udp", ErrInvalidFilter},
 	}
 	for _, tt := range errTests {
 		t.Run("err/"+tt.expr, func(t *testing.T) {
@@ -478,6 +492,18 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 80))
 	tcpOther80 := filterTestEthernet(0x0800, filterTestIPv4(6,
 		[4]byte{10, 1, 2, 3}, [4]byte{10, 1, 1, 1}, 40000, 80))
+	tcp8080 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 8080))
+	tcpToHost1 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 0, 0, 1}, 40000, 443))
+	tcpToHost2 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 0, 0, 2}, 40000, 443))
+	tcpSrcHost1 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 0, 0, 1}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	tcpSrcHost2 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 0, 0, 2}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	udp80 := filterTestEthernet(0x0800, filterTestIPv4(17,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 80))
 	udp53 := filterTestEthernet(0x0800, filterTestIPv4(17,
 		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 53))
 	tcpSameSrcDst := filterTestEthernet(0x0800, filterTestIPv4(6,
@@ -538,6 +564,31 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		{"not-ports-and-tcp/3306", "not (port 80 or port 443) and tcp", false, tcp3306, true},
 		{"not-ports-and-tcp/80", "not (port 80 or port 443) and tcp", false, tcp80, false},
 		{"not-ports-and-tcp/443", "not (port 80 or port 443) and tcp", false, tcpToHost, false},
+		{"shorthand-port/80", "tcp dst port 80 or 443", false, tcp80, true},
+		{"shorthand-port/443", "tcp dst port 80 or 443", false, tcpToHost, true},
+		{"shorthand-port/8080", "tcp dst port 80 or 443", false, tcp8080, false},
+		{"shorthand-port/udp", "tcp dst port 80 or 443", false, udpToHost, false},
+		{"shorthand-host/a", "host 10.0.0.1 or 10.0.0.2", false, tcpToHost1, true},
+		{"shorthand-host/b", "host 10.0.0.1 or 10.0.0.2", false, tcpToHost2, true},
+		{"shorthand-host/other", "host 10.0.0.1 or 10.0.0.2", false, tcpToHost, false},
+		{"shorthand-group-port/80", "tcp and (dst port 80 or 443)", false, tcp80, true},
+		{"shorthand-group-port/443", "tcp and (dst port 80 or 443)", false, tcpToHost, true},
+		{"shorthand-group-port/8080", "tcp and (dst port 80 or 443)", false, tcp8080, false},
+		{"shorthand-group-port/udp", "tcp and (dst port 80 or 443)", false, udpToHost, false},
+		{"shorthand-port-only/443", "port 80 or 443", false, udpToHost, true},
+		{"shorthand-src-host/a", "src host 10.0.0.1 or 10.0.0.2", false, tcpSrcHost1, true},
+		{"shorthand-src-host/b", "src host 10.0.0.1 or 10.0.0.2", false, tcpSrcHost2, true},
+		{"shorthand-src-host/other", "src host 10.0.0.1 or 10.0.0.2", false, tcpToHost, false},
+		{"shorthand-inner-not/80", "tcp not port 80 or 443", false, tcp80, false},
+		{"shorthand-inner-not/443", "tcp not port 80 or 443", false, tcpToHost, true},
+		{"shorthand-inner-not/8080", "tcp not port 80 or 443", false, tcp8080, true},
+		{"shorthand-inner-not/udp80", "tcp not port 80 or 443", false, udp80, true},
+		{"inner-not/tcp-80", "tcp not port 80", false, tcp80, false},
+		{"inner-not/tcp-443", "tcp not port 80", false, tcpToHost, true},
+		{"inner-not/udp-80", "tcp not port 80", false, udp80, true},
+		{"inner-not/src-host/src", "src not host 10.0.0.1", false, tcpSrcHost1, false},
+		{"inner-not/src-host/other", "src not host 10.0.0.1", false, tcpToHost, true},
+		{"inner-not/src-host/dst", "src not host 10.0.0.1", false, tcpToHost1, true},
 		{"l3/tcp-and-host/tcp", "tcp and host 10.9.9.9", true, tcpToHost[14:], true},
 		{"l3/tcp-and-host/udp", "tcp and host 10.9.9.9", true, udpToHost[14:], false},
 		{"l3/ip-or-arp/ipv4", "ip or arp", true, tcpToHost[14:], true},
@@ -549,6 +600,11 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		{"l3/tcp-port-or-ports/443", "tcp and (port 80 or port 443)", true, tcpToHost[14:], true},
 		{"l3/tcp-port-or-ports/udp", "tcp and (port 80 or port 443)", true, udpToHost[14:], false},
 		{"l3/tcp-or-arp-or-rarp/tcp", "tcp or (arp or rarp)", true, tcpToHost[14:], true},
+		{"l3/shorthand-port/443", "tcp dst port 80 or 443", true, tcpToHost[14:], true},
+		{"l3/shorthand-port/8080", "tcp dst port 80 or 443", true, tcp8080[14:], false},
+		{"l3/shorthand-host/a", "host 10.0.0.1 or 10.0.0.2", true, tcpToHost1[14:], true},
+		{"l3/inner-not/tcp-80", "tcp not port 80", true, tcp80[14:], false},
+		{"l3/inner-not/tcp-443", "tcp not port 80", true, tcpToHost[14:], true},
 	}
 
 	for _, tc := range cases {
@@ -571,7 +627,6 @@ func TestCompoundFilterErrors(t *testing.T) {
 		{"dangling-and", "tcp and", ErrInvalidFilter},
 		{"unclosed", "(tcp and port 80", ErrInvalidFilter},
 		{"empty-group", "()", ErrInvalidFilter},
-		{"inner-not", "tcp not udp", ErrInvalidFilter},
 		{"bad-net", "udp or net 1.2.3.4/33", ErrInvalidFilter},
 	}
 	for _, tt := range tests {
@@ -584,9 +639,45 @@ func TestCompoundFilterErrors(t *testing.T) {
 	}
 }
 
-func TestCompileLeafRejectsNegatedLayout(t *testing.T) {
-	if _, err := compileLeaf("not host 10.9.9.9"); !errors.Is(err, ErrInvalidFilter) {
-		t.Fatalf("compileLeaf(negated) error = %v, want ErrInvalidFilter", err)
+func TestCompileLeafAcceptsNegatedLayout(t *testing.T) {
+	program, err := compileLeaf("src not host 10.0.0.1")
+	if err != nil {
+		t.Fatalf("compileLeaf(negated): %v", err)
+	}
+	if program.keepIdx <= program.dropIdx {
+		t.Fatalf("negated leaf keepIdx=%d dropIdx=%d, want keep after drop",
+			program.keepIdx, program.dropIdx)
+	}
+}
+
+func TestCompoundFilterAcceptsLegacyPrimitiveSyntax(t *testing.T) {
+	exprs := []string{
+		"tcp dst port 80 or 443",
+		"tcp dst port 80 or 443 or 8080",
+		"host 10.0.0.1 or 10.0.0.2",
+		"tcp and (dst port 80 or 443)",
+		"port 80 or 443",
+		"net 10.0.0.0/8 or 192.168.0.0/16",
+		"src host 10.0.0.1 or 10.0.0.2",
+		"src and dst host 10.0.0.1 or 10.0.0.2",
+		"tcp port 80 or 443",
+		"tcp or 443",
+		"tcp not udp",
+		"tcp not port 80",
+		"tcp not port 80 or 443",
+		"src not host 10.0.0.1",
+		"host not 10.0.0.1",
+		"host not 10.0.0.1 or 10.0.0.2",
+		"ip proto tcp or udp",
+		"(host 10.0.0.1) or 10.0.0.2",
+		"(host 10.0.0.1 or host 10.0.0.2) or 10.0.0.3",
+	}
+	for _, expr := range exprs {
+		t.Run(expr, func(t *testing.T) {
+			if _, err := compileCBPF(expr, false); err != nil {
+				t.Fatalf("compileCBPF(%q): %v", expr, err)
+			}
+		})
 	}
 }
 

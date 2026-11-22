@@ -524,26 +524,47 @@ func boundJumps(insns []cbpf.Instruction) []cbpf.Instruction {
 	if r, ok := insns[len(insns)-1].(cbpf.RetConstant); !ok || r.Val != 0 {
 		insns = append(insns, cbpf.RetConstant{Val: 0})
 	}
+	return boundJumpsTo(insns, len(insns)-1)
+}
+
+// boundJumpsTo clamps jumps that would land past the program end onto dropIdx.
+// Jumps that land on the final instruction are kept: a negated primitive ends
+// with drop;keep, and its success path targets that keep.
+func boundJumpsTo(insns []cbpf.Instruction, dropIdx int) []cbpf.Instruction {
+	if len(insns) == 0 {
+		return insns
+	}
+	if dropIdx < 0 || dropIdx >= len(insns) {
+		dropIdx = len(insns) - 1
+	}
+
 	lastIdx := len(insns) - 1
+	clampTarget := func(from int, skip uint64) uint64 {
+		target := uint64(from) + 1 + skip
+		if target > uint64(lastIdx) || target <= uint64(from) {
+			if dropIdx > from {
+				target = uint64(dropIdx)
+			} else {
+				target = uint64(from) + 1
+			}
+		}
+		return target
+	}
+
 	out := make([]cbpf.Instruction, len(insns))
 	copy(out, insns)
 	for i := range out {
-		// valid target: i + 1 + skip <= lastIdx → skip <= lastIdx - i - 1
-		maxSkip := lastIdx - i - 1
-		if maxSkip < 0 {
-			maxSkip = 0
-		}
 		switch v := out[i].(type) {
 		case cbpf.JumpIf:
-			v.SkipTrue, v.SkipFalse = clampJumpSkips(v.SkipTrue, v.SkipFalse, maxSkip)
+			v.SkipTrue = uint8(clampTarget(i, uint64(v.SkipTrue)) - uint64(i) - 1)
+			v.SkipFalse = uint8(clampTarget(i, uint64(v.SkipFalse)) - uint64(i) - 1)
 			out[i] = v
 		case cbpf.JumpIfX:
-			v.SkipTrue, v.SkipFalse = clampJumpSkips(v.SkipTrue, v.SkipFalse, maxSkip)
+			v.SkipTrue = uint8(clampTarget(i, uint64(v.SkipTrue)) - uint64(i) - 1)
+			v.SkipFalse = uint8(clampTarget(i, uint64(v.SkipFalse)) - uint64(i) - 1)
 			out[i] = v
 		case cbpf.Jump:
-			if v.Skip > uint32(maxSkip) {
-				v.Skip = uint32(maxSkip)
-			}
+			v.Skip = uint32(clampTarget(i, uint64(v.Skip)) - uint64(i) - 1)
 			out[i] = v
 		}
 	}
@@ -555,8 +576,4 @@ func stripEtherOffset(off uint32) uint32 {
 		return off - ethernetHeaderLen
 	}
 	return off
-}
-
-func clampJumpSkips(skipTrue, skipFalse uint8, maxSkip int) (uint8, uint8) {
-	return uint8(min(int(skipTrue), maxSkip)), uint8(min(int(skipFalse), maxSkip))
 }
