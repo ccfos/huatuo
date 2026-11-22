@@ -79,6 +79,9 @@ tcp and (port 80 or port 443)
 ip and src net 192.168.1.0/24 and tcp dst port 3306
 ```
 
+`and` and `or` have equal precedence and associate left to right (tcpdump
+semantics). Use parentheses when mixing them.
+
 ### Unsupported Expressions
 
 The following expressions are **unsupported** and cause compilation failures or incorrect matches:

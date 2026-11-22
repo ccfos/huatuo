@@ -391,3 +391,212 @@ func TestParseFilterExpression(t *testing.T) {
 		})
 	}
 }
+
+func filterTestEthernet(etherType uint16, payload []byte) []byte {
+	p := make([]byte, 14+len(payload))
+	binary.BigEndian.PutUint16(p[12:14], etherType)
+	copy(p[14:], payload)
+	return p
+}
+
+func filterTestIPv4(proto byte, src, dst [4]byte, sport, dport uint16) []byte {
+	p := make([]byte, 24)
+	p[0] = 4<<4 | 5
+	binary.BigEndian.PutUint16(p[2:4], uint16(len(p)))
+	p[8] = 64
+	p[9] = proto
+	copy(p[12:16], src[:])
+	copy(p[16:20], dst[:])
+	binary.BigEndian.PutUint16(p[20:22], sport)
+	binary.BigEndian.PutUint16(p[22:24], dport)
+	return p
+}
+
+func filterTestIPv6(next byte, src, dst [16]byte, sport, dport uint16) []byte {
+	p := make([]byte, 44)
+	p[0] = 6 << 4
+	p[6] = next
+	p[7] = 64
+	copy(p[8:24], src[:])
+	copy(p[24:40], dst[:])
+	binary.BigEndian.PutUint16(p[40:42], sport)
+	binary.BigEndian.PutUint16(p[42:44], dport)
+	return p
+}
+
+func filterTestARP() []byte {
+	p := make([]byte, 28)
+	binary.BigEndian.PutUint16(p[0:2], 1)
+	binary.BigEndian.PutUint16(p[2:4], 0x0800)
+	p[4], p[5] = 6, 4
+	binary.BigEndian.PutUint16(p[6:8], 1)
+	copy(p[8:14], []byte{0x02, 0, 0, 0, 0, 1})
+	copy(p[14:18], []byte{10, 1, 2, 3})
+	copy(p[18:24], []byte{0x02, 0, 0, 0, 0, 2})
+	copy(p[24:28], []byte{10, 1, 2, 4})
+	return p
+}
+
+func runFilterProgram(t *testing.T, expr string, l3 bool, pkt []byte) bool {
+	t.Helper()
+
+	insts, err := compileCBPF(expr, l3)
+	if err != nil {
+		t.Fatalf("compileCBPF(%q): %v", expr, err)
+	}
+	vm, err := cbpf.NewVM(insts)
+	if err != nil {
+		t.Fatalf("NewVM(%q): %v", expr, err)
+	}
+	verdict, err := vm.Run(pkt)
+	if err != nil {
+		t.Fatalf("Run(%q): %v", expr, err)
+	}
+	return verdict != 0
+}
+
+func TestCompoundFilterSemantics(t *testing.T) {
+	tcpToHost := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	tcpToOther := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 1, 1, 1}, 40000, 443))
+	udpToHost := filterTestEthernet(0x0800, filterTestIPv4(17,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	icmpPacket := filterTestEthernet(0x0800, filterTestIPv4(1,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 0, 0))
+	tcp3306 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{192, 168, 1, 5}, [4]byte{10, 9, 9, 9}, 40000, 3306))
+	udp3306 := filterTestEthernet(0x0800, filterTestIPv4(17,
+		[4]byte{192, 168, 1, 5}, [4]byte{10, 9, 9, 9}, 40000, 3306))
+	tcpWrongSrc := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 0, 0, 1}, [4]byte{10, 9, 9, 9}, 40000, 3306))
+	tcpWrongPort := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{192, 168, 1, 5}, [4]byte{10, 9, 9, 9}, 40000, 80))
+	tcp53 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 53))
+	tcp80 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 80))
+	udp53 := filterTestEthernet(0x0800, filterTestIPv4(17,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 53))
+	tcpSameSrcDst := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 9, 9, 9}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	arpPacket := filterTestEthernet(0x0806, filterTestARP())
+	rarpPacket := filterTestEthernet(0x8035, filterTestARP())
+	ipv6Packet := filterTestEthernet(0x86dd, filterTestIPv6(6,
+		[16]byte{0xfe, 0x80}, [16]byte{0xfe, 0x80, 0, 1}, 40000, 443))
+
+	cases := []struct {
+		name string
+		expr string
+		l3   bool
+		pkt  []byte
+		want bool
+	}{
+		{"tcp-and-host/tcp", "tcp and host 10.9.9.9", false, tcpToHost, true},
+		{"tcp-and-host/udp", "tcp and host 10.9.9.9", false, udpToHost, false},
+		{"tcp-and-host/other", "tcp and host 10.9.9.9", false, tcpToOther, false},
+		{"ip-or-arp/ipv4", "ip or arp", false, tcpToHost, true},
+		{"ip-or-arp/arp", "ip or arp", false, arpPacket, true},
+		{"ip-or-arp/ipv6", "ip or arp", false, ipv6Packet, false},
+		{"tcp-and-not-host/other", "tcp and not host 10.9.9.9", false, tcpToOther, true},
+		{"tcp-and-not-host/host", "tcp and not host 10.9.9.9", false, tcpToHost, false},
+		{"tcp-and-not-host/udp", "tcp and not host 10.9.9.9", false, udpToHost, false},
+		{"not-not-tcp/tcp", "not not tcp", false, tcpToHost, true},
+		{"not-not-tcp/udp", "not not tcp", false, udpToHost, false},
+		{"tcp-or-arp-or-rarp/tcp", "tcp or (arp or rarp)", false, tcpToHost, true},
+		{"tcp-or-arp-or-rarp/arp", "tcp or (arp or rarp)", false, arpPacket, true},
+		{"tcp-or-arp-or-rarp/rarp", "tcp or (arp or rarp)", false, rarpPacket, true},
+		{"not-ip-or-arp/ipv6", "not (ip or arp)", false, ipv6Packet, true},
+		{"not-ip-or-arp/ipv4", "not (ip or arp)", false, tcpToHost, false},
+		{"not-ip-or-arp/arp", "not (ip or arp)", false, arpPacket, false},
+		{"ip-arp-and-tcp-udp/tcp", "(ip or arp) and (tcp or udp)", false, tcpToHost, true},
+		{"ip-arp-and-tcp-udp/udp", "(ip or arp) and (tcp or udp)", false, udpToHost, true},
+		{"ip-arp-and-tcp-udp/ipv6", "(ip or arp) and (tcp or udp)", false, ipv6Packet, false},
+		{"ip-arp-and-tcp-udp/arp", "(ip or arp) and (tcp or udp)", false, arpPacket, false},
+		{"tcp-port-or-ports/443", "tcp and (port 80 or port 443)", false, tcpToHost, true},
+		{"tcp-port-or-ports/80", "tcp and (port 80 or port 443)", false, tcp80, true},
+		{"tcp-port-or-ports/udp", "tcp and (port 80 or port 443)", false, udpToHost, false},
+		{"net-and-port/match", "ip and src net 192.168.1.0/24 and tcp dst port 3306", false, tcp3306, true},
+		{"net-and-port/udp", "ip and src net 192.168.1.0/24 and tcp dst port 3306", false, udp3306, false},
+		{"net-and-port/wrong-src", "ip and src net 192.168.1.0/24 and tcp dst port 3306", false, tcpWrongSrc, false},
+		{"net-and-port/wrong-port", "ip and src net 192.168.1.0/24 and tcp dst port 3306", false, tcpWrongPort, false},
+		{"left-assoc/tcp53", "tcp or udp and port 53", false, tcp53, true},
+		{"left-assoc/tcp80", "tcp or udp and port 53", false, tcp80, false},
+		{"left-assoc/udp53", "tcp or udp and port 53", false, udp53, true},
+		{"left-assoc/icmp", "tcp or udp and port 53", false, icmpPacket, false},
+		{"src-and-dst/match", "src and dst host 10.9.9.9", false, tcpSameSrcDst, true},
+		{"src-and-dst/mismatch", "src and dst host 10.9.9.9", false, tcpToHost, false},
+		{"not-tcp-or-udp/icmp", "not (tcp or udp)", false, icmpPacket, true},
+		{"not-tcp-or-udp/tcp", "not (tcp or udp)", false, tcpToHost, false},
+		{"not-ports/80", "tcp and not (port 80 or port 443)", false, tcpWrongPort, false},
+		{"not-ports/3306", "tcp and not (port 80 or port 443)", false, tcp3306, true},
+		{"l3/tcp-and-host/tcp", "tcp and host 10.9.9.9", true, tcpToHost[14:], true},
+		{"l3/tcp-and-host/udp", "tcp and host 10.9.9.9", true, udpToHost[14:], false},
+		{"l3/ip-or-arp/ipv4", "ip or arp", true, tcpToHost[14:], true},
+		{"l3/ip-or-arp/ipv6", "ip or arp", true, ipv6Packet[14:], false},
+		{"l3/not-not-tcp/tcp", "not not tcp", true, tcpToHost[14:], true},
+		{"l3/not-not-tcp/udp", "not not tcp", true, udpToHost[14:], false},
+		{"l3/not-ip-or-arp/ipv6", "not (ip or arp)", true, ipv6Packet[14:], true},
+		{"l3/not-ip-or-arp/ipv4", "not (ip or arp)", true, tcpToHost[14:], false},
+		{"l3/tcp-port-or-ports/443", "tcp and (port 80 or port 443)", true, tcpToHost[14:], true},
+		{"l3/tcp-port-or-ports/udp", "tcp and (port 80 or port 443)", true, udpToHost[14:], false},
+		{"l3/tcp-or-arp-or-rarp/tcp", "tcp or (arp or rarp)", true, tcpToHost[14:], true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runFilterProgram(t, tc.expr, tc.l3, tc.pkt); got != tc.want {
+				t.Fatalf("filter accepted = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompoundFilterErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		expr string
+		want error
+	}{
+		{"empty", "", ErrEmptyFilter},
+		{"blank", "   ", ErrEmptyFilter},
+		{"dangling-and", "tcp and", ErrInvalidFilter},
+		{"unclosed", "(tcp and port 80", ErrInvalidFilter},
+		{"empty-group", "()", ErrInvalidFilter},
+		{"inner-not", "tcp not udp", ErrInvalidFilter},
+		{"bad-net", "udp or net 1.2.3.4/33", ErrInvalidFilter},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := compileCBPF(tt.expr, false)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("compileCBPF(%q) error = %v, want %v", tt.expr, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompileLeafRejectsNegatedLayout(t *testing.T) {
+	if _, err := compileLeaf("not host 10.9.9.9"); !errors.Is(err, ErrInvalidFilter) {
+		t.Fatalf("compileLeaf(negated) error = %v, want ErrInvalidFilter", err)
+	}
+}
+
+func TestCompoundFilterLongChain(t *testing.T) {
+	expr := "tcp"
+	for port := 80; port < 100; port++ {
+		expr += fmt.Sprintf(" and not port %d", port)
+	}
+
+	tcp443 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	tcp80 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 80))
+
+	if !runFilterProgram(t, expr, false, tcp443) {
+		t.Fatal("long AND chain rejected matching TCP packet")
+	}
+	if runFilterProgram(t, expr, false, tcp80) {
+		t.Fatal("long AND chain accepted excluded port")
+	}
+}

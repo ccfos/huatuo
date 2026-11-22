@@ -79,6 +79,8 @@ tcp and (port 80 or port 443)
 ip and src net 192.168.1.0/24 and tcp dst port 3306
 ```
 
+`and` 与 `or` 优先级相同，按从左到右结合（tcpdump 语义）；混用时请加括号。
+
 ### 不支持的表达式
 
 下列表达式**不支持**，使用后会导致编译失败或产生错误的匹配结果：

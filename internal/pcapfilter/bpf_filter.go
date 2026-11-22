@@ -267,16 +267,14 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 	return f.Compile()
 }
 
-// compileCBPF compiles expr to cBPF via go-pcap (pure Go, no libpcap dependency).
+// compileCBPF compiles expr to cBPF. Each primitive is compiled by go-pcap
+// (pure Go, no libpcap dependency); and/or/not are composed in expression.go
+// because go-pcap's own composite compiler drops terms and miswires branches.
 // When l3 is true, packet offsets are retargeted from Ethernet-relative to raw-IP.
 func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
-	insns, err := compileGoPcap(expr)
+	insns, err := compileFilterExpression(expr)
 	if err != nil {
-		if errors.Is(err, ErrEmptyFilter) || errors.Is(err, ErrInvalidFilter) {
-			return nil, err
-		}
-
-		return nil, fmt.Errorf("go-pcap compile: %w", err)
+		return nil, err
 	}
 
 	if l3 {

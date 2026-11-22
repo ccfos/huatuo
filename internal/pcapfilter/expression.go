@@ -15,8 +15,11 @@
 package pcapfilter
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+
+	cbpf "golang.org/x/net/bpf"
 )
 
 type exprOp uint8
@@ -211,4 +214,199 @@ func joinExprTokens(tokens []exprToken) string {
 		builder.WriteString(token.text)
 	}
 	return builder.String()
+}
+
+type filterProgram struct {
+	insts   []cbpf.Instruction
+	keepIdx int
+	dropIdx int
+}
+
+func compileFilterExpression(expr string) ([]cbpf.Instruction, error) {
+	node, err := parseFilterExpression(expr)
+	if err != nil {
+		return nil, err
+	}
+
+	program, err := compileNode(node)
+	if err != nil {
+		return nil, err
+	}
+
+	return program.insts, nil
+}
+
+func compileNode(node *exprNode) (filterProgram, error) {
+	switch node.op {
+	case exprLeaf:
+		return compileLeaf(node.text)
+	case exprNot:
+		child, err := compileNode(node.left)
+		if err != nil {
+			return filterProgram{}, err
+		}
+		return invertProgram(child)
+	case exprAnd, exprOr:
+		left, err := compileNode(node.left)
+		if err != nil {
+			return filterProgram{}, err
+		}
+		right, err := compileNode(node.right)
+		if err != nil {
+			return filterProgram{}, err
+		}
+		return composePrograms(left, right, node.op == exprAnd)
+	default:
+		return filterProgram{}, fmt.Errorf(
+			"%w: unknown expression node %d",
+			ErrInvalidFilter,
+			node.op,
+		)
+	}
+}
+
+// compileLeaf compiles one primitive with go-pcap. Composites are composed by
+// this file instead: go-pcap drops terms and miswires branches when an
+// expression contains and/or.
+func compileLeaf(text string) (filterProgram, error) {
+	insns, err := compileGoPcap(text)
+	if err != nil {
+		if errors.Is(err, ErrEmptyFilter) {
+			return filterProgram{}, err
+		}
+		return filterProgram{}, fmt.Errorf(
+			"%w: leaf %q: %w",
+			ErrInvalidFilter,
+			text,
+			err,
+		)
+	}
+
+	if len(insns) < 2 {
+		return filterProgram{}, fmt.Errorf(
+			"%w: leaf %q compiled to %d instructions",
+			ErrInvalidFilter,
+			text,
+			len(insns),
+		)
+	}
+
+	keep, keepOK := insns[len(insns)-2].(cbpf.RetConstant)
+	drop, dropOK := insns[len(insns)-1].(cbpf.RetConstant)
+	if !keepOK || !dropOK || keep.Val == 0 || drop.Val != 0 {
+		return filterProgram{}, fmt.Errorf(
+			"%w: leaf %q has an unsupported return layout",
+			ErrInvalidFilter,
+			text,
+		)
+	}
+
+	for i := range insns[:len(insns)-2] {
+		if _, ok := insns[i].(cbpf.RetConstant); ok {
+			return filterProgram{}, fmt.Errorf(
+				"%w: leaf %q compiled to a composite expression",
+				ErrInvalidFilter,
+				text,
+			)
+		}
+	}
+
+	insns = boundJumps(insns)
+	return filterProgram{
+		insts:   insns,
+		keepIdx: len(insns) - 2,
+		dropIdx: len(insns) - 1,
+	}, nil
+}
+
+func (p filterProgram) validate() error {
+	if p.keepIdx < 0 || p.dropIdx < 0 ||
+		p.keepIdx >= len(p.insts) || p.dropIdx >= len(p.insts) ||
+		p.keepIdx == p.dropIdx {
+		return fmt.Errorf("%w: invalid filter program terminals", ErrInvalidFilter)
+	}
+
+	keep, ok := p.insts[p.keepIdx].(cbpf.RetConstant)
+	if !ok || keep.Val == 0 {
+		return fmt.Errorf(
+			"%w: filter program keep terminal is not an accept return",
+			ErrInvalidFilter,
+		)
+	}
+	drop, ok := p.insts[p.dropIdx].(cbpf.RetConstant)
+	if !ok || drop.Val != 0 {
+		return fmt.Errorf(
+			"%w: filter program drop terminal is not a reject return",
+			ErrInvalidFilter,
+		)
+	}
+
+	return nil
+}
+
+func composePrograms(left, right filterProgram, isAnd bool) (filterProgram, error) {
+	if err := left.validate(); err != nil {
+		return filterProgram{}, err
+	}
+	if err := right.validate(); err != nil {
+		return filterProgram{}, err
+	}
+
+	out := make([]cbpf.Instruction, 0, len(left.insts)+len(right.insts))
+	out = append(out, left.insts...)
+	out = append(out, right.insts...)
+
+	bStart := len(left.insts)
+	bKeep := bStart + right.keepIdx
+	bDrop := bStart + right.dropIdx
+
+	keepTarget, dropTarget := bStart, bDrop
+	if !isAnd {
+		keepTarget, dropTarget = bKeep, bStart
+	}
+
+	keepSkip, err := forwardSkip(left.keepIdx, keepTarget)
+	if err != nil {
+		return filterProgram{}, err
+	}
+	dropSkip, err := forwardSkip(left.dropIdx, dropTarget)
+	if err != nil {
+		return filterProgram{}, err
+	}
+
+	out[left.keepIdx] = cbpf.Jump{Skip: keepSkip}
+	out[left.dropIdx] = cbpf.Jump{Skip: dropSkip}
+
+	return filterProgram{
+		insts:   out,
+		keepIdx: bKeep,
+		dropIdx: bDrop,
+	}, nil
+}
+
+func forwardSkip(from, target int) (uint32, error) {
+	if target <= from {
+		return 0, fmt.Errorf(
+			"%w: non-forward filter jump from instruction %d to %d",
+			ErrInvalidFilter,
+			from,
+			target,
+		)
+	}
+	return uint32(target - from - 1), nil
+}
+
+func invertProgram(program filterProgram) (filterProgram, error) {
+	if err := program.validate(); err != nil {
+		return filterProgram{}, err
+	}
+
+	keep := program.insts[program.keepIdx].(cbpf.RetConstant)
+	drop := program.insts[program.dropIdx].(cbpf.RetConstant)
+
+	program.insts[program.keepIdx] = drop
+	program.insts[program.dropIdx] = keep
+	program.keepIdx, program.dropIdx = program.dropIdx, program.keepIdx
+
+	return program, nil
 }
