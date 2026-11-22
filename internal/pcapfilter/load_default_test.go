@@ -344,11 +344,13 @@ func TestParseFilterExpression(t *testing.T) {
 		{"tcp or udp and port 53", "and(or(tcp,udp),port 53)"},
 		{"tcp and port 80 or port 443", "or(and(tcp,port 80),port 443)"},
 		{"not tcp", "not(tcp)"},
-		{"not not tcp", "not(not(tcp))"},
+		{"not not tcp", "not(not(tcp))"}, //nolint:dupword // input under test
 		{"not (ip or arp)", "not(or(ip,arp))"},
 		{"(ip or arp) and (tcp or udp)", "and(or(ip,arp),or(tcp,udp))"},
-		{"ip and src net 10.0.0.0/8 and tcp dst port 3306",
-			"and(and(ip,src net 10.0.0.0/8),tcp dst port 3306)"},
+		{
+			"ip and src net 10.0.0.0/8 and tcp dst port 3306",
+			"and(and(ip,src net 10.0.0.0/8),tcp dst port 3306)",
+		},
 		{"src and dst host 10.9.9.9", "src and dst host 10.9.9.9"},
 		{"src or dst port 80", "src or dst port 80"},
 		{"tcp and (port 80 or port 443)", "and(tcp,or(port 80,port 443))"},
@@ -366,14 +368,22 @@ func TestParseFilterExpression(t *testing.T) {
 		{"tcp and (dst port 80 or 443)", "and(tcp,or(dst port 80,dst port 443))"},
 		{"ip proto tcp or udp", "or(ip proto tcp,udp)"},
 		{"(host 10.0.0.1) or 10.0.0.2", "or(host 10.0.0.1,host 10.0.0.2)"},
-		{"(host 10.0.0.1 or host 10.0.0.2) or 10.0.0.3",
-			"or(or(host 10.0.0.1,host 10.0.0.2),host 10.0.0.3)"},
-		{"src host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)",
-			"or(src host 10.0.0.1,or(src host 10.0.0.2,src host 10.0.0.3))"},
-		{"dst host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)",
-			"or(dst host 10.0.0.1,or(dst host 10.0.0.2,dst host 10.0.0.3))"},
-		{"tcp dst port 80 or (443 or 8080)",
-			"or(tcp dst port 80,or(tcp dst port 443,tcp dst port 8080))"},
+		{
+			"(host 10.0.0.1 or host 10.0.0.2) or 10.0.0.3",
+			"or(or(host 10.0.0.1,host 10.0.0.2),host 10.0.0.3)",
+		},
+		{
+			"src host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)",
+			"or(src host 10.0.0.1,or(src host 10.0.0.2,src host 10.0.0.3))",
+		},
+		{
+			"dst host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)",
+			"or(dst host 10.0.0.1,or(dst host 10.0.0.2,dst host 10.0.0.3))",
+		},
+		{
+			"tcp dst port 80 or (443 or 8080)",
+			"or(tcp dst port 80,or(tcp dst port 443,tcp dst port 8080))",
+		},
 		{"tcp and (80 or 443)", "and(tcp,or(80,443))"},
 	}
 	for _, tt := range tests {
@@ -536,8 +546,8 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		{"tcp-and-not-host/other", "tcp and not host 10.9.9.9", false, tcpToOther, true},
 		{"tcp-and-not-host/host", "tcp and not host 10.9.9.9", false, tcpToHost, false},
 		{"tcp-and-not-host/udp", "tcp and not host 10.9.9.9", false, udpToHost, false},
-		{"not-not-tcp/tcp", "not not tcp", false, tcpToHost, true},
-		{"not-not-tcp/udp", "not not tcp", false, udpToHost, false},
+		{"not-not-tcp/tcp", "not not tcp", false, tcpToHost, true},  //nolint:dupword // input under test
+		{"not-not-tcp/udp", "not not tcp", false, udpToHost, false}, //nolint:dupword // input under test
 		{"tcp-or-arp-or-rarp/tcp", "tcp or (arp or rarp)", false, tcpToHost, true},
 		{"tcp-or-arp-or-rarp/arp", "tcp or (arp or rarp)", false, arpPacket, true},
 		{"tcp-or-arp-or-rarp/rarp", "tcp or (arp or rarp)", false, rarpPacket, true},
@@ -600,8 +610,8 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		{"l3/tcp-and-host/udp", "tcp and host 10.9.9.9", true, udpToHost[14:], false},
 		{"l3/ip-or-arp/ipv4", "ip or arp", true, tcpToHost[14:], true},
 		{"l3/ip-or-arp/ipv6", "ip or arp", true, ipv6Packet[14:], false},
-		{"l3/not-not-tcp/tcp", "not not tcp", true, tcpToHost[14:], true},
-		{"l3/not-not-tcp/udp", "not not tcp", true, udpToHost[14:], false},
+		{"l3/not-not-tcp/tcp", "not not tcp", true, tcpToHost[14:], true},  //nolint:dupword // input under test
+		{"l3/not-not-tcp/udp", "not not tcp", true, udpToHost[14:], false}, //nolint:dupword // input under test
 		{"l3/not-ip-or-arp/ipv6", "not (ip or arp)", true, ipv6Packet[14:], true},
 		{"l3/not-ip-or-arp/ipv4", "not (ip or arp)", true, tcpToHost[14:], false},
 		{"l3/tcp-port-or-ports/443", "tcp and (port 80 or port 443)", true, tcpToHost[14:], true},
