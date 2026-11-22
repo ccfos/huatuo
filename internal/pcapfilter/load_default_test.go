@@ -368,6 +368,13 @@ func TestParseFilterExpression(t *testing.T) {
 		{"(host 10.0.0.1) or 10.0.0.2", "or(host 10.0.0.1,host 10.0.0.2)"},
 		{"(host 10.0.0.1 or host 10.0.0.2) or 10.0.0.3",
 			"or(or(host 10.0.0.1,host 10.0.0.2),host 10.0.0.3)"},
+		{"src host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)",
+			"or(src host 10.0.0.1,or(src host 10.0.0.2,src host 10.0.0.3))"},
+		{"dst host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)",
+			"or(dst host 10.0.0.1,or(dst host 10.0.0.2,dst host 10.0.0.3))"},
+		{"tcp dst port 80 or (443 or 8080)",
+			"or(tcp dst port 80,or(tcp dst port 443,tcp dst port 8080))"},
+		{"tcp and (80 or 443)", "and(tcp,or(80,443))"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.expr, func(t *testing.T) {
@@ -616,6 +623,67 @@ func TestCompoundFilterSemantics(t *testing.T) {
 	}
 }
 
+func TestCompoundFilterGroupQualifierInheritance(t *testing.T) {
+	src1 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 0, 0, 1}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	src2 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 0, 0, 2}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	src3 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 0, 0, 3}, [4]byte{10, 9, 9, 9}, 40000, 443))
+	dst1 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 0, 0, 1}, 40000, 443))
+	dst2 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 0, 0, 2}, 40000, 443))
+	dst3 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 0, 0, 3}, 40000, 443))
+	other := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 443))
+
+	srcShorthand := "src host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)"
+	srcExplicit := "src host 10.0.0.1 or (src host 10.0.0.2 or src host 10.0.0.3)"
+	dstShorthand := "dst host 10.0.0.1 or (10.0.0.2 or 10.0.0.3)"
+	dstExplicit := "dst host 10.0.0.1 or (dst host 10.0.0.2 or dst host 10.0.0.3)"
+
+	tests := []struct {
+		name      string
+		shorthand string
+		explicit  string
+		pkt       []byte
+		l3        bool
+		want      bool
+	}{
+		{"src/host1", srcShorthand, srcExplicit, src1, false, true},
+		{"src/host2", srcShorthand, srcExplicit, src2, false, true},
+		{"src/host3", srcShorthand, srcExplicit, src3, false, true},
+		{"src/dst1", srcShorthand, srcExplicit, dst1, false, false},
+		{"src/dst2", srcShorthand, srcExplicit, dst2, false, false},
+		{"src/dst3", srcShorthand, srcExplicit, dst3, false, false},
+		{"src/other", srcShorthand, srcExplicit, other, false, false},
+		{"dst/host1", dstShorthand, dstExplicit, dst1, false, true},
+		{"dst/host2", dstShorthand, dstExplicit, dst2, false, true},
+		{"dst/host3", dstShorthand, dstExplicit, dst3, false, true},
+		{"dst/src1", dstShorthand, dstExplicit, src1, false, false},
+		{"dst/src2", dstShorthand, dstExplicit, src2, false, false},
+		{"dst/src3", dstShorthand, dstExplicit, src3, false, false},
+		{"dst/other", dstShorthand, dstExplicit, other, false, false},
+		{"l3/src/host2", srcShorthand, srcExplicit, src2[14:], true, true},
+		{"l3/src/dst2", srcShorthand, srcExplicit, dst2[14:], true, false},
+		{"l3/dst/host2", dstShorthand, dstExplicit, dst2[14:], true, true},
+		{"l3/dst/src2", dstShorthand, dstExplicit, src2[14:], true, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			shorthand := runFilterProgram(t, tc.shorthand, tc.l3, tc.pkt)
+			explicit := runFilterProgram(t, tc.explicit, tc.l3, tc.pkt)
+			if shorthand != tc.want || explicit != tc.want {
+				t.Fatalf("shorthand=%t explicit=%t, want %t",
+					shorthand, explicit, tc.want)
+			}
+		})
+	}
+}
+
 func TestCompoundFilterErrors(t *testing.T) {
 	tests := []struct {
 		name string
@@ -627,6 +695,7 @@ func TestCompoundFilterErrors(t *testing.T) {
 		{"dangling-and", "tcp and", ErrInvalidFilter},
 		{"unclosed", "(tcp and port 80", ErrInvalidFilter},
 		{"empty-group", "()", ErrInvalidFilter},
+		{"protocol-only-group", "tcp and (80 or 443)", ErrInvalidFilter},
 		{"bad-net", "udp or net 1.2.3.4/33", ErrInvalidFilter},
 	}
 	for _, tt := range tests {

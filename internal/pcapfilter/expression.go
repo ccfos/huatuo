@@ -118,7 +118,12 @@ func (p *exprParser) parseOperand() (*exprNode, error) {
 		return &exprNode{op: exprNot, left: child}, nil
 	case "(":
 		p.pos++
-		p.lastQualifier = ""
+		// A complete qualifier list (one with a type) stays inheritable
+		// inside the group: tcpdump reads "src host A or (B or C)" as
+		// "src host A or (src host B or src host C)".
+		if !hasQualifierType(p.lastQualifier) {
+			p.lastQualifier = ""
+		}
 		node, err := p.parseExpr()
 		if err != nil {
 			return nil, err
@@ -216,6 +221,16 @@ var filterProtocolKeywords = map[string]bool{
 	"decnet": true, "tcp": true, "udp": true, "icmp": true, "icmp6": true,
 	"igmp": true, "igrp": true, "pim": true, "ah": true, "esp": true,
 	"vrrp": true, "stp": true,
+}
+
+func hasQualifierType(prefix string) bool {
+	for _, token := range lexFilterExpression(prefix) {
+		switch token.text {
+		case "host", "net", "port", "portrange", "proto":
+			return true
+		}
+	}
+	return false
 }
 
 func isFilterKeyword(word string) bool {
