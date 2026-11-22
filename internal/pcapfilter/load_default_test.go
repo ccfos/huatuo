@@ -476,6 +476,8 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 53))
 	tcp80 := filterTestEthernet(0x0800, filterTestIPv4(6,
 		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 80))
+	tcpOther80 := filterTestEthernet(0x0800, filterTestIPv4(6,
+		[4]byte{10, 1, 2, 3}, [4]byte{10, 1, 1, 1}, 40000, 80))
 	udp53 := filterTestEthernet(0x0800, filterTestIPv4(17,
 		[4]byte{10, 1, 2, 3}, [4]byte{10, 9, 9, 9}, 40000, 53))
 	tcpSameSrcDst := filterTestEthernet(0x0800, filterTestIPv4(6,
@@ -530,6 +532,12 @@ func TestCompoundFilterSemantics(t *testing.T) {
 		{"not-tcp-or-udp/tcp", "not (tcp or udp)", false, tcpToHost, false},
 		{"not-ports/80", "tcp and not (port 80 or port 443)", false, tcpWrongPort, false},
 		{"not-ports/3306", "tcp and not (port 80 or port 443)", false, tcp3306, true},
+		{"not-host-and-port/other", "not host 10.9.9.9 and port 80", false, tcpOther80, true},
+		{"not-host-and-port/host", "not host 10.9.9.9 and port 80", false, tcp80, false},
+		{"not-host-and-port/wrong-port", "not host 10.9.9.9 and port 80", false, tcpToHost, false},
+		{"not-ports-and-tcp/3306", "not (port 80 or port 443) and tcp", false, tcp3306, true},
+		{"not-ports-and-tcp/80", "not (port 80 or port 443) and tcp", false, tcp80, false},
+		{"not-ports-and-tcp/443", "not (port 80 or port 443) and tcp", false, tcpToHost, false},
 		{"l3/tcp-and-host/tcp", "tcp and host 10.9.9.9", true, tcpToHost[14:], true},
 		{"l3/tcp-and-host/udp", "tcp and host 10.9.9.9", true, udpToHost[14:], false},
 		{"l3/ip-or-arp/ipv4", "ip or arp", true, tcpToHost[14:], true},
