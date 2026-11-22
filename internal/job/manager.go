@@ -70,7 +70,8 @@ type Manager struct {
 	config      *ManagerConfig
 	runtimeDeps runtimeDependencies
 
-	cleanupCancel context.CancelFunc
+	workerCtx     context.Context
+	cancelWorkers context.CancelFunc
 	closeOnce     sync.Once
 	closeDone     chan struct{}
 	closeErr      error
@@ -114,11 +115,9 @@ func NewManager(
 		return nil, err
 	}
 	manager := newManagerWithStore(store, nodeClient, &managerConfig)
-	if err := manager.recover(ctx); err != nil {
-		_ = store.Close()
-		return nil, fmt.Errorf("recover jobs: %w", err)
+	if err := manager.start(ctx); err != nil {
+		return nil, err
 	}
-	manager.startCleanup()
 	return manager, nil
 }
 
@@ -127,14 +126,18 @@ func newManagerWithStore(
 	nodeClient NodeClient,
 	config *ManagerConfig,
 ) *Manager {
+	// Workers outlive the startup and Create requests that launch them.
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 	manager := &Manager{
-		active:      make(map[string]*runtime),
-		activeTotal: make(map[Kind]int),
-		activeHosts: make(map[activeHostKey]int),
-		accepting:   true,
-		store:       store,
-		config:      config,
-		closeDone:   make(chan struct{}),
+		active:        make(map[string]*runtime),
+		activeTotal:   make(map[Kind]int),
+		activeHosts:   make(map[activeHostKey]int),
+		accepting:     true,
+		store:         store,
+		config:        config,
+		workerCtx:     workerCtx,
+		cancelWorkers: cancelWorkers,
+		closeDone:     make(chan struct{}),
 	}
 	manager.runtimeDeps = runtimeDependencies{
 		store:      store,
@@ -173,8 +176,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		UpdatedAt:   now,
 		revision:    1,
 	}
-	supervisorCtx, cancel := context.WithCancel(context.Background())
-	runtime := newRuntime(newJob, false, cancel, &m.runtimeDeps)
+	runtime := newRuntime(newJob, false, &m.runtimeDeps)
 
 	m.mu.Lock()
 	if !m.accepting {
@@ -199,7 +201,6 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	m.mu.Unlock()
 
 	if err := m.store.Create(ctx, newJob); err != nil {
-		cancel()
 		m.persistenceFailures.Add(1)
 		m.mu.Lock()
 		m.unregisterLocked(runtime)
@@ -207,7 +208,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		m.wg.Done()
 		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, newJob.ID, err)
 	}
-	go m.runJobRuntime(supervisorCtx, runtime)
+	go m.runJobRuntime(runtime)
 	return cloneJob(newJob), nil
 }
 
@@ -302,14 +303,10 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.closeOnce.Do(func() {
 		m.mu.Lock()
 		m.accepting = false
-		if m.cleanupCancel != nil {
-			m.cleanupCancel()
-		}
-		for _, runtime := range m.active {
-			runtime.cancel()
-		}
 		m.mu.Unlock()
 
+		// Worker ownership does not depend on the active-job lookup.
+		m.cancelWorkers()
 		go func() {
 			m.wg.Wait()
 			m.closeErr = m.store.Close()
@@ -322,6 +319,16 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (m *Manager) start(ctx context.Context) error {
+	if err := m.recover(ctx); err != nil {
+		// Recovery may have started supervisors even if the startup context is canceled.
+		_ = m.Shutdown(context.Background())
+		return fmt.Errorf("recover jobs: %w", err)
+	}
+	m.startCleanup()
+	return nil
 }
 
 func (m *Manager) recover(ctx context.Context) error {
@@ -347,13 +354,12 @@ func (m *Manager) recover(ctx context.Context) error {
 			if _, ok := m.config.policy(storedJob.Kind); !ok {
 				return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
 			}
-			supervisorCtx, cancel := context.WithCancel(context.Background())
-			runtime := newRuntime(storedJob, true, cancel, &m.runtimeDeps)
+			runtime := newRuntime(storedJob, true, &m.runtimeDeps)
 			m.mu.Lock()
 			m.registerLocked(runtime)
 			m.wg.Add(1)
 			m.mu.Unlock()
-			go m.runJobRuntime(supervisorCtx, runtime)
+			go m.runJobRuntime(runtime)
 		}
 		m.recoveredJobs.Add(uint64(len(jobs)))
 		if len(jobs) < query.Limit {
@@ -363,11 +369,8 @@ func (m *Manager) recover(ctx context.Context) error {
 }
 
 func (m *Manager) startCleanup() {
-	cleanupCtx, cancel := context.WithCancel(context.Background())
-	m.mu.Lock()
-	m.cleanupCancel = cancel
+	// Startup registers cleanup before publishing the manager to Shutdown callers.
 	m.wg.Add(1)
-	m.mu.Unlock()
 	go func(ctx context.Context) {
 		defer m.wg.Done()
 		ticker := time.NewTicker(jobCleanupInterval)
@@ -387,7 +390,7 @@ func (m *Manager) startCleanup() {
 				return
 			}
 		}
-	}(cleanupCtx)
+	}(m.workerCtx)
 }
 
 func (m *Manager) registerLocked(runtime *runtime) {
@@ -412,12 +415,12 @@ func (m *Manager) activeRuntime(jobID string) *runtime {
 	return m.active[jobID]
 }
 
-func (m *Manager) runJobRuntime(ctx context.Context, runtime *runtime) {
+func (m *Manager) runJobRuntime(runtime *runtime) {
 	defer m.wg.Done()
 	defer func() {
 		m.mu.Lock()
 		m.unregisterLocked(runtime)
 		m.mu.Unlock()
 	}()
-	runtime.run(ctx)
+	runtime.run(m.workerCtx)
 }

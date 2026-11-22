@@ -52,14 +52,12 @@ type runtime struct {
 	transitionGate chan struct{}
 	wakeCh         chan struct{}
 	recovered      bool
-	cancel         context.CancelFunc
 	dependencies   *runtimeDependencies
 }
 
 func newRuntime(
 	job *Job,
 	recovered bool,
-	cancel context.CancelFunc,
 	dependencies *runtimeDependencies,
 ) *runtime {
 	return &runtime{
@@ -70,14 +68,14 @@ func newRuntime(
 		transitionGate: make(chan struct{}, 1),
 		wakeCh:         make(chan struct{}, 1),
 		recovered:      recovered,
-		cancel:         cancel,
 		dependencies:   dependencies,
 	}
 }
 
 func (r *runtime) run(ctx context.Context) {
 	if r.recovered {
-		if !r.wait(ctx, recoveryStartJitter(
+		// Rollback can cancel a batch before all its goroutines are scheduled.
+		if ctx.Err() != nil || !r.wait(ctx, recoveryStartJitter(
 			r.dependencies.policy.statusPollInterval,
 		)) {
 			return
