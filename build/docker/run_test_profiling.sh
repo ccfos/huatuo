@@ -82,8 +82,16 @@ run_scope() {
   }' > "${output_dir}/workload.request.json" || return 1
 		"${KUBECTL[@]}" -n "$namespace" create -f "${output_dir}/workload.request.json" \
 			>> "${output_dir}/kubernetes.log" || return 1
-		kubectl --request-timeout=310s -n "$namespace" wait pod/workload --for=condition=Ready --timeout=300s \
-			>> "${output_dir}/kubernetes.log" || return 1
+		if ! kubectl --request-timeout=310s -n "$namespace" wait pod/workload --for=condition=Ready --timeout=300s \
+			>> "${output_dir}/kubernetes.log"; then
+			"${KUBECTL[@]}" -n "$namespace" get pod workload -o json > "${output_dir}/workload.response.json" \
+				&& jq -r '.status.containerStatuses[]? | .state | to_entries[]
+   | "Workload \(.key): \(.value.reason // "unknown"): \(.value.message // "")"' \
+					"${output_dir}/workload.response.json" >&2
+			"${KUBECTL[@]}" -n "$namespace" describe pod workload > "${output_dir}/pod-describe.log" 2>&1 || true
+			printf 'Workload is not ready; inspect %s/pod-describe.log and workload.log.\n' "$output_dir" >&2
+			return 1
+		fi
 		"${KUBECTL[@]}" -n "$namespace" get pod workload -o json > "${output_dir}/workload.response.json" || return 1
 		container_id=$(jq -er '.status.containerStatuses[] | select(.name == "workload")
    | .containerID | sub("^[^:]+://"; "") | select(test("^[0-9a-fA-F]{12,64}$"))' \
