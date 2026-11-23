@@ -66,6 +66,9 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := output.RequireWindow(window); err != nil {
+		return err
+	}
 
 	if len(window.Aggregated.Samples) == 0 {
 		return nil

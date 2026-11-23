@@ -33,6 +33,9 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := output.RequireWindow(window); err != nil {
+		return err
+	}
 
 	// Build the profile first: opening the destination truncates an existing
 	// result or creates a new file, which must not happen on conversion failure.
