@@ -45,3 +45,27 @@ func TestMemoryEventsBlacklist(t *testing.T) {
 		}
 	}
 }
+
+func TestParseKiBFieldRejectsOverflow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  uint64
+		ok    bool
+	}{
+		{name: "safe", input: "18446744073709551 kB", want: 18446744073709551 * 1024, ok: true},
+		{name: "overflow", input: "18446744073709552 kB"},
+		{name: "invalid", input: "not-a-number kB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseKiBField(tc.input)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("parseKiBField(%q) = (%d, %t), want (%d, %t)", tc.input, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+
+	if got, ok := parseKiBField("18446744073709551615 kB"); ok || got != 0 {
+		t.Fatalf("parseKiBField(max) = (%d, %t), want (0, false)", got, ok)
+	}
+}
