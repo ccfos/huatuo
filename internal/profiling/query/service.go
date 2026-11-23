@@ -90,8 +90,8 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	if filter.Scope == observation.ScopeUnknown {
 		return nil, fmt.Errorf("%w: scope must be host or container", ErrInvalidQuery)
 	}
-	if filter.Scope == observation.ScopeHost && (filter.ContainerID != "" || filter.ContainerHostname != "" || filter.ContainerHostNamespace != "") {
-		return nil, fmt.Errorf("%w: host scope cannot include a container filter", ErrInvalidQuery)
+	if err := validateProfileHostScope(filter); err != nil {
+		return nil, err
 	}
 	if filter.Scope == observation.ScopeContainer && filter.ContainerID == "" && filter.ID == "" {
 		return nil, fmt.Errorf("%w: container scope requires a container id or task id", ErrInvalidQuery)
@@ -261,6 +261,19 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	}, nil
 }
 
+func validateProfileHostScope(filter *profilingstore.Filter) error {
+	if filter.Scope != observation.ScopeHost {
+		return nil
+	}
+
+	if filter.ContainerID != "" || filter.ContainerName != "" || filter.ContainerHostname != "" ||
+		filter.ContainerNamespace != "" || filter.ContainerType != "" || filter.ContainerQoS != "" {
+		return fmt.Errorf("%w: host scope cannot include a container filter", ErrInvalidQuery)
+	}
+
+	return nil
+}
+
 func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher) error {
 	if matcher.Type != labels.MatchEqual {
 		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
@@ -277,16 +290,22 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 		filter.Scope = scope
 	case "id":
 		filter.ID = matcher.Value
-	case "region":
+	case observation.FieldRegion:
 		filter.Region = matcher.Value
-	case "hostname":
+	case observation.FieldHostname:
 		filter.Hostname = matcher.Value
-	case "container_id":
+	case observation.FieldContainerName:
+		filter.ContainerName = matcher.Value
+	case observation.FieldContainerID:
 		filter.ContainerID = matcher.Value
-	case "container_hostname":
+	case observation.FieldContainerHostname:
 		filter.ContainerHostname = matcher.Value
-	case "container_host_namespace":
-		filter.ContainerHostNamespace = matcher.Value
+	case observation.FieldContainerNamespace:
+		filter.ContainerNamespace = matcher.Value
+	case observation.FieldContainerType:
+		filter.ContainerType = matcher.Value
+	case observation.FieldContainerQoS:
+		filter.ContainerQoS = matcher.Value
 	case "__profile_type__":
 		filter.ProfileType = matcher.Value
 	default:
@@ -425,7 +444,12 @@ func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.P
 //	response: typesv1.LabelNamesResponse
 func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"id", "scope", "region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: []string{
+			"id", "scope", observation.FieldRegion, observation.FieldHostname,
+			observation.FieldContainerID, observation.FieldContainerName,
+			observation.FieldContainerHostname, observation.FieldContainerNamespace,
+			observation.FieldContainerType, observation.FieldContainerQoS,
+		},
 	}
 	return response, nil
 }
@@ -461,6 +485,10 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 				profileTypePresent = true
 			}
 		}
+	}
+
+	if err := validateProfileHostScope(filter); err != nil {
+		return nil, err
 	}
 
 	if !profileTypePresent {

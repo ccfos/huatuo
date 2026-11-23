@@ -36,6 +36,7 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
@@ -166,9 +167,8 @@ func decodeBPFMapData(data []byte, target any) error {
 }
 
 const (
-	ioControlHostNamespaceKey = "HostNamespace"
-	ioControlHostScope        = "host"
-	ioControlOtherScope       = "other"
+	ioControlHostScope  = "host"
+	ioControlOtherScope = "other"
 )
 
 // A CPU publishes count and wait together. Read that word once and subtract
@@ -687,7 +687,7 @@ type ioControlContainerSource func() (map[string]*pod.Container, error)
 type ioControlBPFLoader func(string, map[string]any) (bpf.BPF, error)
 
 // Public label values form a comparable key; consumers compare the whole set.
-type ioControlContainerLabels [5]string
+type ioControlContainerLabels [6]string
 
 type ioControlDeviceOperation struct {
 	device    string
@@ -838,15 +838,16 @@ func ioControlPublicContainerLabels(
 	if container == nil {
 		return ioControlContainerLabels{}, errors.New("nil iocontrol container")
 	}
-	hostNamespace, ok := container.Labels[ioControlHostNamespaceKey].(string)
+	hostNamespace, ok := container.Labels[observation.FieldContainerNamespace].(string)
 	if !ok {
 		return ioControlContainerLabels{}, fmt.Errorf(
 			"container %q has no string %s label",
 			container.ID,
-			ioControlHostNamespaceKey,
+			observation.FieldContainerNamespace,
 		)
 	}
 	return ioControlContainerLabels{
+		container.ID,
 		container.Hostname,
 		container.Name,
 		container.Type.String(),

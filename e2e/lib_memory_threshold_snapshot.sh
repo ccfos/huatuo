@@ -210,7 +210,7 @@ assert_snapshot_event() {
 		and .tracer_type == "autotracing"
 		and .container_id == $id
 		and .container_hostname == $pod
-		and .container_host_namespace == $ns
+		and .container_namespace == $ns
 		and (.started_timestamp | type == "string")
 		and (.observed_timestamp | type == "string")
 		and .started_timestamp >= $triggered_at

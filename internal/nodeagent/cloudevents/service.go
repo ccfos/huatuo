@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ccfos/huatuo/internal/matcher"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -37,12 +38,15 @@ var (
 
 // Filters contains optional regular expressions applied to event fields.
 type Filters struct {
-	TracerName             string
-	Hostname               string
-	ContainerHostname      string
-	ContainerHostNamespace string
-	ContainerQoS           string
-	Region                 string
+	TracerName         string
+	Hostname           string
+	ContainerID        string
+	ContainerType      string
+	ContainerName      string
+	ContainerHostname  string
+	ContainerNamespace string
+	ContainerQoS       string
+	Region             string
 }
 
 // Service owns event subscription admission and filtering.
@@ -166,27 +170,42 @@ func newMatcher(filters *Filters) (*matcher.FieldMatcher[*tracingstore.Document]
 			Extract: func(document *tracingstore.Document) string { return document.TracerName },
 		},
 		{
-			Name:    "hostname",
+			Name:    observation.FieldHostname,
 			Pattern: filters.Hostname,
 			Extract: func(document *tracingstore.Document) string { return document.Hostname },
 		},
 		{
-			Name:    "container_hostname",
+			Name:    observation.FieldContainerID,
+			Pattern: filters.ContainerID,
+			Extract: func(document *tracingstore.Document) string { return document.ContainerID },
+		},
+		{
+			Name:    observation.FieldContainerType,
+			Pattern: filters.ContainerType,
+			Extract: func(document *tracingstore.Document) string { return document.ContainerType },
+		},
+		{
+			Name:    observation.FieldContainerName,
+			Pattern: filters.ContainerName,
+			Extract: func(document *tracingstore.Document) string { return document.ContainerName },
+		},
+		{
+			Name:    observation.FieldContainerHostname,
 			Pattern: filters.ContainerHostname,
 			Extract: func(document *tracingstore.Document) string { return document.ContainerHostname },
 		},
 		{
-			Name:    "container_host_namespace",
-			Pattern: filters.ContainerHostNamespace,
-			Extract: func(document *tracingstore.Document) string { return document.ContainerHostNamespace },
+			Name:    observation.FieldContainerNamespace,
+			Pattern: filters.ContainerNamespace,
+			Extract: func(document *tracingstore.Document) string { return document.ContainerNamespace },
 		},
 		{
-			Name:    "container_qos",
+			Name:    observation.FieldContainerQoS,
 			Pattern: filters.ContainerQoS,
 			Extract: func(document *tracingstore.Document) string { return document.ContainerQoS },
 		},
 		{
-			Name:    "region",
+			Name:    observation.FieldRegion,
 			Pattern: filters.Region,
 			Extract: func(document *tracingstore.Document) string { return document.Region },
 		},

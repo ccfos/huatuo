@@ -53,9 +53,11 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	cfg := config.Get().Storage.Elasticsearch
 	if !d.opts.DisableStorage && cfg.Enabled() {
 		cleanup, err = profiling.Register(context.Background(), srv, profilingstore.Config{
-			Addresses: strutil.SplitCommaList(cfg.Address), Username: cfg.Username,
-			Password: cfg.Password, Index: cfg.Index,
-		}, d.opts.Region)
+			Addresses: strutil.SplitCommaList(cfg.Address),
+			Username:  cfg.Username,
+			Password:  cfg.Password,
+			Index:     cfg.Index,
+		}, &d.metadata)
 		if err != nil {
 			return nil, err
 		}

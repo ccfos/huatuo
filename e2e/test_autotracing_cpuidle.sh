@@ -283,7 +283,7 @@ assert_cpuidle_events() {
 		def timestamp: type == "string" and test("^[0-9]{4}-.*Z$");
 		length > 0 and all(.[];
 			.tracer_name == "cpuidle" and .tracer_type == "autotracing"
-			and .container_hostname == $pod and .container_host_namespace == $ns
+			and .container_hostname == $pod and .container_namespace == $ns
 			and .container_type == "normal" and .container_qos == "burstable"
 			and .hostname == $host and .region == "e2e"
 			and (.tracer_id | type == "string" and length > 0)
@@ -442,7 +442,7 @@ cpuidle_capture a user 300 total
 assert_cpuidle_cooldown
 cpuidle_finish
 
-cpuidle_include_field=container_host_namespace
+cpuidle_include_field=container_namespace
 cpuidle_include="^${CPUIDLE_NS}$"
 cpuidle_exclude="^${CPUIDLE_PREFIX}-a$"
 cpuidle_begin exclude-priority

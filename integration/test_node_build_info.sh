@@ -36,4 +36,4 @@ integration_huatuo_bamai_start write_config_bamai_default \
 
 assert_build_info "${HUATUO_BAMAI_ADDR}" huatuo_bamai "$(uname -n)" "${BUILD_INFO_REGION}"
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" huatuo-bamai
-log_info "build-info matches /version and preserves host/region labels"
+log_info "build-info matches /version and preserves hostname/region labels"

@@ -23,6 +23,7 @@ import (
 
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/metric/runtime"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 func TestRegisterCollector(t *testing.T) {
@@ -186,8 +187,8 @@ func TestRegisterCollectorInfo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
 			wantLabels := map[string]string{
-				metric.LabelHost:   metric.DefaultHostname(),
-				metric.LabelRegion: metric.DefaultRegion(),
+				observation.FieldHostname: metric.DefaultHostname(),
+				observation.FieldRegion:   metric.DefaultRegion(),
 			}
 
 			maps.Copy(wantLabels, tt.labels)

@@ -169,7 +169,7 @@ assert_runqlat_cpuset() {
 }
 
 runqlat_target() {
-	jq -n --arg pod "$1" --arg ns "${RUNQLAT_NS}" '{Pod: $pod, Container: "worker", Namespace: $ns}'
+	jq -n --arg id "$(< "${RUNQLAT_DIR}/$1.id")" --arg pod "$1" --arg ns "${RUNQLAT_NS}" '{ID: $id, Pod: $pod, Container: "worker", Namespace: $ns}'
 }
 
 runqlat_targets() {
@@ -201,11 +201,11 @@ assert_runqlat_metrics() {
    and .huatuo_bamai_tracing_status_running.samples[0].value == 1
    and ([.huatuo_bamai_tracing_status_hitcount.samples[]? | select(.labels.tracing == "runqlat")] |
     length == 1 and .[0].value == 0)
-  then {Host: zones(.huatuo_bamai_runqlat_latency; {host: $host, region: "e2e"}),
+  then {Host: zones(.huatuo_bamai_runqlat_latency; {hostname: $host, region: "e2e"}),
    Containers: (reduce $targets[] as $t ({}; .[$t.Pod] =
     ($metrics | zones(.huatuo_bamai_runqlat_container_latency;
-     {host: $host, region: "e2e", container_host: $t.Pod, container_name: $t.Container,
-      container_hostnamespace: $t.Namespace, container_type: "normal", container_level: "burstable"}))))}
+     {hostname: $host, region: "e2e", container_id: $t.ID, container_hostname: $t.Pod, container_name: $t.Container,
+      container_namespace: $t.Namespace, container_type: "normal", container_qos: "burstable"}))))}
   else error("runqlat collector or tracing status is unhealthy") end
  ' "${file}"
 }
@@ -258,7 +258,7 @@ runqlat_absent() {
 	local pod=$1
 	cpu_metrics_read "${RUNQLAT_DIR}/absent.metrics.json" || return 1
 	jq -e --arg pod "${pod}" '
-  [.huatuo_bamai_runqlat_container_latency.samples[]? | select(.labels.container_host == $pod)] | length == 0
+  [.huatuo_bamai_runqlat_container_latency.samples[]? | select(.labels.container_hostname == $pod)] | length == 0
  ' "${RUNQLAT_DIR}/absent.metrics.json" > /dev/null
 }
 

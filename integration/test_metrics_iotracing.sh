@@ -101,7 +101,7 @@ run_fixture_metrics() {
 			sub(/.*disk="/, "", disk)
 			sub(/".*/, "", disk)
 			if (!(name in expected) || !(disk in wanted)) fail("unexpected series: " $0)
-			if ($1 !~ /host="huatuo-dev"/ || $1 !~ /region="dev"/) fail("missing public labels: " $0)
+			if ($1 !~ /hostname="huatuo-dev"/ || $1 !~ /region="dev"/) fail("missing public labels: " $0)
 			rows[disk, name]++
 			if ($2 !~ /^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/) fail("invalid value: " $0)
 			value = $2 + 0
@@ -288,7 +288,7 @@ EOF
 			name = $1; sub(/\{.*/, "", name)
 			if (!(name in expected)) fail("unexpected metric: " $0)
 			rows[name]++
-			if ($1 !~ /[{,]host="huatuo-dev"/ || $1 !~ /[{,]region="dev"/) fail("incorrect labels: " $0)
+			if ($1 !~ /[{,]hostname="huatuo-dev"/ || $1 !~ /[{,]region="dev"/) fail("incorrect labels: " $0)
 			labels = $1; sub(/^[^{]*\{/, "", labels); sub(/\}$/, "", labels)
 			if (split(labels, label, ",") != 3) fail("unexpected label set: " $0)
 			if ($2 !~ /^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/) fail("nonfinite or negative value: " $0)

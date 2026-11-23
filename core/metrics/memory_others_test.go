@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -87,7 +88,10 @@ func TestMemoryPerCPUSnapshots(t *testing.T) {
 		}
 		return out
 	}
-	container := &pod.Container{Name: "workload", Labels: map[string]any{"HostNamespace": "test"}}
+	container := &pod.Container{
+		Name:   "workload",
+		Labels: map[string]any{observation.FieldContainerNamespace: "test"},
+	}
 	for _, kind := range []string{"stall", "reclaim"} {
 		t.Run(kind, func(t *testing.T) {
 			decode := memcgReclaimMetrics

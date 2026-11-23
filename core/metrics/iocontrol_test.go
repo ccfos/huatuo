@@ -32,6 +32,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/ccfos/huatuo/pkg/observation"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
 	"github.com/ccfos/huatuo/internal/pod"
@@ -267,7 +269,8 @@ func TestIOControlStatus(t *testing.T) {
 		got, err := readIOControlStatus(object)
 		require.NoError(t, err)
 		require.Equal(t, ioControlStatus{
-			Failure: 0x0102030405060708, DevicesChanged: 0x1112131415161718,
+			Failure:        0x0102030405060708,
+			DevicesChanged: 0x1112131415161718,
 		}, got)
 	})
 
@@ -275,7 +278,8 @@ func TestIOControlStatus(t *testing.T) {
 		for _, size := range []int{0, 1, 8, 15, 17, 24} {
 			t.Run(fmt.Sprint(size), func(t *testing.T) {
 				got, err := readIOControlStatus(&ioControlDeviceBPF{
-					mapID: 1, value: make([]byte, size),
+					mapID: 1,
+					value: make([]byte, size),
 				})
 				require.ErrorIs(t, err, types.ErrTracingStopped)
 				require.Zero(t, got)
@@ -433,7 +437,8 @@ func TestIOControlWaitSnapshot(t *testing.T) {
 		writeKey := key
 		writeKey.Operation = 1
 		object := &ioControlWaitSnapshotBPF{
-			mapName: mapName, mapID: 7,
+			mapName: mapName,
+			mapID:   7,
 			items: []bpf.MapItem{
 				item, ioControlWaitTestItem(otherKey, otherLanes...), ioControlWaitTestItem(writeKey, lanes...),
 			},
@@ -456,8 +461,9 @@ func TestIOControlWaitSnapshot(t *testing.T) {
 				keyData := make([]byte, size)
 				copy(keyData, item.Key)
 				object := &ioControlWaitSnapshotBPF{
-					mapName: mapName, mapID: 7,
-					items: []bpf.MapItem{{Key: keyData, Value: item.Value}},
+					mapName: mapName,
+					mapID:   7,
+					items:   []bpf.MapItem{{Key: keyData, Value: item.Value}},
 				}
 				got, err := captureIOControlWaitSnapshot(object, &ioControlHashReader{lookupBatch: object.dumpBatch}, mapName, 2)
 				require.ErrorIs(t, err, types.ErrTracingStopped)
@@ -486,7 +492,9 @@ func TestIOControlWaitSnapshot(t *testing.T) {
 			badItem := ioControlWaitTestItem(test.key)
 			badItem.Value = test.value
 			object := &ioControlWaitSnapshotBPF{
-				mapName: mapName, mapID: 7, items: []bpf.MapItem{badItem},
+				mapName: mapName,
+				mapID:   7,
+				items:   []bpf.MapItem{badItem},
 			}
 			got, err := captureIOControlWaitSnapshot(object, &ioControlHashReader{lookupBatch: object.dumpBatch}, mapName, test.possibleCPUs)
 			require.ErrorIs(t, err, types.ErrTracingStopped)
@@ -513,7 +521,10 @@ func TestIOControlWaitSnapshot(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			object := &ioControlWaitSnapshotBPF{
-				mapName: mapName, mapID: test.mapID, items: test.items, err: test.err,
+				mapName: mapName,
+				mapID:   test.mapID,
+				items:   test.items,
+				err:     test.err,
 			}
 			got, err := captureIOControlWaitSnapshot(object, &ioControlHashReader{lookupBatch: object.dumpBatch}, mapName, 2)
 			require.ErrorIs(t, err, test.want)
@@ -619,8 +630,10 @@ func TestIOControlWaitCounterDeltas(t *testing.T) {
 
 func ioControlWaitTestMetricDefinition() ioControlWaitMetrics {
 	return ioControlWaitMetrics{
-		countName: "delayed_io_count", countHelp: "Delayed IO count.",
-		averageName: "delayed_average_wait_ms", averageHelp: "Average wait in milliseconds.",
+		countName:   "delayed_io_count",
+		countHelp:   "Delayed IO count.",
+		averageName: "delayed_average_wait_ms",
+		averageHelp: "Average wait in milliseconds.",
 	}
 }
 
@@ -702,10 +715,11 @@ func TestIOControlWaitMetricsRawBaselines(t *testing.T) {
 func TestIOControlWaitMetricsMergesLabelsAfterCPUDeltas(t *testing.T) {
 	startedAt := time.Unix(100, 0)
 	containerA := newIOControlAttributionTestContainer("container-a", 0x11, startedAt)
-	containerB := newIOControlAttributionTestContainer("container-b", 0x22, startedAt.Add(time.Second))
-	containers := pod.BuildCssContainers(map[string]*pod.Container{
-		containerA.ID: containerA, containerB.ID: containerB,
-	}, subsystem.SubsystemBlkIO)
+	containerB := newIOControlAttributionTestContainer(containerA.ID, 0x22, startedAt.Add(time.Second))
+	containers := map[uint64]*pod.Container{
+		0x11: containerA,
+		0x22: containerB,
+	}
 	keyA := ioControlWaitKey{CSS: 0x11, CSSSerial: 111, Major: 8}
 	keyB := ioControlWaitKey{CSS: 0x22, CSSSerial: 222, Major: 8}
 	newSerialA := ioControlWaitKey{CSS: 0x11, CSSSerial: 444, Major: 8}
@@ -937,8 +951,11 @@ func TestIOControlHashBatch(t *testing.T) {
 						lanes = possibleCPUs
 					}
 					m, err := ebpf.NewMap(&ebpf.MapSpec{
-						Type: mapType, KeySize: 40, ValueSize: 8,
-						MaxEntries: maxEntries, Flags: flags,
+						Type:       mapType,
+						KeySize:    40,
+						ValueSize:  8,
+						MaxEntries: maxEntries,
+						Flags:      flags,
 					})
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, m.Close()) })
@@ -992,7 +1009,11 @@ func TestIOControlHashBatchPropagatesErrno(t *testing.T) {
 				flags = unix.BPF_F_NO_PREALLOC
 			}
 			m, err := ebpf.NewMap(&ebpf.MapSpec{
-				Type: mapType, KeySize: 40, ValueSize: 8, MaxEntries: 2, Flags: flags,
+				Type:       mapType,
+				KeySize:    40,
+				ValueSize:  8,
+				MaxEntries: 2,
+				Flags:      flags,
 			})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, m.Close()) })
@@ -1000,8 +1021,11 @@ func TestIOControlHashBatchPropagatesErrno(t *testing.T) {
 
 			t.Run("permission", func(t *testing.T) {
 				writeOnly, err := ebpf.NewMap(&ebpf.MapSpec{
-					Type: mapType, KeySize: 40, ValueSize: 8, MaxEntries: 2,
-					Flags: flags | unix.BPF_F_WRONLY,
+					Type:       mapType,
+					KeySize:    40,
+					ValueSize:  8,
+					MaxEntries: 2,
+					Flags:      flags | unix.BPF_F_WRONLY,
 				})
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, writeOnly.Close()) })
@@ -1023,8 +1047,11 @@ func TestIOControlHashBatchPropagatesErrno(t *testing.T) {
 func TestIOControlHashBatchConcurrentPerCPUUpdates(t *testing.T) {
 	requireIOControlBPFPermission(t)
 	m, err := ebpf.NewMap(&ebpf.MapSpec{
-		Type: ebpf.PerCPUHash, KeySize: 40, ValueSize: 8, MaxEntries: 2,
-		Flags: unix.BPF_F_NO_PREALLOC,
+		Type:       ebpf.PerCPUHash,
+		KeySize:    40,
+		ValueSize:  8,
+		MaxEntries: 2,
+		Flags:      unix.BPF_F_NO_PREALLOC,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, m.Close()) })
@@ -1122,7 +1149,10 @@ func requireIOControlBPFPermission(t *testing.T) {
 		t.Skipf("BPF initialization unavailable: %v", err)
 	}
 	m, err := ebpf.NewMap(&ebpf.MapSpec{
-		Type: ebpf.Hash, KeySize: 4, ValueSize: 4, MaxEntries: 1,
+		Type:       ebpf.Hash,
+		KeySize:    4,
+		ValueSize:  4,
+		MaxEntries: 1,
 	})
 	if errors.Is(err, ebpf.ErrNotSupported) || errors.Is(err, unix.EPERM) ||
 		errors.Is(err, unix.EACCES) {
@@ -1192,7 +1222,7 @@ func newIOControlAttributionTestContainer(
 			subsystem.SubsystemBlkIO: css,
 		},
 		Labels: map[string]any{
-			ioControlHostNamespaceKey: "shared-namespace",
+			observation.FieldContainerNamespace: "shared-namespace",
 		},
 	}
 }
@@ -1207,4 +1237,84 @@ func (source *ioControlAttributionTestSource) read() (
 	error,
 ) {
 	return source.containers, source.err
+}
+
+func TestIOControlWaitMetricsSeparatesContainerIDs(t *testing.T) {
+	containerA := newIOControlAttributionTestContainer("container-a", 0x11, time.Unix(100, 0))
+	containerB := newIOControlAttributionTestContainer("container-b", 0x22, time.Unix(100, 0))
+	containers := map[uint64]*pod.Container{
+		0x11: containerA,
+		0x22: containerB,
+	}
+	current := ioControlWaitSnapshot{
+		{
+			CSS:       0x11,
+			CSSSerial: 111,
+			Major:     8,
+		}: {{
+			IOCount:  2,
+			Wait10US: 200,
+		}},
+		{
+			CSS:       0x22,
+			CSSSerial: 222,
+			Major:     8,
+		}: {{
+			IOCount:  3,
+			Wait10US: 900,
+		}},
+	}
+	definition := ioControlWaitTestMetricDefinition()
+	got, err := buildIOControlWaitMetrics(nil, current, containers, ioControlTestDiskNames(), definition, nil)
+	require.NoError(t, err)
+
+	containerLabels := map[string]string{"disk": "sda", "operation": "read"}
+	hostLabels := map[string]string{"disk": "sda", "operation": "read", "scope": ioControlHostScope}
+	want := []*metric.Data{
+		metric.NewContainerGaugeData(containerA, definition.countName, 2, definition.countHelp, containerLabels),
+		metric.NewContainerGaugeData(containerA, definition.averageName, 1, definition.averageHelp, containerLabels),
+		metric.NewContainerGaugeData(containerB, definition.countName, 3, definition.countHelp, containerLabels),
+		metric.NewContainerGaugeData(containerB, definition.averageName, 3, definition.averageHelp, containerLabels),
+		metric.NewGaugeData(definition.countName, 5, definition.countHelp, hostLabels),
+		metric.NewGaugeData(definition.averageName, 2.2, definition.averageHelp, hostLabels),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("public metric count = %d, want %d for independent container IDs", len(got), len(want))
+	}
+	require.ElementsMatch(t, want, got, "container IDs must retain independent public IO series")
+}
+
+// Keep the exported series count fixed across schema changes: distinct IDs also
+// have distinct names, while shared CSS entries refer to one container identity.
+func BenchmarkIOControlWaitIntervals(b *testing.B) {
+	const count = 128
+	for _, shared := range []bool{false, true} {
+		name := "distinct containers"
+		if shared {
+			name = "shared container"
+		}
+		b.Run(name, func(b *testing.B) {
+			containers := make(map[uint64]*pod.Container, count)
+			for index := range uint64(count) {
+				id := fmt.Sprintf("container-%d", index)
+				if shared {
+					id = "container-shared"
+				}
+				container := newIOControlAttributionTestContainer(id, index+1, time.Unix(100, 0))
+				container.Name = id
+				containers[index+1] = container
+			}
+			counters := ioControlWaitCounters{
+				IOCount:  1,
+				Wait10US: 100,
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				intervals := newIOControlWaitIntervals()
+				for css := range containers {
+					intervals.add(containers, css, "sda", "read", counters)
+				}
+			}
+		})
+	}
 }

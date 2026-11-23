@@ -64,8 +64,11 @@ Content-Type: application/json
   "filters": {
     "tracer_name": "<regex>",
     "hostname": "<regex>",
+    "container_id": "<regex>",
+    "container_type": "<regex>",
+    "container_name": "<regex>",
     "container_hostname": "<regex>",
-    "container_host_namespace": "<regex>",
+    "container_namespace": "<regex>",
     "container_qos": "<regex>",
     "region": "<regex>"
   }
@@ -78,12 +81,16 @@ Content-Type: application/json
 |----------------------------|------|--------|----------------------------------------------|
 | `tracer_name` | string | No | Filter by collector name; supports regular expressions |
 | `hostname` | string | No | Filter by node hostname; supports regular expressions |
+| `container_id` | string | No | Filter by the full runtime container ID; supports regular expressions |
+| `container_type` | string | No | Filter by container classification, such as `normal`, `sidecar`, or `daemonSet`; supports regular expressions |
+| `container_name` | string | No | Filter by container name; supports regular expressions |
 | `container_hostname` | string | No | Filter by container hostname; supports regular expressions |
-| `container_host_namespace` | string | No | Filter by container namespace; supports regular expressions |
+| `container_namespace` | string | No | Filter by container namespace; supports regular expressions |
 | `container_qos` | string | No | Filter by container QoS; supports regular expressions |
 | `region` | string | No | Filter by region; supports regular expressions |
 
 - All filter fields are optional; omitted or empty fields match all values.
+- Regular expressions can match a substring of the field value. Use `^` and `$` for an exact match. For example, select an instance and classification with `"container_id": "^<full-container-id>$"` and `"container_type": "^normal$"`, replacing `<full-container-id>` with the full container ID.
 - Multiple fields must **all match** (AND semantics).
 - Filters run on the server; only matching events are delivered.
 
@@ -155,7 +162,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
   -H "Connection: keep-alive" \
   -d '{
     "filters": {
-      "container_host_namespace": "^prod$"
+      "container_namespace": "^prod$"
     }
   }'
 ```
@@ -197,10 +204,11 @@ The `data` field contains a standard HUATUO event record:
     "tracer_name": "memory_oom_kill",
     "tracer_id": "abc123",
     "tracer_run_type": "auto",
-    "container_id": "d3f1a2b4c5e6",
+    "container_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "container_name": "app",
     "container_hostname": "app-pod",
-    "container_host_namespace": "prod",
-    "container_type": "docker",
+    "container_namespace": "prod",
+    "container_type": "normal",
     "container_qos": "guaranteed"
   }
 }
@@ -218,9 +226,10 @@ The `data` field contains a standard HUATUO event record:
 | `tracer_id` | string | Unique event instance ID |
 | `tracer_run_type` | string | Collection mode: `auto` (automatically triggered) or `manual` |
 | `container_id` | string | Container ID, present for container-level events |
+| `container_name` | string | Container name |
 | `container_hostname` | string | Container hostname |
-| `container_host_namespace` | string | Container namespace |
-| `container_type` | string | Container runtime type, such as docker or containerd |
+| `container_namespace` | string | Container namespace |
+| `container_type` | string | Container classification, such as `normal`, `sidecar`, or `daemonSet` |
 | `container_qos` | string | Container QoS class |
 
 ## Event Types

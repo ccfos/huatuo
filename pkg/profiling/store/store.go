@@ -43,20 +43,23 @@ type Config struct {
 
 // Filter selects profiling aggregation windows.
 type Filter struct {
-	Scope                  observation.Scope
-	ID                     string
-	Region                 string
-	Hostname               string
-	ContainerID            string
-	ContainerHostname      string
-	ContainerHostNamespace string
-	TracerID               string
-	StartTime              time.Time
-	EndTime                time.Time
-	ProfileType            string
-	Limit                  int
-	BatchSize              int
-	Offset                 int
+	Scope              observation.Scope
+	ID                 string
+	Region             string
+	Hostname           string
+	ContainerID        string
+	ContainerName      string
+	ContainerHostname  string
+	ContainerNamespace string
+	ContainerType      string
+	ContainerQoS       string
+	TracerID           string
+	StartTime          time.Time
+	EndTime            time.Time
+	ProfileType        string
+	Limit              int
+	BatchSize          int
+	Offset             int
 }
 
 // Store persists and queries profiling aggregation windows.
@@ -81,8 +84,11 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 		"initialized profile storage",
 	)
 	commits, err := newCommitStore(ctx, &driver.Config{
-		Driver: "elasticsearch", ESAddresses: config.Addresses, ESUsername: config.Username,
-		ESPassword: config.Password, ESIndex: config.Index,
+		Driver:      "elasticsearch",
+		ESAddresses: config.Addresses,
+		ESUsername:  config.Username,
+		ESPassword:  config.Password,
+		ESIndex:     config.Index,
 	})
 	if err != nil {
 		return nil, errors.Join(err, profileStore.Close(context.WithoutCancel(ctx)))
@@ -231,21 +237,24 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 			Value: value,
 		})
 	}
-	appendTextFilter(types.DocumentFieldRegion, filter.Region)
-	appendTextFilter(types.DocumentFieldContainerID, filter.ContainerID)
-	appendTextFilter(types.DocumentFieldContainerHostname, filter.ContainerHostname)
-	appendTextFilter(types.DocumentFieldContainerHostNamespace, filter.ContainerHostNamespace)
+	appendTextFilter(observation.FieldRegion, filter.Region)
+	appendTextFilter(observation.FieldContainerID, filter.ContainerID)
+	appendTextFilter(observation.FieldContainerName, filter.ContainerName)
+	appendTextFilter(observation.FieldContainerHostname, filter.ContainerHostname)
+	appendTextFilter(observation.FieldContainerNamespace, filter.ContainerNamespace)
+	appendTextFilter(observation.FieldContainerType, filter.ContainerType)
+	appendTextFilter(observation.FieldContainerQoS, filter.ContainerQoS)
 	appendTextFilter(fieldProfileType, filter.ProfileType)
-	appendTextFilter(types.DocumentFieldHostname, filter.Hostname)
+	appendTextFilter(observation.FieldHostname, filter.Hostname)
 	switch filter.Scope {
 	case observation.ScopeHost:
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldContainerID,
+			Field: observation.FieldContainerID,
 			Op:    driver.OpNotExists,
 		})
 	case observation.ScopeContainer:
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: types.DocumentFieldContainerID,
+			Field: observation.FieldContainerID,
 			Op:    driver.OpExists,
 		})
 	}
@@ -258,13 +267,14 @@ func normalizeAggregationField(field string) (string, error) {
 		return types.DocumentFieldTracerID, nil
 	case "profile_type":
 		return fieldProfileType, nil
-	case types.DocumentFieldRegion,
-		types.DocumentFieldHostname,
-		types.DocumentFieldContainerHostname,
-		types.DocumentFieldContainerHostNamespace,
-		types.DocumentFieldContainerID,
-		types.DocumentFieldContainerType,
-		types.DocumentFieldContainerQoS,
+	case observation.FieldRegion,
+		observation.FieldHostname,
+		observation.FieldContainerHostname,
+		observation.FieldContainerNamespace,
+		observation.FieldContainerID,
+		observation.FieldContainerName,
+		observation.FieldContainerType,
+		observation.FieldContainerQoS,
 		types.DocumentFieldTracerName,
 		types.DocumentFieldTracerID,
 		types.DocumentFieldTracerType:

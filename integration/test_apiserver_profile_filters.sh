@@ -97,7 +97,7 @@ assert_profile_label_names() {
 	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/label-names.err"
 	local result curl_status=0 name length
 	# LabelNamesResponse repeats string field 1; these ASCII names fit one-byte lengths.
-	for name in id scope region hostname container_id container_hostname container_host_namespace; do
+	for name in id scope region hostname container_id container_name container_hostname container_namespace container_type container_qos; do
 		printf -v length '%03o' "${#name}"
 		printf '\012%b%s' "\\${length}" "${name}"
 	done > "${expected_file}"
@@ -131,6 +131,10 @@ assert_profile_storage_request "create index" "${HUATUO_BAMAI_TEST_TMPDIR}/creat
   "container_id":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "region":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "container_hostname":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
+  "container_name":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
+  "container_namespace":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
+  "container_type":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
+  "container_qos":{"type":"text","fields":{"keyword":{"type":"keyword"}}},
   "uploaded_timestamp":{"type":"date"},
   "started_timestamp":{"type":"date"},
   "profile_data":{"properties":{"profile_type":{"type":"text","fields":{"keyword":{"type":"keyword"}}}}}
@@ -143,8 +147,8 @@ jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
   {tracer_id:"host-absent",hostname:"host-a"},
   {tracer_id:"host-null",hostname:"host-a",container_id:null},
   {tracer_id:"host-empty",hostname:"host-a",container_id:""},
-  {tracer_id:"container-exact",hostname:"host-a",container_id:"container-a",container_hostname:"pod-a"},
-  {tracer_id:"container-phrase",hostname:"host-a",container_id:"container-b",container_hostname:"pod-a extra"},
+  {tracer_id:"container-exact",hostname:"host-a",container_id:"container-a",container_name:"worker",container_hostname:"pod-a",container_namespace:"production",container_type:"normal",container_qos:"burstable"},
+  {tracer_id:"container-phrase",hostname:"host-a",container_id:"container-b",container_name:"worker extra",container_hostname:"pod-a extra",container_namespace:"production extra",container_type:"sidecar",container_qos:"guaranteed"},
   {tracer_id:"host-other",hostname:"host-b"},
   {tracer_id:"host-west",hostname:"host-a",region:"west"},
   {tracer_id:"host-phrase",hostname:"host-a extra"},
@@ -197,6 +201,12 @@ assert_profile_filter \
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"west\",hostname=\"host-a\",scope=\"host\"}" \
 	'\012\011host-west'
+# Shared metadata filters use exact values rather than token or phrase matches.
+for metadata_filter in 'container_name="worker"' 'container_namespace="production"' 'container_type="normal"' 'container_qos="burstable"'; do
+	assert_profile_filter \
+		"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"container\",${metadata_filter}}" \
+		'\012\017container-exact'
+done
 # Without scope, hostname is only a node filter and includes container records.
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\"}" \

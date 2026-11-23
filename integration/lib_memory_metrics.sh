@@ -36,7 +36,7 @@ assert_memory_metric_samples() {
 		|| fatal "${collector}: expected ${active} successful collector sample; actual scrape: $(grep 'scrape_collector_success{' "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt")"
 	awk -v prefix="${prefix}" -v pod="${target_pod}" '
   $1 == "#" && $2 == "TYPE" { types[$3] = $4; next }
-  index($1, prefix) == 1 && (pod == "" || index($0, "container_host=\"" pod "\"") > 0) {
+  index($1, prefix) == 1 && (pod == "" || index($0, "container_hostname=\"" pod "\"") > 0) {
    print
    name=$1; sub(/\{.*/, "", name); names[name]=1
   }

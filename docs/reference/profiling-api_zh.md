@@ -290,6 +290,7 @@ Grafana 使用 `/v1/profiling/flamegraph/` 下的 Pyroscope 兼容 Protobuf 接�
 
 每个标签只接受一个等值条件。在本接口上，通配值 `*`、`all` 和空字符串只表示取消该标签
 的限制，因此 `{scope="host",hostname="*",id="job-1"}` 仍只选中一个任务，`scope` 依旧必填。
+容器筛选还支持 `container_name`、`container_hostname`、`container_namespace`、`container_type` 和 `container_qos`，均匹配完整字段值；名称和命名空间不能代替容器 ID。
 重复同一个等值条件会被接受，而 `{hostname="host-a",hostname="host-b"}` 这类互相矛盾的
 同名条件会返回 `400`，错误信息同时给出两个值，因为一次查询无法同时选中两台主机。
 使用 `=` 以外运算符的条件（包括 `hostname!="*"`）同样会被拒绝。

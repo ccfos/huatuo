@@ -95,7 +95,7 @@ assert_softirq_metrics() {
   and ($f.help | type == "string" and length > 0)
   and ($f.samples | length) == 2 * ($max_cpu + 1) * 4
   and all($f.samples[];
-   .labels == {host: $host, region: "e2e", type: .labels.type,
+   .labels == {hostname: $host, region: "e2e", type: .labels.type,
     cpuid: .labels.cpuid, zone: .labels.zone}
    and (.labels.type as $type | ["NET_RX", "NET_TX"] | index($type) != null)
    and (.value | type == "number" and . >= 0 and . <= 9007199254740992 and floor == .))

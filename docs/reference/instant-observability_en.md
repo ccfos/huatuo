@@ -21,8 +21,9 @@ Container fields are provided only when a container is associated. Event-specifi
 | `region` | Node region |
 | `uploaded_timestamp` | Data upload time |
 | `container_id` | Container ID |
+| `container_name` | Container name |
 | `container_hostname` | Container hostname |
-| `container_host_namespace` | Container's Kubernetes namespace |
+| `container_namespace` | Container's Kubernetes namespace |
 | `container_type` | Container type, such as `normal` or `sidecar` |
 | `container_qos` | Container QoS class |
 | `tracer_name` | Event name, such as `sched_tick` or `memory_oom_kill` |

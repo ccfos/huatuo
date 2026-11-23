@@ -407,7 +407,7 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 # Use [[double-bracket]] syntax to define each rule entry.
 #
 # Supported fields:
-# - container_host_namespace: namespace label of the container
+# - container_namespace: namespace label of the container
 # - container_hostname: hostname of the container
 # - container_qos: qos level (guaranteed, burstable, besteffort)
 #
@@ -427,15 +427,15 @@ To view profiler results, open the Continuous Profiling host or container dashbo
 #
 # # Whitelist: only monitor application namespaces
 # [[AutoTracing.CPUIdle.Filter.Included]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = "^application-"
 #
 # # Combine: monitor application namespaces except kube-system
 # [[AutoTracing.CPUIdle.Filter.Included]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = ".*"
 # [[AutoTracing.CPUIdle.Filter.Excluded]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = "^kube-system$"
 ```
 

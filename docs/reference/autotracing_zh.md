@@ -26,7 +26,7 @@ CPU 示例使用 `perf`。使用 `profiler` 时，事件保留触发指标，pro
 | `uploaded_timestamp` | 数据上传时间 |
 | `container_id` | 容器 ID |
 | `container_hostname` | 容器主机名 |
-| `container_host_namespace` | 容器的 Kubernetes 命名空间 |
+| `container_namespace` | 容器的 Kubernetes 命名空间 |
 | `container_type` | 容器类型 |
 | `container_qos` | 容器 QoS 级别 |
 | `tracer_name` | 事件名称（如 `cpusys`、`memburst` 等） |

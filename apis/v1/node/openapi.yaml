@@ -557,11 +557,20 @@ components:
           type: string
         hostname:
           type: string
+        container_id:
+          x-go-name: ContainerID
+          type: string
+        container_type:
+          type: string
+        container_name:
+          type: string
         container_hostname:
           type: string
-        container_host_namespace:
+        container_namespace:
+          x-go-name: ContainerNamespace
           type: string
         container_qos:
+          x-go-name: ContainerQoS
           type: string
         region:
           type: string
@@ -611,13 +620,17 @@ components:
           description: UTC time when the kernel observed the event, when available, emitted with nine fractional digits.
         container_id:
           type: string
+        container_name:
+          type: string
         container_hostname:
           type: string
-        container_host_namespace:
+        container_namespace:
+          x-go-name: ContainerNamespace
           type: string
         container_type:
           type: string
         container_qos:
+          x-go-name: ContainerQoS
           type: string
         tracer_name:
           type: string

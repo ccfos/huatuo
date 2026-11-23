@@ -83,7 +83,7 @@ assert_cpu_tracing_status() {
 assert_cpu_tracing_metrics() {
 	local tracing=$1 enabled=$2 file=$3
 	jq -e --arg tracing "${tracing}" --arg host "$(hostname)" --argjson enabled "${enabled}" '
-  def valid_labels: .labels.host == $host and .labels.region == "e2e";
+  def valid_labels: .labels.hostname == $host and .labels.region == "e2e";
   .huatuo_bamai_tracing_status_running as $running |
   .huatuo_bamai_tracing_status_hitcount as $hits |
   ($running.type == "GAUGE" and ($running.samples | length) == 1
@@ -97,9 +97,9 @@ assert_cpu_tracing_metrics() {
 # Keep metric structure checks shared while each case owns its numeric expectations.
 CPU_METRICS_JQ='
 def container_labels($t; $host):
- {host: $host, region: "e2e", container_host: $t.Pod, container_name: $t.Container,
-  container_hostnamespace: $t.Namespace, container_type: ($t.Type // "normal"),
-  container_level: ($t.QoS // "burstable")};
+ {hostname: $host, region: "e2e", container_id: $t.ID, container_hostname: $t.Pod, container_name: $t.Container,
+  container_namespace: $t.Namespace, container_type: ($t.Type // "normal"),
+  container_qos: ($t.QoS // "burstable")};
 def cpu_metric($f; $labels):
  [$f.samples[]? | select(.labels | contains($labels))] as $rows |
  if $f.type == "GAUGE" and ($f.help | type == "string" and length > 0)
@@ -118,8 +118,8 @@ assert_cpu_metrics_absent() {
 	jq -e --arg prefix "huatuo_bamai_${collector}_" --slurpfile targets "${targets}" '
   [. | to_entries[] | select(.key | startswith($prefix)) | .value.samples[]? |
    .labels as $labels | select(any($targets[0][];
-    .Pod == $labels.container_host and .Container == $labels.container_name
-    and .Namespace == $labels.container_hostnamespace))] | length == 0
+    .Pod == $labels.container_hostname and .Container == $labels.container_name
+    and .Namespace == $labels.container_namespace))] | length == 0
  ' "${file}" > /dev/null
 }
 

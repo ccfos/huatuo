@@ -436,8 +436,8 @@ assert_dload_events() {
 		length > 0 and all(.[];
 			.tracer_name == "dload" and .tracer_type == "autotracing"
 			and (if $debug then
-				[.container_id, .container_hostname, .container_host_namespace] | all(.[]; text)
-			else .container_id == $id and .container_hostname == $pod and .container_host_namespace == $ns end)
+				[.container_id, .container_hostname, .container_namespace] | all(.[]; text)
+			else .container_id == $id and .container_hostname == $pod and .container_namespace == $ns end)
 			and .hostname == $host and .region == "e2e"
 			and (.tracer_id | type == "string" and length > 0)
 			and (.container_type | type == "string" and length > 0)

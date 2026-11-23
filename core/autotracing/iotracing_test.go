@@ -35,6 +35,7 @@ import (
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -101,7 +102,9 @@ func TestHandleIOTracingEventCompletesAfterSave(t *testing.T) {
 			})
 			store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
 				LocalFile: &tracingstore.LocalFileConfig{
-					Path: t.TempDir(), RotationSizeMiB: 1, MaxRotatedFiles: 1,
+					Path:            t.TempDir(),
+					RotationSizeMiB: 1,
+					MaxRotatedFiles: 1,
 				},
 			})
 			if err != nil {
@@ -113,12 +116,17 @@ func TestHandleIOTracingEventCompletesAfterSave(t *testing.T) {
 					t.Errorf("close tracing store: %v", err)
 				}
 			})
-			if err := tracing.EnableDocumentWriter(store, document.New("test-region")); err != nil {
+			if err := tracing.EnableDocumentWriter(store, document.New(&observation.Metadata{
+				Region:   "test-region",
+				Hostname: "test-node",
+			})); err != nil {
 				t.Fatal(err)
 			}
 			pending := &pendingIOTracingReason{
 				reason: &reasonSnapshot{
-					Type: string(ioReasonUtil), Device: "sda", IOStatus: diskStatus{IOUtil: 95},
+					Type:     string(ioReasonUtil),
+					Device:   "sda",
+					IOStatus: diskStatus{IOUtil: 95},
 				},
 				startedTimestamp: timeutil.Now(),
 				received:         make(chan struct{}),
@@ -188,8 +196,10 @@ func TestHandleIOTracingEventCompletesAfterSave(t *testing.T) {
 				t.Fatalf("saved document metadata = %+v", document)
 			}
 			wantData := ioStatusData{
-				Reason: pending.reason, FailureReason: report.FailureReason,
-				Processes: report.Processes, StallStacks: report.StallStacks,
+				Reason:        pending.reason,
+				FailureReason: report.FailureReason,
+				Processes:     report.Processes,
+				StallStacks:   report.StallStacks,
 			}
 			if !reflect.DeepEqual(document.TracerData, wantData) {
 				t.Fatalf("saved snapshot = %+v, want %+v", document.TracerData, wantData)
@@ -464,8 +474,8 @@ func assertDiskMetrics(t *testing.T, metrics []*metric.Data, device string, valu
 		assert.Equal(t, values[i], metrics[i].Value, name)
 		assert.NotEmpty(t, metrics[i].Help(), name)
 		labels := metrics[i].Labels()
-		delete(labels, metric.LabelHost)
-		delete(labels, metric.LabelRegion)
+		delete(labels, observation.FieldHostname)
+		delete(labels, observation.FieldRegion)
 		assert.Equal(t, map[string]string{"disk": device}, labels, name)
 	}
 }

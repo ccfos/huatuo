@@ -34,6 +34,7 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/require"
@@ -218,10 +219,15 @@ func TestBlkIOTraceCollectionHealth(t *testing.T) {
 			} else {
 				publishFailure()
 			}
-			session := &blkIOTraceSession{object: object, previous: &blkIOTraceSnapshot{
-				capturedAt: time.Unix(100, 0),
-				host:       map[blkIOTraceHostKey]*blkIOTraceCounters{{Major: 8}: {}},
-			}, devices: ioControlTestDiskNames(), cancel: cancel}
+			session := &blkIOTraceSession{
+				object: object,
+				previous: &blkIOTraceSnapshot{
+					capturedAt: time.Unix(100, 0),
+					host:       map[blkIOTraceHostKey]*blkIOTraceCounters{{Major: 8}: {}},
+				},
+				devices: ioControlTestDiskNames(),
+				cancel:  cancel,
+			}
 			collector := &blkIOTraceTracing{session: session}
 			metrics, err := collector.Update()
 			if test.want != "" {
@@ -312,12 +318,14 @@ func TestBlkIOTraceContainerIntervalPublicLabels(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			first := &pod.Container{
-				ID: "first", Name: "agent", Hostname: "node",
-				Type: pod.ContainerTypeDaemonSet, Qos: pod.ContainerQosLevelMin,
-				Labels: map[string]any{"HostNamespace": "namespace"},
+				ID:       "first",
+				Name:     "agent",
+				Hostname: "node",
+				Type:     pod.ContainerTypeDaemonSet,
+				Qos:      pod.ContainerQosLevelMin,
+				Labels:   map[string]any{observation.FieldContainerNamespace: "namespace"},
 			}
 			second := *first
-			second.ID = "second"
 			previous := &blkIOTraceSnapshot{
 				containers: make(map[blkIOTraceContainerKey]*blkIOTraceCounters),
 			}
@@ -377,19 +385,23 @@ func TestBlkIOTraceContainerIntervalPublicLabels(t *testing.T) {
 }
 
 func TestBlkIOTraceContainerIntervalDistinctSeries(t *testing.T) {
-	for _, dimension := range []string{"container labels", "disk", "operation"} {
+	for _, dimension := range []string{"container id", "container labels", "disk", "operation"} {
 		t.Run(dimension, func(t *testing.T) {
 			first := &pod.Container{
-				ID: "first", Name: "agent", Hostname: "node",
-				Type: pod.ContainerTypeDaemonSet, Qos: pod.ContainerQosLevelMin,
-				Labels: map[string]any{"HostNamespace": "namespace"},
+				ID:       "first",
+				Name:     "agent",
+				Hostname: "node",
+				Type:     pod.ContainerTypeDaemonSet,
+				Qos:      pod.ContainerQosLevelMin,
+				Labels:   map[string]any{observation.FieldContainerNamespace: "namespace"},
 			}
 			second := *first
-			second.ID = "second"
 			device, operation := "sda", "read"
 			firstKey := blkIOTraceContainerKey{Blkcg: 1, Serial: 11, Major: 8}
 			secondKey := blkIOTraceContainerKey{Blkcg: 2, Serial: 22, Major: 8}
 			switch dimension {
+			case "container id":
+				second.ID = "container-b"
 			case "container labels":
 				second.Name = "other-agent"
 			case "disk":
@@ -414,6 +426,9 @@ func TestBlkIOTraceContainerIntervalDistinctSeries(t *testing.T) {
 			got := appendBlkIOTraceIntervalMetrics(nil, previous, current,
 				map[[2]uint32]string{{8, 0}: "sda", {8, 16}: "sdb"},
 				map[uint64]*pod.Container{1: first, 2: &second})
+			if len(got) != len(want) {
+				t.Fatalf("public metric count = %d, want %d for distinct %s", len(got), len(want), dimension)
+			}
 			require.ElementsMatch(t, want, got)
 		})
 	}
@@ -437,10 +452,13 @@ func TestBlkIOTraceSnapshotParsing(t *testing.T) {
 	object := &fakeBlkIOTraceMapBPF{maps: map[string][]bpf.MapItem{
 		blkDiskBucketMap: {
 			ioControlTestMapItem(uint64(0x1000), blkIOTraceDiskCounters{
-				Major: 8, Minor: 16, Counters: [2]blkIOTraceCounters{readCounters, writeCounters},
+				Major:    8,
+				Minor:    16,
+				Counters: [2]blkIOTraceCounters{readCounters, writeCounters},
 			}),
 			ioControlTestMapItem(uint64(0x2000), blkIOTraceDiskCounters{
-				Major: 259, Counters: [2]blkIOTraceCounters{1: writeCounters},
+				Major:    259,
+				Counters: [2]blkIOTraceCounters{1: writeCounters},
 			}),
 		},
 		blkContainerBucketMap: {
@@ -462,7 +480,10 @@ func TestBlkIOTraceSnapshotParsing(t *testing.T) {
 	require.Equal(t, map[blkIOTraceContainerKey]*blkIOTraceCounters{
 		containerKey: &writeCounters, containerReadKey: &readCounters, unknownKey: &readCounters,
 	}, counters, "raw capture retains identities with unavailable metadata")
-	container := &pod.Container{ID: "container-id", Labels: map[string]any{"HostNamespace": "namespace"}}
+	container := &pod.Container{
+		ID:     "container-id",
+		Labels: map[string]any{observation.FieldContainerNamespace: "namespace"},
+	}
 
 	t.Run("zero rows and failed reads", func(t *testing.T) {
 		rows := object.maps[blkContainerBucketMap]
@@ -515,7 +536,7 @@ func TestBlkIOTraceSnapshotParsing(t *testing.T) {
 			{label: "namespace", total: 13, want: 5, emit: true},
 			{label: "namespace", total: 15, want: 2, emit: true},
 		} {
-			container.Labels["HostNamespace"] = interval.label
+			container.Labels[observation.FieldContainerNamespace] = interval.label
 			writeCounters.Buckets[blkIOTraceStageQ2G][1] = interval.total
 			object.maps[blkContainerBucketMap][0] = ioControlTestMapItem(containerKey, writeCounters)
 			samples, err := session.captureContainerLatency()
@@ -648,8 +669,10 @@ func TestBlkIOTraceCollectionHostBaseline(t *testing.T) {
 				blkDiskBucketMap: {ioControlTestMapItem(uint64(0x1000), blkIOTraceDiskCounters{Major: 4095, Minor: 1})},
 			}}
 			session := &blkIOTraceSession{
-				object: object, previous: &blkIOTraceSnapshot{}, devices: ioControlTestDiskNames(),
-				cancel: func(error) { t.Fatal("optional read canceled host tracing") },
+				object:   object,
+				previous: &blkIOTraceSnapshot{},
+				devices:  ioControlTestDiskNames(),
+				cancel:   func(error) { t.Fatal("optional read canceled host tracing") },
 			}
 			collector := &blkIOTraceTracing{session: session}
 			metrics, err := collector.Update()
@@ -676,7 +699,8 @@ func TestBlkIOTraceCollectionHostBaseline(t *testing.T) {
 				counters.Buckets[blkIOTraceStageQ2D][0] = interval.total
 				object.maps[blkDiskBucketMap] = []bpf.MapItem{
 					ioControlTestMapItem(uint64(0x1000), blkIOTraceDiskCounters{
-						Major: key.Major, Minor: key.Minor,
+						Major:    key.Major,
+						Minor:    key.Minor,
 						Counters: [2]blkIOTraceCounters{1: counters},
 					}),
 				}
@@ -733,7 +757,8 @@ func TestBlkIOTraceCollectionRebuildsBaselineAfterReadFailure(t *testing.T) {
 				maps: map[string][]bpf.MapItem{
 					blkDiskBucketMap: {
 						ioControlTestMapItem(uint64(0x1000), blkIOTraceDiskCounters{
-							Major: key.Major, Minor: key.Minor,
+							Major:    key.Major,
+							Minor:    key.Minor,
 							Counters: [2]blkIOTraceCounters{0: currentCounters},
 						}),
 					},
@@ -775,7 +800,8 @@ func TestBlkIOTraceCollectionRebuildsBaselineAfterReadFailure(t *testing.T) {
 			currentCounters.Buckets[blkIOTraceStageQ2D][0] = 20
 			object.maps[blkDiskBucketMap] = []bpf.MapItem{
 				ioControlTestMapItem(uint64(0x1000), blkIOTraceDiskCounters{
-					Major: key.Major, Minor: key.Minor,
+					Major:    key.Major,
+					Minor:    key.Minor,
 					Counters: [2]blkIOTraceCounters{0: currentCounters},
 				}),
 			}
@@ -808,9 +834,7 @@ func TestBlkIOTraceCollectionRebuildsBaselineAfterReadFailure(t *testing.T) {
 				t.Fatal("successful collection did not advance the baseline")
 			}
 
-			replacement := &blkIOTraceSession{
-				object: object, previous: &blkIOTraceSnapshot{}, devices: ioControlTestDiskNames(),
-			}
+			replacement := &blkIOTraceSession{object: object, previous: &blkIOTraceSnapshot{}, devices: ioControlTestDiskNames()}
 			collector.session = replacement
 			metrics, err = collector.Update()
 			if err != nil {

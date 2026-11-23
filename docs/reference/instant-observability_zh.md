@@ -21,8 +21,9 @@ weight: 3
 | `region` | 节点所属区域 |
 | `uploaded_timestamp` | 数据上传时间 |
 | `container_id` | 容器 ID |
+| `container_name` | 容器名称 |
 | `container_hostname` | 容器主机名 |
-| `container_host_namespace` | 容器的 Kubernetes 命名空间 |
+| `container_namespace` | 容器的 Kubernetes 命名空间 |
 | `container_type` | 容器类型，例如 `normal` 普通容器，`sidecar` 边车容器等 |
 | `container_qos` | 容器 QoS 级别 |
 | `tracer_name` | 事件名称（如 `sched_tick`、`memory_oom_kill` 等） |

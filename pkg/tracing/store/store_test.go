@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/watch"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -65,7 +66,7 @@ func TestStoreSaveContextPropagatesContext(t *testing.T) {
 	observedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	document := &Document{
 		Document: types.Document{
-			Hostname:          "node-1",
+			Metadata:          observation.Metadata{Hostname: "node-1"},
 			TracerID:          "trace-1",
 			TracerRunType:     types.TracerRunTypeEvent,
 			ObservedTimestamp: &timeutil.Timestamp{Time: observedTimestamp},
@@ -124,7 +125,7 @@ func TestStoreSavesAndPublishesTracingDocument(t *testing.T) {
 	observedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	document := &Document{
 		Document: types.Document{
-			Hostname:          "node-1",
+			Metadata:          observation.Metadata{Hostname: "node-1"},
 			TracerID:          "trace-1",
 			TracerRunType:     types.TracerRunTypeEvent,
 			ObservedTimestamp: &timeutil.Timestamp{Time: observedTimestamp},
@@ -189,7 +190,7 @@ func TestMapperKeepsCommonFieldsFlat(t *testing.T) {
 	observedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	document := &Document{
 		Document: types.Document{
-			Hostname:          "node-1",
+			Metadata:          observation.Metadata{Hostname: "node-1"},
 			TracerID:          "trace-1",
 			TracerRunType:     types.TracerRunTypeEvent,
 			UploadedTimestamp: timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC)},
@@ -261,6 +262,109 @@ func TestMapperKernelObservationRoundTrip(t *testing.T) {
 				}
 			} else if got.KernelObservedTimestamp != nil {
 				t.Fatal("legacy document gained a kernel timestamp")
+			}
+		})
+	}
+}
+
+func TestMapperPublicMetadataMatchesJSON(t *testing.T) {
+	observed := timeutil.Now()
+	document := &Document{Document: types.Document{
+		UploadedTimestamp: observed,
+		ObservedTimestamp: &observed,
+		TracerRunType:     types.TracerRunTypeEvent,
+	}}
+	document.Metadata = observation.Metadata{
+		Region:             "region-a",
+		Hostname:           "node-a",
+		ContainerID:        "container-a",
+		ContainerName:      "worker",
+		ContainerHostname:  "worker-pod",
+		ContainerNamespace: "production",
+		ContainerType:      "normal",
+		ContainerQoS:       "burstable",
+	}
+	fields, err := (mapper{}).Fields(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := (mapper{}).Encode(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jsonFields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &jsonFields); err != nil {
+		t.Fatal(err)
+	}
+	indexes := make(map[string]bool)
+	for _, index := range (mapper{}).Indexes() {
+		indexes[index.Field] = true
+	}
+	for _, key := range []string{"region", "hostname", "container_id", "container_name", "container_hostname", "container_namespace", "container_type", "container_qos"} {
+		var value string
+		if err := json.Unmarshal(jsonFields[key], &value); err != nil {
+			t.Fatalf("JSON field %q: %v", key, err)
+		}
+		if fields[key] != value {
+			t.Fatalf("mapper %s = %v, JSON = %q", key, fields[key], value)
+		}
+		if !indexes[key] {
+			t.Fatalf("metadata field %q has no index declaration", key)
+		}
+	}
+}
+
+func TestMapperOmitsMissingContainerMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata observation.Metadata
+	}{
+		{
+			name: "host",
+			metadata: observation.Metadata{
+				Region:   "region-a",
+				Hostname: "node-a",
+			},
+		},
+		{
+			name: "container with missing attributes",
+			metadata: observation.Metadata{
+				Region:      "region-a",
+				Hostname:    "node-a",
+				ContainerID: "container-a",
+			},
+		},
+	}
+	for i := range tests {
+		t.Run(tests[i].name, func(t *testing.T) {
+			observed := timeutil.Timestamp{Time: time.Unix(1_700_000_000, 0).UTC()}
+			document := &Document{Document: types.Document{
+				UploadedTimestamp: observed,
+				ObservedTimestamp: &observed,
+				TracerRunType:     types.TracerRunTypeEvent,
+			}}
+			document.Metadata = tests[i].metadata
+			fields, err := (mapper{}).Fields(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			encoded, err := (mapper{}).Encode(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var jsonFields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &jsonFields); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, key := range []string{"container_id", "container_name", "container_hostname", "container_namespace", "container_type", "container_qos"} {
+				_, fieldPresent := fields[key]
+				_, jsonPresent := jsonFields[key]
+				if fieldPresent != jsonPresent {
+					t.Fatalf("metadata %s presence: mapper=%t JSON=%t", key, fieldPresent, jsonPresent)
+				}
 			}
 		})
 	}

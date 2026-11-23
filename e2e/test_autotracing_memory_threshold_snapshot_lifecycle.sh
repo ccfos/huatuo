@@ -173,7 +173,7 @@ assert_lifecycle_latest() {
 	jq -s --arg id "${go_snapshot_container_id}" '[.[] | select(.container_id == $id)] | last' "${go_snapshot_case_dir}/events/memory_threshold_snapshot" > "${go_snapshot_case_dir}/snapshot.json"
 	jq -e --arg id "${go_snapshot_container_id}" --argjson pid "${go_snapshot_pid}" --arg pod "${go_snapshot_pod}" --arg ns "${GO_SNAPSHOT_NAMESPACE}" --arg at "${lifecycle_triggered_at}" --arg cgroup "${go_snapshot_cgroup_path}" '
   .tracer_name == "memory_threshold_snapshot" and .tracer_type == "autotracing"
-  and .container_id == $id and .container_hostname == $pod and .container_host_namespace == $ns
+  and .container_id == $id and .container_hostname == $pod and .container_namespace == $ns
   and .tracer_data.victim_pid == $pid and .tracer_data.language == "go"
   and .tracer_data.cgroup_path == $cgroup
   and .tracer_data.victim_process_name == "go-snapshot" and .tracer_data.victim_oom_score_adj == 1000

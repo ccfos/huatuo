@@ -89,7 +89,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "huatuo_bamai_blk_iotrace_${blk_iotrace_stage}{region=\"$blk_iotrace_region\",host=\"$blk_iotrace_host\",disk=\"$blk_iotrace_disk\",operation=\"$blk_iotrace_operation\",le=~\"0[.]0001|0[.]0005|0[.]002|0[.]016|0[.]128|[+]Inf\"}[${__range_s}s]",
+          "expr": "huatuo_bamai_blk_iotrace_${blk_iotrace_stage}{region=\"$blk_iotrace_region\",hostname=\"$blk_iotrace_host\",disk=\"$blk_iotrace_disk\",operation=\"$blk_iotrace_operation\",le=~\"0[.]0001|0[.]0005|0[.]002|0[.]016|0[.]128|[+]Inf\"}[${__range_s}s]",
           "format": "time_series",
           "instant": true,
           "interval": "",
@@ -229,7 +229,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "huatuo_bamai_blk_iotrace_${blk_iotrace_stage}{region=\"$blk_iotrace_region\",host=\"$blk_iotrace_host\",disk=\"$blk_iotrace_disk\",operation=\"$blk_iotrace_operation\"}[${blk_iotrace_window:raw}] @ ${blk_iotrace_sample_time:raw}",
+          "expr": "huatuo_bamai_blk_iotrace_${blk_iotrace_stage}{region=\"$blk_iotrace_region\",hostname=\"$blk_iotrace_host\",disk=\"$blk_iotrace_disk\",operation=\"$blk_iotrace_operation\"}[${blk_iotrace_window:raw}] @ ${blk_iotrace_sample_time:raw}",
           "format": "heatmap",
           "instant": true,
           "interval": "",
@@ -397,7 +397,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "huatuo_bamai_blk_iotrace_${blk_iotrace_size_point}{region=\"$blk_iotrace_region\",host=\"$blk_iotrace_host\",disk=\"$blk_iotrace_disk\",operation=\"$blk_iotrace_operation\"}[${blk_iotrace_window:raw}] @ ${blk_iotrace_sample_time:raw}",
+          "expr": "huatuo_bamai_blk_iotrace_${blk_iotrace_size_point}{region=\"$blk_iotrace_region\",hostname=\"$blk_iotrace_host\",disk=\"$blk_iotrace_disk\",operation=\"$blk_iotrace_operation\"}[${blk_iotrace_window:raw}] @ ${blk_iotrace_sample_time:raw}",
           "format": "heatmap",
           "instant": true,
           "interval": "",
@@ -531,7 +531,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "container_host"
+              "options": "container_hostname"
             },
             "properties": [
               {
@@ -572,7 +572,7 @@
           },
           "editorMode": "code",
           "exemplar": true,
-          "expr": "huatuo_bamai_arp_container_entries{host=~\"$host\",region=~\"$region\"}",
+          "expr": "huatuo_bamai_arp_container_entries{hostname=~\"$host\",region=~\"$region\"}",
           "format": "table",
           "interval": "",
           "legendFormat": "",
@@ -595,14 +595,14 @@
               "Value": true,
               "__name__": true,
               "container_type": false,
-              "host": true,
+              "hostname": true,
               "instance": true,
               "job": true,
               "region": true
             },
             "indexByName": {},
             "renameByName": {
-              "container_host": "",
+              "container_hostname": "",
               "container_type": ""
             }
           }
@@ -619,15 +619,15 @@
                 "aggregations": [],
                 "operation": "groupby"
               },
-              "container_host": {
+              "container_hostname": {
                 "aggregations": [],
                 "operation": "groupby"
               },
-              "container_hostnamespace": {
+              "container_namespace": {
                 "aggregations": [],
                 "operation": "groupby"
               },
-              "container_level": {
+              "container_qos": {
                 "aggregations": [],
                 "operation": "groupby"
               },
@@ -732,9 +732,9 @@
             "uid": "huatuo-bamai-prom"
           },
           "exemplar": true,
-          "expr": "$metric{host=~\"$host\",region=~\"$region\"}",
+          "expr": "$metric{hostname=~\"$host\",region=~\"$region\"}",
           "interval": "",
-          "legendFormat": "{{host}}|{{container_host}}:{{container_type}} {{device}} {{port}}",
+          "legendFormat": "{{hostname}}|{{container_hostname}}:{{container_type}} {{device}} {{port}}",
           "refId": "A"
         }
       ],
@@ -849,9 +849,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_util_usr{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_util_usr{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "range": true,
               "refId": "A"
             }
@@ -950,9 +950,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_util_sys{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_util_sys{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "A"
             }
           ],
@@ -1052,9 +1052,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_util_container_usr{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_util_container_usr{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}|{{container_name}}:{{container_type}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}|{{container_name}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1151,9 +1151,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_util_container_sys{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_util_container_sys{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}|{{container_name}}:{{container_type}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}|{{container_name}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1250,9 +1250,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_exter_wait_rate{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_stat_container_exter_wait_rate{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1349,9 +1349,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_inner_wait_rate{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_stat_container_inner_wait_rate{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1449,9 +1449,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1551,9 +1551,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_runqlat_latency{host=~\"$host\",region=~\"$region\"}[5m])",
+              "expr": "rate(huatuo_bamai_runqlat_latency{hostname=~\"$host\",region=~\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{host}} zone={{zone}}",
+              "legendFormat": "{{hostname}} zone={{zone}}",
               "range": true,
               "refId": "A"
             }
@@ -1654,9 +1654,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_softirq_latency{host=~\"$host\",region=~\"$region\"}[5m])",
+              "expr": "rate(huatuo_bamai_softirq_latency{hostname=~\"$host\",region=~\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{host}} {{type}} zone={{zone}}",
+              "legendFormat": "{{hostname}} {{type}} zone={{zone}}",
               "range": true,
               "refId": "A"
             }
@@ -1782,9 +1782,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_pgsteal_direct{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_pgsteal_direct{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "refId": "A"
             }
           ],
@@ -1882,9 +1882,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_pgsteal_kswapd{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_pgsteal_kswapd{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "refId": "A"
             }
           ],
@@ -1982,9 +1982,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_nr_dirty{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_nr_dirty{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "refId": "A"
             }
           ],
@@ -2081,9 +2081,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_nr_writeback{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_nr_writeback{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "refId": "A"
             }
           ],
@@ -2180,9 +2180,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_nr_free_pages{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_nr_free_pages{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "refId": "A"
             }
           ],
@@ -2279,9 +2279,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_nr_inactive_file{host=~\"$host\",region=~\"$region\"}/256 + huatuo_bamai_memory_vmstat_nr_active_file{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_nr_inactive_file{hostname=~\"$host\",region=~\"$region\"}/256 + huatuo_bamai_memory_vmstat_nr_active_file{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "refId": "A"
             }
           ],
@@ -2379,9 +2379,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "huatuo_bamai_memory_vmstat_nr_inactive_anon{host=~\"$host\",region=~\"$region\"}/256 + huatuo_bamai_memory_vmstat_nr_active_anon{host=~\"$host\",region=~\"$region\"}/256",
+              "expr": "huatuo_bamai_memory_vmstat_nr_inactive_anon{hostname=~\"$host\",region=~\"$region\"}/256 + huatuo_bamai_memory_vmstat_nr_active_anon{hostname=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}|{{container_host}}",
+              "legendFormat": "{{hostname}}|{{container_hostname}}",
               "range": true,
               "refId": "A"
             }
@@ -2424,8 +2424,8 @@
                 "type": "prometheus",
                 "uid": "huatuo-bamai-prom"
               },
-              "expr": "huatuo_bamai_memory_reclaim_directstall{host=~\"$host\",region=~\"$region\"}",
-              "legendFormat": "Memcg reclaim {{host}}",
+              "expr": "huatuo_bamai_memory_reclaim_directstall{hostname=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "Memcg reclaim {{hostname}}",
               "refId": "A",
               "range": true
             }
@@ -2555,9 +2555,9 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_receive_bytes_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_receive_bytes_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "interval": "",
-              "legendFormat": "{{host}}/{{device}}",
+              "legendFormat": "{{hostname}}/{{device}}",
               "range": true,
               "refId": "A"
             },
@@ -2567,10 +2567,10 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_container_receive_bytes_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_container_receive_bytes_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -2667,10 +2667,10 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_receive_packets_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_receive_packets_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{host}}/{{device}}",
+              "legendFormat": "{{hostname}}/{{device}}",
               "refId": "A"
             },
             {
@@ -2679,10 +2679,10 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_container_receive_packets_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_container_receive_packets_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -2779,9 +2779,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_transmit_bytes_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_transmit_bytes_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "interval": "",
-              "legendFormat": "{{host}}/{{device}}",
+              "legendFormat": "{{hostname}}/{{device}}",
               "refId": "A"
             },
             {
@@ -2790,10 +2790,10 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_container_transmit_bytes_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_container_transmit_bytes_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -2890,9 +2890,9 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_transmit_packets_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_transmit_packets_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "interval": "",
-              "legendFormat": "{{host}}/{{device}}",
+              "legendFormat": "{{hostname}}/{{device}}",
               "refId": "A"
             },
             {
@@ -2901,10 +2901,10 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_container_transmit_packets_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_container_transmit_packets_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -3002,7 +3002,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_receive_dropped_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_receive_dropped_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "interval": "",
               "legendFormat": "dropped: {{device}}",
               "refId": "A"
@@ -3013,7 +3013,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_receive_errors_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_receive_errors_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
               "legendFormat": "errors: {{device}}",
@@ -3114,7 +3114,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_transmit_dropped_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_transmit_dropped_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "interval": "",
               "legendFormat": "dropped: {{device}}",
               "refId": "A"
@@ -3125,7 +3125,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_transmit_errors_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_transmit_errors_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
               "legendFormat": "errors: {{device}}",
@@ -3137,7 +3137,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_transmit_carrier_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_transmit_carrier_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
               "legendFormat": "carrier: {{device}}",
@@ -3149,7 +3149,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_transmit_colls_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_transmit_colls_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
               "legendFormat": "colls: {{device}}",
@@ -3270,7 +3270,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_qdisc_bytes_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_qdisc_bytes_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "instant": false,
               "interval": "",
@@ -3393,7 +3393,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_qdisc_packets_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_qdisc_packets_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "instant": false,
               "interval": "",
@@ -3520,7 +3520,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_qdisc_drops_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_qdisc_drops_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "instant": false,
               "interval": "",
@@ -3534,7 +3534,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_qdisc_overlimits_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_qdisc_overlimits_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -3549,7 +3549,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_qdisc_requeues_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_qdisc_requeues_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -3564,7 +3564,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_netdev_qdisc_backlog{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_netdev_qdisc_backlog{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -3688,13 +3688,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_arp_total{host=~\"$host\",region=~\"$region\"}[5m])",
+              "expr": "rate(huatuo_bamai_arp_total{hostname=~\"$host\",region=~\"$region\"}[5m])",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "Total: {{host}}",
+              "legendFormat": "Total: {{hostname}}",
               "refId": "C"
             },
             {
@@ -3703,12 +3703,12 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_arp_entries{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_arp_entries{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "A"
             },
             {
@@ -3717,13 +3717,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_arp_container_entries{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_arp_container_entries{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -3841,13 +3841,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_TCP_inuse{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_TCP_inuse{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "C"
             },
             {
@@ -3856,13 +3856,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_container_TCP_inuse{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_container_TCP_inuse{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -3980,13 +3980,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_TCP_tw{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_TCP_tw{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "C"
             },
             {
@@ -3995,13 +3995,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_container_TCP_tw{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_container_TCP_tw{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -4119,13 +4119,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_sockets_used{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_sockets_used{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "C"
             },
             {
@@ -4134,13 +4134,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_container_sockets_used{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_container_sockets_used{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -4258,13 +4258,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_TCP_mem_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_TCP_mem_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "C"
             },
             {
@@ -4273,13 +4273,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_container_TCP_mem_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_container_TCP_mem_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -4397,13 +4397,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_UDP_mem_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_UDP_mem_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "C"
             },
             {
@@ -4412,13 +4412,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_container_UDP_mem_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_container_UDP_mem_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -4536,13 +4536,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_UDP_inuse{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_UDP_inuse{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "C"
             },
             {
@@ -4551,13 +4551,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_sockstat_container_UDP_inuse{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_sockstat_container_UDP_inuse{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{container_hostname}}",
               "refId": "B"
             }
           ],
@@ -4655,7 +4655,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_InSegs{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_InSegs{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4670,7 +4670,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_OutSegs{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_OutSegs{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4685,7 +4685,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPDelivered{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPDelivered{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4700,7 +4700,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPOrigDataSent{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPOrigDataSent{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4715,7 +4715,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_ActiveOpens{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_ActiveOpens{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4730,7 +4730,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_netstat_Tcp_CurrEstab{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_netstat_Tcp_CurrEstab{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4745,7 +4745,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_PassiveOpens{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_PassiveOpens{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4849,7 +4849,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_ListenDrops{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_ListenDrops{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4864,7 +4864,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_ListenOverflows{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_ListenOverflows{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4879,7 +4879,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPReqQFullDoCookies{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPReqQFullDoCookies{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4894,7 +4894,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_PFMemallocDrop{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_PFMemallocDrop{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4909,7 +4909,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPBacklogDrop{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPBacklogDrop{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4924,7 +4924,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPRcvQDrop{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPRcvQDrop{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4939,7 +4939,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPTimeouts{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPTimeouts{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4954,7 +4954,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPLossFailures{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPLossFailures{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4969,7 +4969,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSACKDiscard{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSACKDiscard{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4984,7 +4984,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPMemoryPressures{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPMemoryPressures{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -4999,7 +4999,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPMinTTLDrop{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPMinTTLDrop{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5014,7 +5014,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPMinTTLDrop{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPMinTTLDrop{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5029,7 +5029,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPTimeWaitOverflow{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPTimeWaitOverflow{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5133,7 +5133,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_InErrs{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_InErrs{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5148,7 +5148,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_InCsumErrors{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_InCsumErrors{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5163,7 +5163,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPAbortOnMemory{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPAbortOnMemory{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5178,7 +5178,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPAbortOnTimeout{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPAbortOnTimeout{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5193,7 +5193,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPRetransFail{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPRetransFail{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5208,7 +5208,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSackFailures{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSackFailures{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5223,7 +5223,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSackFailures{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSackFailures{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5238,7 +5238,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_SyncookiesFailed{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_SyncookiesFailed{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5253,7 +5253,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPWqueueTooBig{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPWqueueTooBig{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5268,7 +5268,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_AttemptFails{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_AttemptFails{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5372,7 +5372,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_RetransSegs{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_RetransSegs{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5387,7 +5387,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSynRetrans{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSynRetrans{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5402,7 +5402,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPFastRetrans{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPFastRetrans{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5417,7 +5417,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSlowStartRetrans{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSlowStartRetrans{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5432,7 +5432,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSpuriousRTOs{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSpuriousRTOs{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5447,7 +5447,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSpuriousRtxHostQueues{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSpuriousRtxHostQueues{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5551,7 +5551,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_PruneCalled{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_PruneCalled{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5566,7 +5566,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_RcvPruned{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_RcvPruned{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5671,13 +5671,13 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_ActiveOpens{host=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_TcpExt_TCPSynRetrans{host=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_Tcp_PassiveOpens{host=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_TcpExt_ListenDrops{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_ActiveOpens{hostname=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_TcpExt_TCPSynRetrans{hostname=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_Tcp_PassiveOpens{hostname=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_TcpExt_ListenDrops{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "Total: {{host}}",
+              "legendFormat": "Total: {{hostname}}",
               "refId": "C"
             },
             {
@@ -5687,13 +5687,13 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_ActiveOpens{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_ActiveOpens{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "Sender: {{host}}",
+              "legendFormat": "Sender: {{hostname}}",
               "refId": "A"
             },
             {
@@ -5703,10 +5703,10 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_Tcp_PassiveOpens{host=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_TcpExt_ListenDrops{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_Tcp_PassiveOpens{hostname=~\"$host\",region=~\"$region\"}[30s])+rate(huatuo_bamai_netstat_TcpExt_ListenDrops{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "Receiver: {{host}}",
+              "legendFormat": "Receiver: {{hostname}}",
               "range": true,
               "refId": "B"
             },
@@ -5717,10 +5717,10 @@
               },
               "editorMode": "code",
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSynRetrans{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netstat_TcpExt_TCPSynRetrans{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "Retransmission count（Sender+Reciever）: {{host}}",
+              "legendFormat": "Retransmission count（Sender+Reciever）: {{hostname}}",
               "range": true,
               "refId": "D"
             }
@@ -5819,7 +5819,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_hw_rx_dropped_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_hw_rx_dropped_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
@@ -5950,13 +5950,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "increase(huatuo_bamai_xfs_alloc_blocks_total{host=~\"$host\",region=~\"$region\"}[5m]) / clamp_min(increase(huatuo_bamai_xfs_alloc_extents_total{host=~\"$host\",region=~\"$region\"}[5m]), 1e-6)",
+              "expr": "increase(huatuo_bamai_xfs_alloc_blocks_total{hostname=~\"$host\",region=~\"$region\"}[5m]) / clamp_min(increase(huatuo_bamai_xfs_alloc_extents_total{hostname=~\"$host\",region=~\"$region\"}[5m]), 1e-6)",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}, device={{device}}",
+              "legendFormat": "{{hostname}}, device={{device}}",
               "refId": "C"
             }
           ],
@@ -6054,13 +6054,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "clamp_min((increase(huatuo_bamai_xfs_inode_attempts_total{host=~\"$host\",region=~\"$region\"}[5m]) - increase(huatuo_bamai_xfs_inode_missed_total{host=~\"$host\",region=~\"$region\"}[5m]))/clamp_min(increase(huatuo_bamai_xfs_inode_attempts_total{host=~\"$host\",region=~\"$region\"}[5m]), 1e-6),0)",
+              "expr": "clamp_min((increase(huatuo_bamai_xfs_inode_attempts_total{hostname=~\"$host\",region=~\"$region\"}[5m]) - increase(huatuo_bamai_xfs_inode_missed_total{hostname=~\"$host\",region=~\"$region\"}[5m]))/clamp_min(increase(huatuo_bamai_xfs_inode_attempts_total{hostname=~\"$host\",region=~\"$region\"}[5m]), 1e-6),0)",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}, device={{device}}",
+              "legendFormat": "{{hostname}}, device={{device}}",
               "refId": "C"
             }
           ],
@@ -6158,13 +6158,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_xfs_buf_locked_waited_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_xfs_buf_locked_waited_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}, device={{device}}",
+              "legendFormat": "{{hostname}}, device={{device}}",
               "refId": "C"
             }
           ],
@@ -6262,13 +6262,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_xfs_buf_busy_locked_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_xfs_buf_busy_locked_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}, device={{device}}",
+              "legendFormat": "{{hostname}}, device={{device}}",
               "refId": "C"
             }
           ],
@@ -6366,13 +6366,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_xfs_log_free_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_xfs_log_free_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}, device={{device}}",
+              "legendFormat": "{{hostname}}, device={{device}}",
               "refId": "C"
             }
           ],
@@ -6470,13 +6470,13 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_xfs_log_space_sleep_total{host=~\"$host\",region=~\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_xfs_log_space_sleep_total{hostname=~\"$host\",region=~\"$region\"}[30s])",
               "format": "time_series",
               "hide": false,
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{host}}, device={{device}}",
+              "legendFormat": "{{hostname}}, device={{device}}",
               "refId": "C"
             }
           ],
@@ -6602,9 +6602,9 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "rate(huatuo_bamai_process_cpu_seconds_total{host=~\"$host\",region=~\"$region\"}[1m]) * 100",
+              "expr": "rate(huatuo_bamai_process_cpu_seconds_total{hostname=~\"$host\",region=~\"$region\"}[1m]) * 100",
               "interval": "",
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "A"
             }
           ],
@@ -6703,7 +6703,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_process_resident_memory_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_process_resident_memory_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "Process RSS",
               "refId": "A"
@@ -6716,7 +6716,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_memstats_sys_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_memstats_sys_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "Go Runtime Total",
               "refId": "B"
@@ -6729,7 +6729,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_memstats_heap_inuse_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_memstats_heap_inuse_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "Go Heap In-Use",
               "refId": "C"
@@ -6742,7 +6742,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_memstats_stack_inuse_bytes{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_memstats_stack_inuse_bytes{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "Go Stack",
               "refId": "D"
@@ -6843,7 +6843,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_process_open_fds{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_process_open_fds{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "Open FDs",
               "refId": "A"
@@ -6944,7 +6944,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_goroutines{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_goroutines{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "Goroutines",
               "refId": "A"
@@ -6957,7 +6957,7 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_threads{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_threads{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
               "legendFormat": "OS Threads",
               "refId": "B"
@@ -7058,9 +7058,9 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_memstats_heap_objects{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_memstats_heap_objects{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "A"
             }
           ],
@@ -7159,9 +7159,9 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "(rate(huatuo_bamai_go_gc_duration_seconds_sum{host=~\"$host\",region=~\"$region\"}[5m]) / rate(huatuo_bamai_go_gc_duration_seconds_count{host=~\"$host\",region=~\"$region\"}[5m])) * 1000",
+              "expr": "(rate(huatuo_bamai_go_gc_duration_seconds_sum{hostname=~\"$host\",region=~\"$region\"}[5m]) / rate(huatuo_bamai_go_gc_duration_seconds_count{hostname=~\"$host\",region=~\"$region\"}[5m])) * 1000",
               "interval": "",
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "A"
             }
           ],
@@ -7260,9 +7260,9 @@
               "editorMode": "code",
               "exemplar": true,
               "range": true,
-              "expr": "huatuo_bamai_go_gc_gogc_percent{host=~\"$host\",region=~\"$region\"}",
+              "expr": "huatuo_bamai_go_gc_gogc_percent{hostname=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}",
+              "legendFormat": "{{hostname}}",
               "refId": "A"
             }
           ],
@@ -7328,16 +7328,16 @@
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values(huatuo_bamai_cpu_util_usr{region=~\"$region\"}, host)",
+        "definition": "label_values(huatuo_bamai_cpu_util_usr{region=~\"$region\"}, hostname)",
         "hide": 0,
         "includeAll": true,
-        "label": "host",
+        "label": "hostname",
         "multi": true,
         "name": "host",
         "options": [],
         "allValue": ".*",
         "query": {
-          "query": "label_values(huatuo_bamai_cpu_util_usr{region=~\"$region\"}, host)",
+          "query": "label_values(huatuo_bamai_cpu_util_usr{region=~\"$region\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -7374,7 +7374,7 @@
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values(huatuo_bamai_blk_iotrace_interval_end_timestamp_seconds{region=\"$blk_iotrace_region\"}, host)",
+        "definition": "label_values(huatuo_bamai_blk_iotrace_interval_end_timestamp_seconds{region=\"$blk_iotrace_region\"}, hostname)",
         "hide": 0,
         "includeAll": false,
         "label": "IO Host",
@@ -7382,7 +7382,7 @@
         "name": "blk_iotrace_host",
         "options": [],
         "query": {
-          "query": "label_values(huatuo_bamai_blk_iotrace_interval_end_timestamp_seconds{region=\"$blk_iotrace_region\"}, host)",
+          "query": "label_values(huatuo_bamai_blk_iotrace_interval_end_timestamp_seconds{region=\"$blk_iotrace_region\"}, hostname)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -7396,7 +7396,7 @@
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values({__name__=~\"huatuo_bamai_blk_iotrace_.*_bucket\",region=\"$blk_iotrace_region\",host=\"$blk_iotrace_host\"}, disk)",
+        "definition": "label_values({__name__=~\"huatuo_bamai_blk_iotrace_.*_bucket\",region=\"$blk_iotrace_region\",hostname=\"$blk_iotrace_host\"}, disk)",
         "hide": 0,
         "includeAll": false,
         "label": "IO Disk",
@@ -7404,7 +7404,7 @@
         "name": "blk_iotrace_disk",
         "options": [],
         "query": {
-          "query": "label_values({__name__=~\"huatuo_bamai_blk_iotrace_.*_bucket\",region=\"$blk_iotrace_region\",host=\"$blk_iotrace_host\"}, disk)",
+          "query": "label_values({__name__=~\"huatuo_bamai_blk_iotrace_.*_bucket\",region=\"$blk_iotrace_region\",hostname=\"$blk_iotrace_host\"}, disk)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,

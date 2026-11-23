@@ -408,7 +408,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 # Use [[double-bracket]] syntax to define each rule entry.
 #
 # Supported fields:
-# - container_host_namespace: namespace label of the container
+# - container_namespace: namespace label of the container
 # - container_hostname: hostname of the container
 # - container_qos: qos level (guaranteed, burstable, besteffort)
 #
@@ -428,15 +428,15 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 #
 # # Whitelist: only monitor application namespaces
 # [[AutoTracing.CPUIdle.Filter.Included]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = "^application-"
 #
 # # Combine: monitor application namespaces except kube-system
 # [[AutoTracing.CPUIdle.Filter.Included]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = ".*"
 # [[AutoTracing.CPUIdle.Filter.Excluded]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = "^kube-system$"
 ```
 

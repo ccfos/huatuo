@@ -51,11 +51,11 @@ assert_blk_iotrace_metrics() {
 		def histogram_names: ["q2d_seconds_bucket","d2c_seconds_bucket","q2g_seconds_bucket",
 			"queued_io_size_bytes_bucket","issued_io_size_bytes_bucket"];
 		def required_distributions: ["d2c_seconds_bucket", "queued_io_size_bytes_bucket", "issued_io_size_bytes_bucket"];
-		def common: ["host","region"];
+		def common: ["hostname","region"];
 		def histogram_labels:
 			common + ["disk","operation","le"]
 			+ (if (suffix | startswith("container_"))
-				then ["container_host","container_hostnamespace","container_name","container_type","container_level"]
+				then ["container_id","container_hostname","container_namespace","container_name","container_type","container_qos"]
 				else [] end) | sort;
 		def bound: if .labels.le == "+Inf" then "+Inf" else .labels.le | tonumber end;
 		[.[] | select(.name | startswith("huatuo_bamai_blk_iotrace_"))] as $public
@@ -65,7 +65,7 @@ assert_blk_iotrace_metrics() {
 		| require(all($public | group_by([.name, (.labels | to_entries | sort_by(.key))])[]; length == 1);
 			"duplicate public sample")
 		| require(all($public[]; .type_count == 1 and .type == "gauge"
-			and .labels.host == "huatuo-dev" and .labels.region == "dev");
+			and .labels.hostname == "huatuo-dev" and .labels.region == "dev");
 			"BlkIOTrace Gauge type or public labels differ")
 		| require(all($public[];
 			if (suffix as $name | intervals | index($name)) != null

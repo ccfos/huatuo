@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 // BuildInOpts describes an information gauge with a constant value of 1.
@@ -31,8 +32,8 @@ type BuildInOpts struct {
 
 // RegisterCollector registers process and Go runtime collectors, plus the
 // supplied information gauges fixed at 1.
-// All metrics use the namespace prefix and common host/region labels.
-// Labels are copied during registration; host and region are reserved.
+// All metrics use the namespace prefix and common hostname/region labels.
+// Labels are copied during registration; hostname and region are reserved.
 // Invalid descriptors or duplicate registration panic, as with MustRegister.
 func RegisterCollector(reg *prometheus.Registry, namespace string, infos ...BuildInOpts) {
 	prefix := ""
@@ -41,8 +42,8 @@ func RegisterCollector(reg *prometheus.Registry, namespace string, infos ...Buil
 	}
 
 	labeledReg := prometheus.WrapRegistererWith(prometheus.Labels{
-		metric.LabelHost:   metric.DefaultHostname(),
-		metric.LabelRegion: metric.DefaultRegion(),
+		observation.FieldHostname: metric.DefaultHostname(),
+		observation.FieldRegion:   metric.DefaultRegion(),
 	}, prometheus.WrapRegistererWithPrefix(prefix, reg))
 
 	labeledReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

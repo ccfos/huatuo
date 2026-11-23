@@ -14,25 +14,42 @@ weight: 1
 本文按 CPU、内存、网络、I/O、系统事件和 GPU 分类说明常用指标，供查询和排障时参考。实际输出取决于内核接口、设备驱动、采集器开关和过滤配置，完整指标以节点的 `/metrics` 输出为准。启用方式见[节点配置](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 - **名称**：表格统一省略 `huatuo_bamai_` 前缀。例如，`cpu_util_total` 的完整名称为 `huatuo_bamai_cpu_util_total`。
-- **标签**：所有指标带有 `host`、`region`；容器指标另带 `container_host`、`container_hostnamespace`、`container_level`、`container_name`、`container_type`。表格仅列附加标签，`—` 表示无附加标签。
+- **标签**：所有指标带有 `hostname`、`region`；容器指标另带 `container_id`、`container_hostname`、`container_namespace`、`container_qos`、`container_name`、`container_type`。表格仅列附加标签，`—` 表示无附加标签。
 - **计数与单位**：计数值表示事件或对象数量，不等于延迟值。累计 Counter 可用 `rate()` 或 `increase()` 分析变化；部分内核累计统计以 Gauge 导出，需结合字段语义判断，不能仅凭类型或名称推断。
 - **示例**：下列数值仅用于说明输出格式，不代表诊断阈值。未输出指标不等于指标值为零。
 
 ```text
 # TYPE huatuo_bamai_runqlat_latency counter
-huatuo_bamai_runqlat_latency{host="hostname",region="dev",zone="0"} 35100
+huatuo_bamai_runqlat_latency{hostname="hostname",region="dev",zone="0"} 35100
 # TYPE huatuo_bamai_runqlat_container_latency counter
-huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="0"} 226
+huatuo_bamai_runqlat_container_latency{container_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",container_hostname="coredns-855c4dd65d-8v5kg",container_namespace="kube-system",container_qos="burstable",container_name="coredns",container_type="normal",hostname="hostname",region="dev",zone="0"} 226
 ```
 
 此例分别展示宿主机和容器的调度延迟分桶计数，`zone` 的范围见下文。
+
+## 公共标签
+
+这些字段与 Elasticsearch 文档的公共字段使用相同名称和取值。节点观测提供 `region`、`hostname`；容器观测另外提供以下六个容器字段。
+
+| 字段 | 含义 |
+| --- | --- |
+| `region` | Agent 配置的地域 |
+| `hostname` | 采集节点的宿主机名称 |
+| `container_id` | 完整容器运行时 ID，用于区分容器重建前后的实例 |
+| `container_name` | 容器名称 |
+| `container_hostname` | 容器发现过程取得的主机名；默认实现取 Pod 的 `spec.hostname` 或名称，DaemonSet 取宿主机名称 |
+| `container_namespace` | 容器所属编排命名空间；默认实现取 Kubernetes Pod 命名空间 |
+| `container_type` | 容器分类，例如 `normal`、`sidecar`、`daemonSet` |
+| `container_qos` | 容器 QoS，例如 `guaranteed`、`burstable`、`besteffort` |
+
+名称、主机名和命名空间用于描述和过滤，不能代替 `container_id` 作为容器实例身份。宿主机观测省略容器字段；容器描述属性无法取得时，指标中的空值和文档中缺失的字段均表示未知。公共字段由观测目标元数据提供，额外业务标签不能覆盖它们。
 
 ## 构建信息
 
 `huatuo_bamai_build_info` 和 `huatuo_apiserver_build_info` 是值恒为 `1` 的
 Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自程序的
 `/metrics` 暴露，构建信息与该程序的 `/version` 一致。它们包含既有公共标签
-`host`、`region`（apiserver 中为空），以及以下构建标签：
+`hostname`、`region`（apiserver 中为空），以及以下构建标签：
 
 | 标签 | 含义 |
 | --- | --- |
@@ -271,7 +288,7 @@ Gauge，分别表示 bamai 和 apiserver 当前运行的构建。两者由各自
 
 |指标|意义|单位|对象|取值| 标签 |
 |---|---|---|---|---|---|
-|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_hostname, container_id, container_name, container_namespace, container_qos, container_type, hostname, region|
 |memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
 
 两项为累计耗时 Gauge，统计全局直接回收与规整中的任务耗时。主机总量包含容器工作；缺失或归属不明确的容器记录不输出。容器采集失败仍保留主机数据，加载依赖容器探针，加载或挂载失败时该采集器不可用。容器重建后对应容器累计值重新开始，主机累计值不受影响；BPF 重载后两者均归零。
@@ -346,7 +363,7 @@ Qdisc 指标描述发送队列积压、发送量、丢包和重入队次数，�
 
 `netdev_rdma_link_<counter>` 输出内核的逐端口计数，具体名称取决于驱动。附加标签为 `device`、`nodeguid`、`index`、`num_ports` 和 `port`。
 
-新增 `port` 标签会产生新的时间序列，单端口设备也受影响。端口级查询保留该标签；对选定计数器，设备总量使用 `sum by (region, host, device) (<metric>)`，设备速率使用 `sum by (region, host, device) (rate(<metric>[5m]))`，将 `<metric>` 替换为完整指标名。只按 `device` 聚合会混合不同主机上的同名设备。
+新增 `port` 标签会产生新的时间序列，单端口设备也受影响。端口级查询保留该标签；对选定计数器，设备总量使用 `sum by (region, hostname, device) (<metric>)`，设备速率使用 `sum by (region, hostname, device) (rate(<metric>[5m]))`，将 `<metric>` 替换为完整指标名。只按 `device` 聚合会混合不同主机上的同名设备。
 
 ### 网卡统计
 
@@ -475,14 +492,14 @@ SCSI 下发大小沿用内核的 16 位扇区计数，达到 32 MiB 会回绕。
 
 ```text
 # TYPE huatuo_bamai_blk_iotrace_q2d_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
-huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 5
 # TYPE huatuo_bamai_blk_iotrace_d2c_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 5
 # TYPE huatuo_bamai_blk_iotrace_q2g_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_q2g_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+huatuo_bamai_blk_iotrace_q2g_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 5
 # TYPE huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
+huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket{container_id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",container_hostname="etcd-hostname",container_namespace="kube-system",container_qos="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 2
 ```
 
 |指标|意义|单位|对象|
@@ -539,7 +556,7 @@ sum_over_time(huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="
 ```bash
 # HELP huatuo_bamai_blk_device_health_freeze_total the disk freeze event count
 # TYPE huatuo_bamai_blk_device_health_freeze_total counter
-huatuo_bamai_blk_device_health_freeze_total{disk="sda",host="hostname",region="dev"} 0
+huatuo_bamai_blk_device_health_freeze_total{disk="sda",hostname="hostname",region="dev"} 0
 ```
 
 |指标|意义|单位|对象|标签|
@@ -724,7 +741,7 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 
 |指标|意义|单位|对象|取值| 标签 |
 |---|---|---|---|---|---|
-|hungtask_container_total|已归属容器的阻塞任务事件计数|计数|容器|BPF + CSS 缓存|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|hungtask_container_total|已归属容器的阻塞任务事件计数|计数|容器|BPF + CSS 缓存|container_hostname, container_id, container_name, container_namespace, container_qos, container_type, hostname, region|
 
 容器计数包含在主机 Counter 中，不受追踪退避影响。容器归属无法解析的事件仍计入主机总量。容器退出后清理其计数，agent 重启后归零；同一阻塞任务重复上报按多次事件计数。
 

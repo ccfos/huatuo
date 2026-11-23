@@ -40,6 +40,7 @@ import (
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -156,7 +157,9 @@ func TestBlkDeviceHealthFactoryUsesFilesystemPrefix(t *testing.T) {
 
 	worker := &recordingEvidenceSubmitter{accept: true}
 	collector.handleKernelEvent(abi.BlkDeviceHealthEvent{
-		Type: blkDeviceHealthEventBlockError, Dev: dev, Status: -5,
+		Type:   blkDeviceHealthEventBlockError,
+		Dev:    dev,
+		Status: -5,
 	}, worker, nil)
 	require.Len(t, worker.requests, 1)
 	require.Equal(t, "sda", worker.requests[0].Target)
@@ -177,7 +180,10 @@ func TestSaveBlkDeviceHealthEventUsesObservedTimestamp(t *testing.T) {
 			t.Errorf("close event store: %v", err)
 		}
 	})
-	if err := tracing.EnableDocumentWriter(store, document.New("health-region")); err != nil {
+	if err := tracing.EnableDocumentWriter(store, document.New(&observation.Metadata{
+		Region:   "health-region",
+		Hostname: "test-node",
+	})); err != nil {
 		t.Fatal(err)
 	}
 	documents, unsubscribe := store.Subscribe()
@@ -339,7 +345,8 @@ func TestBlkDeviceHealthNVMeStatesFromBTF(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%s-%d", test.name, test.value), func(t *testing.T) {
 			spec := blkDeviceHealthBTFSpec(t, &btf.Enum{
-				Name: "nvme_ctrl_state", Size: 4,
+				Name:   "nvme_ctrl_state",
+				Size:   4,
 				Values: []btf.EnumValue{{Name: "NVME_CTRL_" + test.name, Value: test.value}},
 			})
 			states := blkDeviceHealthNVMeStates(spec)
@@ -368,14 +375,16 @@ func TestBlkDeviceHealthRequestQuietFlagsFromBTF(t *testing.T) {
 		{
 			name: "enum flags", wanted: 1 << 7,
 			enum: &btf.Enum{
-				Name: "rqf_flags", Size: 4,
+				Name:   "rqf_flags",
+				Size:   4,
 				Values: []btf.EnumValue{{Name: "__RQF_QUIET", Value: 7}},
 			},
 		},
 		{
 			name: "renumbered flags", wanted: 1 << 12,
 			enum: &btf.Enum{
-				Name: "rqf_flags", Size: 4,
+				Name:   "rqf_flags",
+				Size:   4,
 				Values: []btf.EnumValue{{Name: "__RQF_QUIET", Value: 12}},
 			},
 		},
@@ -393,9 +402,12 @@ func TestBlkDeviceHealthBlockErrorLayout(t *testing.T) {
 	integer := &btf.Int{Name: "int", Size: 4, Encoding: btf.Signed}
 	name := &btf.Pointer{Target: &btf.Const{Type: &btf.Int{Name: "char", Size: 1}}}
 	array := func(tag bool, count uint32) *btf.Array {
-		entry := &btf.Struct{Size: 16, Members: []btf.Member{
-			{Name: "errno", Type: integer}, {Name: "name", Type: name, Offset: 64},
-		}}
+		entry := &btf.Struct{
+			Size: 16,
+			Members: []btf.Member{
+				{Name: "errno", Type: integer}, {Name: "name", Type: name, Offset: 64},
+			},
+		}
 		if tag {
 			entry.Size = 24
 			entry.Members[1].Name = "tag"
@@ -595,13 +607,17 @@ func TestBlkDeviceHealthRoutesNVMeEventsWithoutResetEvidence(t *testing.T) {
 		},
 		{
 			raw: abi.BlkDeviceHealthEvent{
-				Type: blkDeviceHealthEventNVMeStateChange, Controller: blkDeviceHealthControllerBytes("nvme7"), NewStateRaw: 1,
+				Type:        blkDeviceHealthEventNVMeStateChange,
+				Controller:  blkDeviceHealthControllerBytes("nvme7"),
+				NewStateRaw: 1,
 			},
 			typeName: blkDeviceHealthTypeNVMeStateChange, device: "nvme7", state: "live",
 		},
 		{
 			raw: abi.BlkDeviceHealthEvent{
-				Type: blkDeviceHealthEventNVMeStateChange, Controller: blkDeviceHealthControllerBytes("nvme0"), NewStateRaw: 253,
+				Type:        blkDeviceHealthEventNVMeStateChange,
+				Controller:  blkDeviceHealthControllerBytes("nvme0"),
+				NewStateRaw: 253,
 			},
 			typeName: blkDeviceHealthTypeNVMeStateChange, device: "nvme0", state: "unknown",
 		},
@@ -648,13 +664,18 @@ func TestBlkDeviceHealthPreservesMDTriggerDuringEvidenceCooldown(t *testing.T) {
 	collector, recorder := newRecordingBlkDeviceHealthCollector(t, root)
 	worker := &recordingEvidenceSubmitter{accept: true}
 	collector.handleKernelEvent(abi.BlkDeviceHealthEvent{
-		Type: blkDeviceHealthEventBlockError, Dev: dev, Status: -int32(unix.EIO),
+		Type:   blkDeviceHealthEventBlockError,
+		Dev:    dev,
+		Status: -int32(unix.EIO),
 	}, worker, nil)
 	worker.accept = false
 	at := time.Unix(200, 0)
 	collector.handleMDChange(blkdevicehealth.MDChange{
-		Array: "md0", Member: "sda", Field: blkdevicehealth.MDFieldMemberState,
-		NewState: "faulty", ObservedAt: at,
+		Array:          "md0",
+		Member:         "sda",
+		Field:          blkdevicehealth.MDFieldMemberState,
+		NewState:       "faulty",
+		ObservedAt:     at,
 		MemberIdentity: blkdevicehealth.BlockDeviceIdentity(filepath.Join(root, "class", "block", "sda")),
 	}, worker)
 	if len(worker.requests) != 2 || worker.requests[1].Trigger.Type != blkDeviceHealthTypeMDMemberState {
@@ -666,8 +687,9 @@ func TestBlkDeviceHealthPreservesMDTriggerDuringEvidenceCooldown(t *testing.T) {
 		t.Fatalf("MD trigger was suppressed with its evidence: %+v", recorder.events)
 	}
 	collector.handleEvidenceResult(blkdevicehealth.EvidenceResult{
-		Target: worker.requests[0].Target, TriggeredAt: worker.requests[0].TriggeredAt,
-		Event: worker.requests[0].Trigger,
+		Target:      worker.requests[0].Target,
+		TriggeredAt: worker.requests[0].TriggeredAt,
+		Event:       worker.requests[0].Trigger,
 	})
 	if len(recorder.events) != 2 || recorder.events[1].event.Type != blkDeviceHealthTypeBlockError {
 		t.Fatalf("original block trigger was not retained: %+v", recorder.events)
@@ -702,8 +724,12 @@ func TestBlkDeviceHealthRoutesFullSCSIHCTL(t *testing.T) {
 			collector, _ := newRecordingBlkDeviceHealthCollector(t, root)
 			submitter := &recordingEvidenceSubmitter{accept: true}
 			collector.handleKernelEvent(abi.BlkDeviceHealthEvent{
-				Type: blkDeviceHealthEventSCSIDispatchError, Status: scsiMLQueueTargetBusy,
-				Host: host, Channel: channel, Target: target, Lun: test.lun,
+				Type:    blkDeviceHealthEventSCSIDispatchError,
+				Status:  scsiMLQueueTargetBusy,
+				Host:    host,
+				Channel: channel,
+				Target:  target,
+				Lun:     test.lun,
 			}, submitter, nil)
 			if len(submitter.requests) != 1 {
 				t.Fatalf("SCSI requests = %+v", submitter.requests)
@@ -799,9 +825,13 @@ func TestBlkDeviceHealthRoutesMDTransitionsAndFaultEvidence(t *testing.T) {
 	}
 	for _, observed := range []string{"", identity} {
 		collector.handleMDChange(blkdevicehealth.MDChange{
-			Array: "md0", Member: "sdb", MemberIdentity: observed,
-			Field: blkdevicehealth.MDFieldMemberState, OldState: "in_sync",
-			NewState: blkdevicehealth.MDMemberStateRemoved, ObservedAt: observedAt,
+			Array:          "md0",
+			Member:         "sdb",
+			MemberIdentity: observed,
+			Field:          blkdevicehealth.MDFieldMemberState,
+			OldState:       "in_sync",
+			NewState:       blkdevicehealth.MDMemberStateRemoved,
+			ObservedAt:     observedAt,
 		}, submitter)
 	}
 	if len(submitter.requests) != 4 || len(recorder.events) != 5 {
@@ -1178,7 +1208,9 @@ func TestBlkDeviceHealthBufferedEventEvidence(t *testing.T) {
 						}
 					}
 					*value.(*abi.BlkDeviceHealthEvent) = abi.BlkDeviceHealthEvent{
-						Type: blkDeviceHealthEventBlockError, Dev: dev, Status: -int32(unix.EIO),
+						Type:               blkDeviceHealthEventBlockError,
+						Dev:                dev,
+						Status:             -int32(unix.EIO),
 						TopologyGeneration: test.eventGeneration,
 					}
 					return nil
@@ -1261,7 +1293,8 @@ func TestBlkDeviceHealthFreezeCounter(t *testing.T) {
 		require.Equal(t, []bpf.MapItem{survivor}, object.freezeItems)
 		// A callback that outlives del_gendisk may leave another stale row.
 		object.freezeItems = append(object.freezeItems, bpf.MapItem{
-			Key: key, Value: binary.LittleEndian.AppendUint64(nil, 1),
+			Key:   key,
+			Value: binary.LittleEndian.AppendUint64(nil, 1),
 		})
 	}
 }
@@ -1769,8 +1802,11 @@ func TestBlkDeviceHealthBPFRecoversAfterSessionFailure(t *testing.T) {
 				waitBlkDeviceHealthAttempt(t, attempts, attempt)
 			}
 			watcher.changes <- blkdevicehealth.MDChange{
-				Array: "md0", Field: blkdevicehealth.MDFieldSyncAction,
-				OldState: "idle", NewState: "recover", ObservedAt: time.Unix(1, 0),
+				Array:      "md0",
+				Field:      blkdevicehealth.MDFieldSyncAction,
+				OldState:   "idle",
+				NewState:   "recover",
+				ObservedAt: time.Unix(1, 0),
 			}
 			select {
 			case event := <-saved:
@@ -1915,7 +1951,8 @@ func TestBlkDeviceHealthSaveErrorsDoNotStopEventProcessing(t *testing.T) {
 		t.Fatalf("save attempts = %d, want 2", saves)
 	}
 	if got := collector.counters[blkDeviceHealthCounterKey{
-		kind: blkDeviceHealthCounterNVMeReset, device: "nvme7",
+		kind:   blkDeviceHealthCounterNVMeReset,
+		device: "nvme7",
 	}]; got != 2 {
 		t.Fatalf("reset events = %d, want 2", got)
 	}

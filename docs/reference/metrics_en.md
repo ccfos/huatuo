@@ -14,18 +14,35 @@ This reference lists metric names, units, labels, sources, and measurement seman
 Common metrics are grouped by CPU, memory, network, I/O, system events, and GPU for querying and troubleshooting. Actual output depends on kernel interfaces, device drivers, enabled collectors, and filters. The node's `/metrics` output is authoritative for the complete set. See [Node Configuration](/docs/configuration/huatuo-bamai-configuration_en.md) for enablement.
 
 - **Names**: tables omit the `huatuo_bamai_` prefix. For example, `cpu_util_total` is exposed as `huatuo_bamai_cpu_util_total`.
-- **Labels**: all metrics include `host` and `region`. Container metrics also include `container_host`, `container_hostnamespace`, `container_level`, `container_name`, and `container_type`. Tables list only additional labels; `—` means none.
+- **Labels**: all metrics include `hostname` and `region`. Container metrics also include `container_id`, `container_hostname`, `container_namespace`, `container_qos`, `container_name`, and `container_type`. Tables list only additional labels; `—` means none.
 - **Counts and units**: counts measure events or objects, not latency. Use `rate()` or `increase()` for cumulative Counters. Some cumulative kernel statistics are exported as Gauges; interpret their field semantics rather than inferring from type or name alone.
 - **Examples**: values illustrate output format, not diagnostic thresholds. A missing metric does not mean zero.
 
 ```text
 # TYPE huatuo_bamai_runqlat_latency counter
-huatuo_bamai_runqlat_latency{host="hostname",region="dev",zone="0"} 35100
+huatuo_bamai_runqlat_latency{hostname="hostname",region="dev",zone="0"} 35100
 # TYPE huatuo_bamai_runqlat_container_latency counter
-huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="0"} 226
+huatuo_bamai_runqlat_container_latency{container_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",container_hostname="coredns-855c4dd65d-8v5kg",container_namespace="kube-system",container_qos="burstable",container_name="coredns",container_type="normal",hostname="hostname",region="dev",zone="0"} 226
 ```
 
 This example shows host and container scheduling-latency bucket counts. The `zone` ranges are listed below.
+
+## Public labels
+
+These fields use the same names and values as the public fields in Elasticsearch documents. Node observations provide `region` and `hostname`; container observations also provide the six container fields below.
+
+| Field | Meaning |
+| --- | --- |
+| `region` | Region configured on the Agent |
+| `hostname` | Hostname of the collection node |
+| `container_id` | Full runtime container ID, distinguishing instances across container recreation |
+| `container_name` | Container name |
+| `container_hostname` | Hostname obtained during container discovery; the default implementation uses the Pod's `spec.hostname` or name, and the node hostname for DaemonSets |
+| `container_namespace` | Orchestration namespace; the default implementation uses the Kubernetes Pod namespace |
+| `container_type` | Container classification, such as `normal`, `sidecar`, or `daemonSet` |
+| `container_qos` | Container QoS, such as `guaranteed`, `burstable`, or `besteffort` |
+
+Names, hostnames, and namespaces describe and filter containers; they do not replace `container_id` as the identity of a container instance. Host observations omit container fields. An empty metric label or an omitted document field represents an unavailable descriptive attribute. Public fields come from the observation target's metadata and cannot be overridden by additional business labels.
 
 ## Build Information
 
@@ -33,7 +50,7 @@ This example shows host and container scheduling-latency bucket counts. The `zon
 constant value of `1`, describing the running bamai and apiserver builds
 respectively. Each is exposed by its application’s `/metrics` endpoint and
 uses the same build information as that application’s `/version` endpoint.
-They carry the existing `host` and `region` labels (empty for apiserver) and
+They carry the existing `hostname` and `region` labels (empty for apiserver) and
 these build labels:
 
 | Label | Meaning |
@@ -276,7 +293,7 @@ Shows free block counts by NUMA node, memory zone, and order. `order=n` means ea
 
 |Metric|Description|Unit|Target|Source|Labels|
 |---|---|---|---|---|---|
-|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_hostname, container_id, container_name, container_namespace, container_qos, container_type, hostname, region|
 |memory_free_container_compaction_stall|Container task time in direct compaction| milliseconds|Container| eBPF | same container labels|
 
 These cumulative Gauge values measure task time in global direct reclaim and compaction. Host totals include container work. Missing or ambiguous container records are omitted; container collection failures preserve host output. Loading requires the container probes; a load or attachment failure disables this collector. Container recreation starts a new container total without resetting the host total. BPF reload resets both.
@@ -349,7 +366,7 @@ Counts receive-side hardware drops for supported NIC drivers. It prefers `rx_mis
 
 `netdev_rdma_link_<counter>` exposes per-port kernel counters; available names depend on the driver. Additional labels are `device`, `nodeguid`, `index`, `num_ports`, and `port`.
 
-The new `port` label creates new time series, including on single-port devices. Keep it for port-level queries. For a selected counter, use `sum by (region, host, device) (<metric>)` for device totals, or `sum by (region, host, device) (rate(<metric>[5m]))` for device rates; replace `<metric>` with the full metric name. Grouping only by `device` mixes identically named devices across hosts.
+The new `port` label creates new time series, including on single-port devices. Keep it for port-level queries. For a selected counter, use `sum by (region, hostname, device) (<metric>)` for device totals, or `sum by (region, hostname, device) (rate(<metric>[5m]))` for device rates; replace `<metric>` with the full metric name. Grouping only by `device` mixes identically named devices across hosts.
 
 ### NIC Statistics
 
@@ -486,14 +503,14 @@ bytes. Metrics are interval Gauges.
 
 ```text
 # TYPE huatuo_bamai_blk_iotrace_q2d_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="0.001"} 3
-huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="0.001"} 3
+huatuo_bamai_blk_iotrace_q2d_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 5
 # TYPE huatuo_bamai_blk_iotrace_d2c_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 5
 # TYPE huatuo_bamai_blk_iotrace_q2g_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_q2g_seconds_bucket{disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 5
+huatuo_bamai_blk_iotrace_q2g_seconds_bucket{disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 5
 # TYPE huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket gauge
-huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket{container_host="etcd-hostname",container_hostnamespace="kube-system",container_level="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",host="hostname",region="dev",le="+Inf"} 2
+huatuo_bamai_blk_iotrace_container_q2g_seconds_bucket{container_id="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",container_hostname="etcd-hostname",container_namespace="kube-system",container_qos="burstable",container_name="etcd",container_type="normal",disk="sda",operation="read",hostname="hostname",region="dev",le="+Inf"} 2
 ```
 
 |Metric|Description|Unit|Scope|
@@ -556,7 +573,7 @@ sum_over_time(huatuo_bamai_blk_iotrace_d2c_seconds_bucket{disk="sda",operation="
 ```bash
 # HELP huatuo_bamai_blk_device_health_freeze_total the disk freeze event count
 # TYPE huatuo_bamai_blk_device_health_freeze_total counter
-huatuo_bamai_blk_device_health_freeze_total{disk="sda",host="hostname",region="dev"} 0
+huatuo_bamai_blk_device_health_freeze_total{disk="sda",hostname="hostname",region="dev"} 0
 ```
 
 |Metric|Description|Unit|Scope|Labels|
@@ -755,7 +772,7 @@ Records hung-task events detected by the kernel.
 
 |Metric|Description|Unit|Target|Source|Labels|
 |---|---|---|---|---|---|
-|hungtask_container_total|Events attributed to blocked container tasks|count|Container|BPF + CSS cache|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|hungtask_container_total|Events attributed to blocked container tasks|count|Container|BPF + CSS cache|container_hostname, container_id, container_name, container_namespace, container_qos, container_type, hostname, region|
 
 Container counts are included in the host Counter and are independent of trace backoff. Events with unresolved container attribution still contribute to the host count. Container exit removes its count; agent restart resets counts. Repeated reports of the same blocked task count as separate events.
 

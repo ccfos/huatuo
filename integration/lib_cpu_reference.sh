@@ -181,7 +181,7 @@ cpu_util_snapshot() {
 	  ("huatuo_bamai_cpu_util_"+(if (.Pod//"")=="" then "" else "container_" end)) as $prefix |
 	  ["total","usr","sys"] | map(. as $field | {key:({total:"Total",usr:"User",sys:"Sys"}[$field]),
 	   value: ([$f[0][$prefix+$field].samples[]? | select(($t.Pod//"")=="" or
-	    (.labels.container_host==$t.Pod and .labels.container_name==$t.Container and .labels.container_hostnamespace==$t.Namespace))][0].value // 0)}) | from_entries]}' \
+	    (.labels.container_hostname==$t.Pod and .labels.container_name==$t.Container and .labels.container_namespace==$t.Namespace))][0].value // 0)}) | from_entries]}' \
 		> "${output}/sample.json"
 }
 
@@ -304,7 +304,7 @@ cpu_stat_snapshot() {
 	 Metrics:[$targets[0][] | . as $t |
 	 ["nr_throttled","throttled_time","nr_bursts","burst_time","wait_sum_percent"] |
 	 map(. as $name | {key:$name,value:([$f[0]["huatuo_bamai_cpu_stat_container_"+$name].samples[]? |
-	  select(.labels.container_host==$t.Pod and .labels.container_name==$t.Container and .labels.container_hostnamespace==$t.Namespace)][0].value)}) |
+	  select(.labels.container_hostname==$t.Pod and .labels.container_name==$t.Container and .labels.container_namespace==$t.Namespace)][0].value)}) |
 	 map(select(.value!=null)) | from_entries]}' > "${output}/sample.json"
 }
 

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -264,10 +265,11 @@ func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 				profile, err := window.BuildProfile(t.Context(), &types.AggregationWindow{
 					ProfileType: tc.profileType,
 					Aggregated: types.AggregatedProfile{
-						TimeNanos: 1, DurationNanos: 100,
-						Frames:  []types.ProfileFrame{{Name: "work"}},
-						Stacks:  [][]uint32{{0}},
-						Samples: []types.AggregatedSample{{UserStack: 1, Value: value}},
+						TimeNanos:     1,
+						DurationNanos: 100,
+						Frames:        []types.ProfileFrame{{Name: "work"}},
+						Stacks:        [][]uint32{{0}},
+						Samples:       []types.AggregatedSample{{UserStack: 1, Value: value}},
 					},
 				})
 				if err != nil {
@@ -510,7 +512,11 @@ func TestSelectMergeStacktracesRejectsInvalidScope(t *testing.T) {
 		`{scope="other",id="job"}`,
 		`{scope="host",scope="container",id="job"}`,
 		`{scope="host",container_id="container",id="job"}`,
-		`{scope="host",container_host_namespace="team-a",id="job"}`,
+		`{scope="host",container_namespace="team-a",id="job"}`,
+		`{scope="host",container_name="worker",id="job"}`,
+		`{scope="host",container_hostname="worker-pod",id="job"}`,
+		`{scope="host",container_type="normal",id="job"}`,
+		`{scope="host",container_qos="burstable",id="job"}`,
 		`{scope="container",hostname="node"}`,
 	} {
 		t.Run(selector, func(t *testing.T) {
@@ -563,10 +569,28 @@ func TestProfileMatcherSetAppliesEverySupportedLabel(t *testing.T) {
 			stored: func(filter *profilingstore.Filter) string { return filter.ContainerID },
 		},
 		{
-			name:   "container host namespace",
-			label:  "container_host_namespace",
+			name:   "container name",
+			label:  "container_name",
+			value:  "worker",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerName },
+		},
+		{
+			name:   "container type",
+			label:  "container_type",
+			value:  "normal",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerType },
+		},
+		{
+			name:   "container qos",
+			label:  "container_qos",
+			value:  "burstable",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerQoS },
+		},
+		{
+			name:   "container namespace",
+			label:  "container_namespace",
 			value:  "team-a",
-			stored: func(filter *profilingstore.Filter) string { return filter.ContainerHostNamespace },
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerNamespace },
 		},
 		{
 			name:   "container hostname",
@@ -638,9 +662,24 @@ func TestProfileMatcherSetRejectsConflictingValues(t *testing.T) {
 			stored: func(filter *profilingstore.Filter) string { return filter.ContainerID },
 		},
 		{
-			name:   "container host namespace",
-			label:  "container_host_namespace",
-			stored: func(filter *profilingstore.Filter) string { return filter.ContainerHostNamespace },
+			name:   "container name",
+			label:  "container_name",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerName },
+		},
+		{
+			name:   "container type",
+			label:  "container_type",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerType },
+		},
+		{
+			name:   "container qos",
+			label:  "container_qos",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerQoS },
+		},
+		{
+			name:   "container namespace",
+			label:  "container_namespace",
+			stored: func(filter *profilingstore.Filter) string { return filter.ContainerNamespace },
 		},
 		{
 			name:   "container hostname",
@@ -836,5 +875,42 @@ func TestLabelValuesRejectsConflictingMatchers(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "hostname") {
 		t.Errorf("LabelValues() error = %v, want it to mention the conflicting label", err)
+	}
+}
+
+func TestLabelNamesIncludesPublicMetadata(t *testing.T) {
+	service := newQueryServiceWithoutStorage(t)
+	response, err := service.LabelNames(t.Context(), &typesv1.LabelNamesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, field := range []string{
+		"region", "hostname", "container_id", "container_name",
+		"container_hostname", "container_namespace", "container_type", "container_qos",
+	} {
+		if !slices.Contains(response.Names, field) {
+			t.Errorf("label names = %v, missing public metadata %q", response.Names, field)
+		}
+	}
+}
+
+func TestLabelValuesRejectsHostScopeWithContainerMetadata(t *testing.T) {
+	service := newQueryServiceWithoutStorage(t)
+	for _, field := range []string{
+		"container_id", "container_name", "container_hostname",
+		"container_namespace", "container_type", "container_qos",
+	} {
+		t.Run(field, func(t *testing.T) {
+			_, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+				Name: "hostname",
+				Matchers: []string{
+					fmt.Sprintf(`{__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds",scope="host",%s="worker"}`, field),
+				},
+			})
+			if !errors.Is(err, ErrInvalidQuery) || !strings.Contains(err.Error(), "host scope") {
+				t.Fatalf("LabelValues() error = %v, want host scope conflict before storage access", err)
+			}
+		})
 	}
 }

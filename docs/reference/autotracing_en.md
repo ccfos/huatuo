@@ -26,7 +26,7 @@ Records contain these common fields. Container fields are provided only when a c
 | `uploaded_timestamp` | Data upload time |
 | `container_id` | Container ID |
 | `container_hostname` | Container hostname |
-| `container_host_namespace` | Container's Kubernetes namespace |
+| `container_namespace` | Container's Kubernetes namespace |
 | `container_type` | Container type |
 | `container_qos` | Container QoS class |
 | `tracer_name` | Event name, such as `cpusys` or `memburst` |

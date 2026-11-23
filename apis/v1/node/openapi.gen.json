@@ -522,17 +522,22 @@
       "WatchEventData": {
         "additionalProperties": false,
         "properties": {
-          "container_host_namespace": {
-            "type": "string"
-          },
           "container_hostname": {
             "type": "string"
           },
           "container_id": {
             "type": "string"
           },
-          "container_qos": {
+          "container_name": {
             "type": "string"
+          },
+          "container_namespace": {
+            "type": "string",
+            "x-go-name": "ContainerNamespace"
+          },
+          "container_qos": {
+            "type": "string",
+            "x-go-name": "ContainerQoS"
           },
           "container_type": {
             "type": "string"
@@ -573,13 +578,25 @@
       "WatchEventFilters": {
         "additionalProperties": false,
         "properties": {
-          "container_host_namespace": {
-            "type": "string"
-          },
           "container_hostname": {
             "type": "string"
           },
+          "container_id": {
+            "type": "string",
+            "x-go-name": "ContainerID"
+          },
+          "container_name": {
+            "type": "string"
+          },
+          "container_namespace": {
+            "type": "string",
+            "x-go-name": "ContainerNamespace"
+          },
           "container_qos": {
+            "type": "string",
+            "x-go-name": "ContainerQoS"
+          },
+          "container_type": {
             "type": "string"
           },
           "hostname": {

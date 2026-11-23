@@ -157,7 +157,7 @@ container_id=$(kubelet_container_ids "${BUSINESS_POD_NS}" "^${pod_name}$")
 cgroup_root=$(cgroup_memory_root) || fatal "memory controller mount is unavailable"
 container_cgroup=$(cgroup_find_container "${cgroup_root}" "${container_id}") || fatal "Pod memory cgroup not found"
 cgroup_relative=${container_cgroup#"${cgroup_root}"}
-container_labels="container_host=\"${pod_name}\",container_hostnamespace=\"${BUSINESS_POD_NS}\",container_level=\"burstable\",container_name=\"${pod_name}\",container_type=\"normal\",host=\"huatuo-dev\",region=\"dev\""
+container_labels="container_hostname=\"${pod_name}\",container_id=\"${container_id}\",container_name=\"${pod_name}\",container_namespace=\"${BUSINESS_POD_NS}\",container_qos=\"burstable\",container_type=\"normal\",hostname=\"huatuo-dev\",region=\"dev\""
 start_container_memory_agent
 assert_real_memory_events
 # Standard kernels must disable the custom-interface collector cleanly.

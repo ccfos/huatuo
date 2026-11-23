@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 // containerIDRegexp matches a 12-64 character hex container ID.
@@ -57,9 +59,9 @@ func (c *Container) LifeResources(key string) any {
 	return c.lifeResources[key]
 }
 
-// LabelHostNamespace returns namespace label
-func (c *Container) LabelHostNamespace() string {
-	return c.Labels[labelHostNamespace].(string)
+// LabelNamespace returns namespace label
+func (c *Container) LabelNamespace() string {
+	return c.Labels[observation.FieldContainerNamespace].(string)
 }
 
 func (c *Container) InitPidOrInitnsPid() int {
@@ -195,4 +197,16 @@ func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 		return nil, nil
 	}
 	return containerBy(func(c *Container) uint64 { return c.NetNamespaceCookie }, cookie)
+}
+
+// ObservationMetadata returns container attributes without node identity or clocks.
+func (c *Container) ObservationMetadata() observation.Metadata {
+	return observation.Metadata{
+		ContainerID:        c.ID,
+		ContainerName:      c.Name,
+		ContainerHostname:  c.Hostname,
+		ContainerNamespace: c.LabelNamespace(),
+		ContainerType:      c.Type.String(),
+		ContainerQoS:       c.Qos.String(),
+	}
 }

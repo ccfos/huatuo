@@ -263,6 +263,7 @@ For example: `{region="example",hostname="node-01",scope="container",container_i
 Each label accepts one equality condition. On this endpoint the wildcard values `*`, `all`,
 and the empty string only drop the restriction for that label, so
 `{scope="host",hostname="*",id="job-1"}` still selects one task; `scope` is still required.
+Container filters also support `container_name`, `container_hostname`, `container_namespace`, `container_type`, and `container_qos`, each matching the complete field value. Names and namespaces do not replace the container ID.
 Repeating a label with the same value is accepted, while contradictory duplicates such as
 `{hostname="host-a",hostname="host-b"}` are rejected with `400` and the error reports both
 values, because one query cannot select two hosts. A matcher that uses any operator other

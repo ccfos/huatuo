@@ -63,7 +63,7 @@ assert_memsnapshot_tracing_metrics() {
 	huatuo_bamai_collect_metrics
 	awk -v tracer="${tracer}" -v region="${region}" -v enabled="${enabled}" -v expected_running="${running}" '
  function labels_ok(line) {
-  return line ~ /[{,]host="[^"]+"/ && index(line, "region=\"" region "\"") > 0
+  return line ~ /[{,]hostname="[^"]+"/ && index(line, "region=\"" region "\"") > 0
  }
  $0 == "# TYPE huatuo_bamai_tracing_status_hitcount gauge" { hit_type=1 }
  $0 == "# TYPE huatuo_bamai_tracing_status_running gauge" { running_type=1 }

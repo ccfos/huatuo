@@ -320,12 +320,13 @@ type WatchEvent struct {
 
 // WatchEventData defines model for WatchEventData.
 type WatchEventData struct {
-	ContainerHostNamespace *string `json:"container_host_namespace,omitempty"`
-	ContainerHostname      *string `json:"container_hostname,omitempty"`
-	ContainerID            *string `json:"container_id,omitempty"`
-	ContainerQos           *string `json:"container_qos,omitempty"`
-	ContainerType          *string `json:"container_type,omitempty"`
-	Hostname               string  `json:"hostname"`
+	ContainerHostname  *string `json:"container_hostname,omitempty"`
+	ContainerID        *string `json:"container_id,omitempty"`
+	ContainerName      *string `json:"container_name,omitempty"`
+	ContainerNamespace *string `json:"container_namespace,omitempty"`
+	ContainerQoS       *string `json:"container_qos,omitempty"`
+	ContainerType      *string `json:"container_type,omitempty"`
+	Hostname           string  `json:"hostname"`
 
 	// KernelObservedTimestamp UTC time when the kernel observed the event, when available, emitted with nine fractional digits.
 	KernelObservedTimestamp *time.Time `json:"kernel_observed_timestamp,omitempty"`
@@ -340,12 +341,15 @@ type WatchEventData struct {
 
 // WatchEventFilters defines model for WatchEventFilters.
 type WatchEventFilters struct {
-	ContainerHostNamespace *string `json:"container_host_namespace,omitempty"`
-	ContainerHostname      *string `json:"container_hostname,omitempty"`
-	ContainerQos           *string `json:"container_qos,omitempty"`
-	Hostname               *string `json:"hostname,omitempty"`
-	Region                 *string `json:"region,omitempty"`
-	TracerName             *string `json:"tracer_name,omitempty"`
+	ContainerHostname  *string `json:"container_hostname,omitempty"`
+	ContainerID        *string `json:"container_id,omitempty"`
+	ContainerName      *string `json:"container_name,omitempty"`
+	ContainerNamespace *string `json:"container_namespace,omitempty"`
+	ContainerQoS       *string `json:"container_qos,omitempty"`
+	ContainerType      *string `json:"container_type,omitempty"`
+	Hostname           *string `json:"hostname,omitempty"`
+	Region             *string `json:"region,omitempty"`
+	TracerName         *string `json:"tracer_name,omitempty"`
 }
 
 // WatchEventSpecVersion defines model for WatchEventSpecVersion.

@@ -807,7 +807,7 @@ assert_build_info() {
 		.data | {name, version, git_commit, git_tree_state, build_time, go_version, compiler, platform}
 		| if all(.[]; type == "string" and length > 0) then .
 		  else error("missing nonempty build identity field") end
-		| . + {host: $host, region: $region}
+		| . + {hostname: $host, region: $region}
 		| to_entries | sort_by(.key)
 		| map(.key + "=\"" + (.value
 			| split("\\") | join("\\\\")
@@ -818,6 +818,9 @@ assert_build_info() {
 	expected="${namespace}_build_info{${labels}} 1"
 	assert_eq "${sample}" "${expected}" "build-info sample" \
 		|| fatal "build-info: expected ${expected}, got ${sample}"
+	if grep -E "^${namespace}_.*[{,](host|container_host|container_hostnamespace|container_host_namespace|container_level)=" "${metrics_file}"; then
+		fatal "GET /metrics: expected canonical metadata labels; found a removed label above"
+	fi
 }
 
 huatuo_bamai_metrics() {

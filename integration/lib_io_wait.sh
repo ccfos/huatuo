@@ -115,8 +115,8 @@ assert_io_wait_metrics() {
 			if $condition then . else error($message) end;
 		("huatuo_bamai_" + $collector + "_") as $prefix |
 		"delayed_io_count" as $count |
-		["host", "region", "disk", "operation"] as $common |
-		["container_host", "container_hostnamespace", "container_name", "container_type", "container_level"] as $container |
+		["hostname", "region", "disk", "operation"] as $common |
+		["container_id", "container_hostname", "container_namespace", "container_name", "container_type", "container_qos"] as $container |
 		map(. as $document |
 			[.metrics[] | select(.name | startswith($prefix)) |
 				. + {suffix: (.name | ltrimstr($prefix))} |
@@ -131,7 +131,7 @@ assert_io_wait_metrics() {
 					(.labels | keys) == (($common + (if .is_container then $container else ["scope"] end)) | sort) and
 					.label_count == (.labels | length);
 					"unexpected wait labels: " + (.labels | tostring)) |
-				assert_value(.labels.host == "huatuo-dev" and .labels.region == "dev";
+				assert_value(.labels.hostname == "huatuo-dev" and .labels.region == "dev";
 					"incorrect wait host/region labels") |
 				assert_value(.labels.operation == "read" or .labels.operation == "write";
 					"invalid wait direction") |
@@ -143,12 +143,12 @@ assert_io_wait_metrics() {
 					"invalid wait value: " + (.raw_value | tostring)) |
 				assert_value(.field != "count" or .value == (.value | floor);
 					"noninteger wait count") |
-				if .is_container and $namespace != "" and .labels.container_hostnamespace == $namespace then
+				if .is_container and $namespace != "" and .labels.container_namespace == $namespace then
 					assert_value(
 						(.labels.container_name == "reader-0" or
 						 ($container_groups == 2 and .labels.container_name == "reader-1")) and
-						.labels.container_host == ("huatuo-io-" + (.labels.container_name | ltrimstr("reader-"))) and
-						.labels.container_type == "normal" and .labels.container_level == "besteffort";
+						.labels.container_hostname == ("huatuo-io-" + (.labels.container_name | ltrimstr("reader-"))) and
+						.labels.container_type == "normal" and .labels.container_qos == "besteffort";
 						"incorrect known-container labels")
 				else . end
 			] as $rows |
@@ -190,7 +190,7 @@ assert_io_wait_metrics() {
 				{healthy: 1, unconfirmed: 0, count: $host.count, other: $other.count,
 				 positive: (if $host.count > 0 and $host.average > 0 then 1 else 0 end),
 				 containers: [$containers[] | select(.count > 0 and
-					($namespace == "" or .labels.container_hostnamespace == $namespace)) | .labels]}
+					($namespace == "" or .labels.container_namespace == $namespace)) | .labels]}
 			end
 		) |
 		{host_count: ([.[].count] | add), other_count: ([.[].other] | add),

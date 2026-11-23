@@ -224,7 +224,7 @@ assert_sockstat_container_filter() {
 	local index
 	for ((index = 1; index <= CONTAINER_BATCH_COUNT; index++)); do
 		assert_metrics "sockstat container ${index}" \
-			"sockstat_container_TCP_inuse\\{.*container_host=\"${CONTAINER_BATCH_NAME}-${index}\""
+			"sockstat_container_TCP_inuse\\{.*container_hostname=\"${CONTAINER_BATCH_NAME}-${index}\""
 	done
 	assert_metrics "sockstat memory is host-only" \
 		'sockstat_TCP_mem\{' 'sockstat_TCP_mem_bytes\{' \

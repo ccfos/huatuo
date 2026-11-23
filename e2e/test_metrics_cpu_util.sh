@@ -158,11 +158,11 @@ cpu_util_target() {
 	cpu=$(cgroup_find_container "${CPU_UTIL_CPU_ROOT}" "${id}") || fatal "CPU quota cgroup missing for ${id}"
 	cpuset=$(cgroup_find_container "${CPU_UTIL_CPUSET_ROOT}" "${id}") || fatal "cpuset cgroup missing for ${id}"
 	[[ ${type} != daemonSet ]] || metric_host=$(hostname)
-	jq -n --arg name "${pod}/${container}" --arg pod "${metric_host}" --arg container "${container}" \
+	jq -n --arg id "${id}" --arg name "${pod}/${container}" --arg pod "${metric_host}" --arg container "${container}" \
 		--arg ns "${CPU_UTIL_NS}" --arg type "${type}" --arg mode "${mode}" \
 		--arg usage "${usage}" --arg cpu "${cpu}" --arg cpuset "${cpuset}" \
 		--argjson quota "${quota}" --argjson expected "${expected}" \
-		'{Name: $name, Pod: $pod, Container: $container, Namespace: $ns, Type: $type,
+		'{ID: $id, Name: $name, Pod: $pod, Container: $container, Namespace: $ns, Type: $type,
 		  QoS: "burstable", UsagePath: $usage, CPUPath: $cpu, CpusetPath: $cpuset,
 		  QuotaMilli: $quota, ExpectedMilli: $expected, Mode: $mode}'
 }
@@ -194,7 +194,7 @@ assert_cpu_util_samples() {
 		.Targets as $targets | ($targets | length) > 0 and (.Samples | length) >= 2
 		and all(.Samples[]; . as $s | collector_ok(.Families; "cpu_util")
    and all(range(0; $targets | length); . as $i | $targets[$i] as $t |
-    (if $t.Pod == "" then {host: $host, region: "e2e"} else container_labels($t; $host) end) as $labels |
+    (if $t.Pod == "" then {hostname: $host, region: "e2e"} else container_labels($t; $host) end) as $labels |
     ("huatuo_bamai_cpu_util_" + (if $t.Pod == "" then "" else "container_" end)) as $prefix |
     all(["usr","sys","total"][]; . as $field | cpu_metric($s.Families[$prefix + $field]; $labels) <= 100)
     and (if $t.Pod == "" then true else

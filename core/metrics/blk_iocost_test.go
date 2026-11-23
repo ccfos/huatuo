@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfos/huatuo/pkg/observation"
+
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -260,8 +262,12 @@ func blkIOCostCaptureTestAggregateItem(css, cssSerial uint64, operation, reserve
 	lanes ...blkIOCostCaptureTestLane,
 ) bpf.MapItem {
 	return ioControlWaitTestItem(ioControlWaitKey{
-		CSS: css, CSSSerial: cssSerial, Major: 8, Minor: 16,
-		Operation: operation, Reserved: reserved,
+		CSS:       css,
+		CSSSerial: cssSerial,
+		Major:     8,
+		Minor:     16,
+		Operation: operation,
+		Reserved:  reserved,
 	}, lanes...)
 }
 
@@ -881,7 +887,9 @@ func TestBlkIOCostTransactionUpdateMutexCancelWithdrawClose(t *testing.T) {
 		workers.Wait()
 	}()
 	object.queueDumps(blkIOCostWaitAggregateMap, blkIOCostCaptureTestDump{
-		items: object.defaultItems[blkIOCostWaitAggregateMap], entered: entered, release: release,
+		items:   object.defaultItems[blkIOCostWaitAggregateMap],
+		entered: entered,
+		release: release,
 	})
 	result := make(chan error, 1)
 	workers.Add(1)
@@ -972,10 +980,16 @@ func TestBlkIOCostAttributionReusedCSSKeepsCounterBaselinesSeparate(t *testing.T
 	require.NoError(t, err)
 	requireBlkIOCostHostAndContainerInterval(t, metrics, 1, 2)
 	require.NotContains(t, fixture.collector.session.previous, ioControlWaitKey{
-		CSS: newRow.css, Major: newRow.major, Minor: newRow.minor, CSSSerial: blkIOCostCaptureTestCSSSerial,
+		CSS:       newRow.css,
+		Major:     newRow.major,
+		Minor:     newRow.minor,
+		CSSSerial: blkIOCostCaptureTestCSSSerial,
 	})
 	require.Contains(t, fixture.collector.session.previous, ioControlWaitKey{
-		CSS: newRow.css, Major: newRow.major, Minor: newRow.minor, CSSSerial: newRow.cssSerial,
+		CSS:       newRow.css,
+		Major:     newRow.major,
+		Minor:     newRow.minor,
+		CSSSerial: newRow.cssSerial,
 	})
 
 	newRow.lanes = []blkIOCostCaptureTestLane{
@@ -1009,7 +1023,7 @@ func TestBlkIOCostContainerFailuresPreserveHostIntervals(t *testing.T) {
 				// Even a nonempty result is unusable when its source failed.
 				fixture.source.err = errors.New("kubelet not running")
 			case "labels":
-				container.Labels[ioControlHostNamespaceKey] = 123
+				container.Labels[observation.FieldContainerNamespace] = 123
 			case "empty":
 				fixture.source.containers = nil
 			}
@@ -1025,7 +1039,7 @@ func TestBlkIOCostContainerFailuresPreserveHostIntervals(t *testing.T) {
 				require.Zero(t, fixture.harness.cancelCount())
 			}
 
-			container.Labels[ioControlHostNamespaceKey] = "host"
+			container.Labels[observation.FieldContainerNamespace] = "host"
 			fixture.source.err = nil
 			fixture.source.containers = map[string]*pod.Container{container.ID: container}
 			setBlkIOCostIntervalTestRows(fixture.object, blkIOCostDefaultIntervalTestRow(8, 2600))
@@ -1049,7 +1063,7 @@ func TestBlkIOCostContainerFailuresPreserveHostIntervals(t *testing.T) {
 			require.ErrorIs(t, err, captureErr)
 			if failure == "labels" {
 				fixture.source.err = nil
-				container.Labels[ioControlHostNamespaceKey] = 123
+				container.Labels[observation.FieldContainerNamespace] = 123
 			}
 			metrics, err = fixture.collector.Update()
 			require.ErrorIs(t, err, metric.ErrNoData)

@@ -253,9 +253,9 @@ cpu_stat_target() {
 	id=$(kubelet_container_ids "${CPU_STAT_NS}" "^${name}$")
 	cpu=$(cgroup_find_container "${CPU_STAT_CPU_ROOT}" "${id}") || fatal "CPU cgroup missing for ${name}"
 	usage=$(cgroup_find_container "${CPU_STAT_USAGE_ROOT}" "${id}") || fatal "CPU accounting cgroup missing for ${name}"
-	jq -n --arg pod "${name}" --arg ns "${CPU_STAT_NS}" --arg cpu "${cpu}" --arg usage "${usage}" \
+	jq -n --arg id "${id}" --arg pod "${name}" --arg ns "${CPU_STAT_NS}" --arg cpu "${cpu}" --arg usage "${usage}" \
 		--argjson expected_cpu "${expected_cpu}" --argjson expected_wait "${expected_wait}" \
-		'{Pod: $pod, Container: "worker", Namespace: $ns, CPUPath: $cpu, UsagePath: $usage,
+		'{ID: $id, Pod: $pod, Container: "worker", Namespace: $ns, CPUPath: $cpu, UsagePath: $usage,
 		  ExpectedCPU: $expected_cpu, ExpectedWait: $expected_wait}'
 }
 

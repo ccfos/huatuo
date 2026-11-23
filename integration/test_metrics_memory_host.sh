@@ -29,7 +29,7 @@ cp -a "${HUATUO_BAMAI_TEST_FIXTURES}" "${fixture_root}"
 write_expected_buddyinfo() {
 	local node zone order value
 	while read -r node zone order value; do
-		printf 'huatuo_bamai_memory_buddyinfo_blocks{host="huatuo-dev",node="%s",order="%s",region="dev",zone="%s"} %s\n' \
+		printf 'huatuo_bamai_memory_buddyinfo_blocks{hostname="huatuo-dev",node="%s",order="%s",region="dev",zone="%s"} %s\n' \
 			"${node}" "${order}" "${zone}" "${value}"
 	done > "${expected_buddy}"
 }
@@ -37,7 +37,7 @@ write_expected_buddyinfo() {
 write_expected_host_vmstat() {
 	local field value
 	while read -r field value; do
-		printf 'huatuo_bamai_memory_vmstat_%s{host="huatuo-dev",region="dev"} %s\n' "${field}" "${value}"
+		printf 'huatuo_bamai_memory_vmstat_%s{hostname="huatuo-dev",region="dev"} %s\n' "${field}" "${value}"
 	done > "${expected_vmstat}"
 }
 

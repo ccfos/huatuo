@@ -33,6 +33,7 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/metric"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/require"
@@ -219,8 +220,11 @@ func blkThrotlTestRawKey(key blkThrotlTestKey) ioControlWaitKey {
 		key.css = key.serial
 	}
 	return ioControlWaitKey{
-		CSS: key.css, CSSSerial: key.serial,
-		Major: key.major, Minor: key.minor, Operation: key.operation,
+		CSS:       key.css,
+		CSSSerial: key.serial,
+		Major:     key.major,
+		Minor:     key.minor,
+		Operation: key.operation,
 	}
 }
 
@@ -275,7 +279,7 @@ func blkThrotlMetricByNameAndScope(
 func blkThrotlCustomLabels(labels map[string]string) map[string]string {
 	result := make(map[string]string, len(labels))
 	for key, value := range labels {
-		if key == metric.LabelHost || key == metric.LabelRegion {
+		if key == observation.FieldHostname || key == observation.FieldRegion {
 			continue
 		}
 		result[key] = value
@@ -753,7 +757,10 @@ func TestBlkThrotlRemovedLateCompletionNeverDeletesActiveAggregate(
 	object := newFakeBlkThrotlCollectorBPF()
 	collector := newBlkThrotlAttributedTestCollector(t, object, source)
 	key := blkThrotlTestKey{
-		css: 0x11, major: 4095, minor: 1, operation: 0,
+		css:       0x11,
+		major:     4095,
+		minor:     1,
+		operation: 0,
 	}
 	waitKey := blkThrotlTestRawKey(key)
 
@@ -808,7 +815,10 @@ func TestBlkThrotlCSSSerialKeepsCounterBaselinesSeparate(t *testing.T) {
 			object := newFakeBlkThrotlCollectorBPF()
 			collector := newBlkThrotlAttributedTestCollector(t, object, source)
 			key := blkThrotlTestKey{
-				css: 0x11, serial: 7, major: 4095, minor: 1,
+				css:    0x11,
+				serial: 7,
+				major:  4095,
+				minor:  1,
 			}
 			requireInterval := requireBlkThrotlHostAndOtherInterval
 			if mapped {
@@ -845,7 +855,10 @@ func TestBlkThrotlCSSSerialKeepsCounterBaselinesSeparate(t *testing.T) {
 func blkThrotlRetiredTestItem(key blkThrotlTestKey) bpf.MapItem {
 	raw := blkThrotlTestRawKey(key)
 	identity := ioControlRetiredKey{
-		CSS: raw.CSS, CSSSerial: raw.CSSSerial, Major: raw.Major, Minor: raw.Minor,
+		CSS:       raw.CSS,
+		CSSSerial: raw.CSSSerial,
+		Major:     raw.Major,
+		Minor:     raw.Minor,
 	}
 	return bpf.MapItem{Key: ioControlTestBytes(identity), Value: []byte{1}}
 }
@@ -1068,7 +1081,7 @@ func TestBlkThrotlContainerFailuresPreserveHostIntervals(t *testing.T) {
 				// A failed source can still return data; none of it is trusted.
 				source.err = errors.New("kubelet not running")
 			case "labels":
-				container.Labels[ioControlHostNamespaceKey] = 123
+				container.Labels[observation.FieldContainerNamespace] = 123
 			case "empty":
 				source.containers = nil
 			}
@@ -1081,7 +1094,7 @@ func TestBlkThrotlContainerFailuresPreserveHostIntervals(t *testing.T) {
 				requireBlkThrotlHostAndOtherInterval(t, metrics, 3, 3)
 			}
 
-			container.Labels[ioControlHostNamespaceKey] = "shared-namespace"
+			container.Labels[observation.FieldContainerNamespace] = "shared-namespace"
 			source.err = nil
 			source.containers = map[string]*pod.Container{container.ID: container}
 			object.setDumps(blkThrotlTestDump{items: []bpf.MapItem{

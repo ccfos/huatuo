@@ -108,7 +108,7 @@ run_container_latency() {
 			"${CONTAINER_WORK}/last-interval" || status=$?
 		((status == 0 || status == 3)) || return "${status}"
 		awk -v active="${active}" -v disk="${container_latency_disk}" -v pod_namespace="${POD_NAMESPACE}" \
-			-v strict="${strict}" -v mode="${mode}" '
+			-v strict="${strict}" -v mode="${mode}" -v id0="${container_ids[0]}" -v id1="${container_ids[1]}" '
 		function label(row, key, parts) {
 			if (split(row, parts, key "=\"") != 2) return ""
 			sub(/".*/, "", parts[2]); return parts[2]
@@ -123,7 +123,7 @@ run_container_latency() {
 		/^huatuo_bamai_blk_iotrace_/ {
 			if (label($1, "disk") != disk || label($1, "operation") != "read") next
 			is_container = ($1 ~ /^huatuo_bamai_blk_iotrace_container_/)
-			if (is_container && label($1, "container_hostnamespace") != pod_namespace) next
+			if (is_container && label($1, "container_namespace") != pod_namespace) next
 			name = $1; sub(/^huatuo_bamai_blk_iotrace_(container_)?/, "", name); sub(/\{.*/, "", name)
 			if (!(name in known)) next
 			bound = label($1, "le")
@@ -136,8 +136,9 @@ run_container_latency() {
 				next
 			}
 			owner = label($1, "container_name"); sub(/^reader-/, "", owner)
-			if (owner !~ /^[01]$/ || label($1, "container_host") != "huatuo-io-" owner ||
-				label($1, "container_level") != "besteffort" || label($1, "container_type") != "normal") fail("incorrect container labels: " $0)
+			if (owner !~ /^[01]$/ || label($1, "container_hostname") != "huatuo-io-" owner ||
+				label($1, "container_qos") != "besteffort" || label($1, "container_type") != "normal") fail("incorrect container labels: " $0)
+			if (label($1, "container_id") != (owner == "0" ? id0 : id1)) fail("container ID differs from discovered owner: " $0)
 			if (++seen[owner, key] != 1) fail("duplicate container bucket: " $0)
 			if (!(owner in wanted) && $2 + 0 != 0) fail("inactive container received IO: " $0)
 			if (bound == "+Inf" && $2 + 0 > 0) positive[owner, name] = has_positive = 1

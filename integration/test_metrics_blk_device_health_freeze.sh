@@ -76,8 +76,8 @@ assert_freeze_counter() {
 		[.[] | select(.name == "huatuo_bamai_blk_device_health_freeze_total")] as $samples
 		| if all($samples[];
 			.type == "counter" and .type_count == 1 and .label_count == 3
-			and (.labels | keys) == ["disk", "host", "region"]
-			and (.labels.disk | length > 0) and .labels.host == "huatuo-dev" and .labels.region == "dev"
+			and (.labels | keys) == ["disk", "hostname", "region"]
+			and (.labels.disk | length > 0) and .labels.hostname == "huatuo-dev" and .labels.region == "dev"
 			and (.raw_value | test("^[+]?[0-9]+([.][0-9]*)?([eE][+-]?[0-9]+)?$"))
 			and (.value | type == "number") and (.value | isinfinite | not)
 			and .value >= 0 and .value == (.value | floor))

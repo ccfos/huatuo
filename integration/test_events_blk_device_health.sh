@@ -493,7 +493,7 @@ test_scsi_health_events() {
 			| if ($samples | length) == 0 then 0
 			  elif ($samples | length) == 1
 				and ($samples[0] | .type == "counter" and .type_count == 1
-					and .labels.host == $host and .labels.region == "dev"
+					and .labels.hostname == $host and .labels.region == "dev"
 					and (.value | type == "number" and . >= 0 and floor == .))
 			  then $samples[0].value
 			  else error("invalid SCSI Counter type, labels or value") end
