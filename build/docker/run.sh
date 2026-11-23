@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2025 The HuaTuo Authors
+# Copyright 2025, 2026 The HuaTuo Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,9 +38,9 @@ wait_for_elasticsearch() {
 		fi
 	fi
 
-	args="-s -D- -m15 -w '%{http_code}' ${target_url}"
+	set -- curl -s -D- -m15 -w '%{http_code}' "$target_url"
 	if [ -n "${ELASTIC_PASSWORD}" ]; then
-		args="$args -u elastic:${ELASTIC_PASSWORD}"
+		set -- "$@" -u "elastic:${ELASTIC_PASSWORD}"
 	fi
 
 	result=1
@@ -49,8 +49,7 @@ wait_for_elasticsearch() {
 	# retry for up to 180 seconds
 	for sec in $(seq 1 180); do
 		exit_code=0
-		output=$(eval "curl $args") || exit_code=$?
-		# echo "exec curl $args, exit code: $exit_code, output: $output"
+		output=$("$@") || exit_code=$?
 		if [ $exit_code -ne 0 ]; then
 			result=$exit_code
 		fi
@@ -95,5 +94,5 @@ sleep 5 # Waiting for initialization of Elasticsearch built-in users
 echo "Elasticsearch is ready."
 
 # Run huatuo-bamai
-cd $RUN_PATH
+cd "$RUN_PATH" || exit 1
 exec ./bin/huatuo-bamai --region example --config huatuo-bamai.conf
