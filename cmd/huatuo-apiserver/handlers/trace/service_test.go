@@ -30,7 +30,7 @@ func TestValidateCreateInput(t *testing.T) {
 	valid := CreateInput{
 		Hostname:        "node-1",
 		DurationSeconds: 60,
-		Scope:           observation.ScopeHost,
+		Scope:           observation.ScopeTypeHost,
 		Spec:            tracingdomain.Spec{Type: tracingdomain.TypeNetworkingDrop},
 	}
 	tests := []struct {
@@ -94,7 +94,7 @@ func TestCreateRejectsInvalidDurationAtServiceBoundary(t *testing.T) {
 	_, err = service.Create(t.Context(), auth.Principal{}, CreateInput{
 		Hostname:        "node-1",
 		DurationSeconds: 0,
-		Scope:           observation.ScopeHost,
+		Scope:           observation.ScopeTypeHost,
 		Spec:            tracingdomain.Spec{Type: tracingdomain.TypeNetworkingDrop},
 	})
 	if !errors.Is(err, job.ErrInvalidQuery) {
@@ -108,9 +108,9 @@ func TestCapabilitiesRemainStatic(t *testing.T) {
 	if len(first) != 3 {
 		t.Fatalf("Capabilities() count = %d, want 3", len(first))
 	}
-	first[0].SupportedScopes[0] = observation.ScopeContainer
+	first[0].SupportedScopes[0] = observation.ScopeTypeContainer
 	second := service.Capabilities()
-	if second[0].SupportedScopes[0] != observation.ScopeHost {
+	if second[0].SupportedScopes[0] != observation.ScopeTypeHost {
 		t.Fatalf("Capabilities() retained caller mutation: %+v", second[0])
 	}
 }

@@ -41,7 +41,7 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 		"--task-id", request.RequestID,
 		"--tool-path", config.ToolDir,
 	}
-	if request.Scope == observation.ScopeContainer {
+	if request.Scope == observation.ScopeTypeContainer {
 		args = append(args, "--container-id", request.ContainerID)
 	}
 	switch request.Spec.Type {

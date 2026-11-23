@@ -810,8 +810,8 @@ func TestResolveProfileMatchersAcceptsRepeatedValues(t *testing.T) {
 	if filter.Hostname != "host-a" {
 		t.Errorf("Hostname = %q, want %q", filter.Hostname, "host-a")
 	}
-	if filter.Scope != observation.ScopeHost {
-		t.Errorf("Scope = %v, want %v", filter.Scope, observation.ScopeHost)
+	if filter.Scope != observation.ScopeTypeHost {
+		t.Errorf("Scope = %v, want %v", filter.Scope, observation.ScopeTypeHost)
 	}
 }
 

@@ -95,14 +95,14 @@ func newData(name string, value float64, typ int, help string, labels map[string
 		Region:   defaultRegion,
 		Hostname: defaultHostname,
 	}
-	return newMetadataData(name, value, typ, help, &metadata, observation.ScopeHost, labels)
+	return newMetadataData(name, value, typ, help, &metadata, observation.ScopeTypeHost, labels)
 }
 
 func newMetadataData(name string, value float64, typ int, help string,
 	metadata *observation.Metadata, scope observation.Scope, labels map[string]string,
 ) *Data {
 	fieldCount := 2
-	if scope == observation.ScopeContainer {
+	if scope == observation.ScopeTypeContainer {
 		fieldCount = 8
 	}
 
@@ -116,7 +116,7 @@ func newMetadataData(name string, value float64, typ int, help string,
 	}
 	data.labelKey = append(data.labelKey, observation.FieldRegion, observation.FieldHostname)
 	data.labelValue = append(data.labelValue, metadata.Region, metadata.Hostname)
-	if scope == observation.ScopeContainer {
+	if scope == observation.ScopeTypeContainer {
 		data.labelKey = append(data.labelKey,
 			observation.FieldContainerID, observation.FieldContainerName,
 			observation.FieldContainerHostname, observation.FieldContainerNamespace,
@@ -183,7 +183,7 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 	metadata := container.ObservationMetadata()
 	metadata.Region = defaultRegion
 	metadata.Hostname = defaultHostname
-	return newMetadataData("container_"+name, value, typ, help, &metadata, observation.ScopeContainer, labels)
+	return newMetadataData("container_"+name, value, typ, help, &metadata, observation.ScopeTypeContainer, labels)
 }
 
 // NewContainerGaugeData creates a new instance of container Data.

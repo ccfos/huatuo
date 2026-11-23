@@ -41,7 +41,7 @@ func testProfilingRequest() *StartRequest {
 	return &StartRequest{
 		RequestID: "job-1",
 		Duration:  time.Minute,
-		Scope:     observation.ScopeHost,
+		Scope:     observation.ScopeTypeHost,
 		Spec: profilingdomain.Spec{
 			Type:     profilingdomain.TypeCPU,
 			Language: profilingdomain.LanguageGo,
@@ -89,7 +89,7 @@ func TestBuildCommandUsesOnePythonAggregationWindow(t *testing.T) {
 	config := testProfilingConfig(t)
 	request := testProfilingRequest()
 	request.Duration = 45 * time.Second
-	request.Scope = observation.ScopeContainer
+	request.Scope = observation.ScopeTypeContainer
 	request.ContainerID = strings.Repeat("a", 64)
 	request.Spec.Language = profilingdomain.LanguagePython
 	request.Spec.BinaryMatchPath = "/usr/bin/python"

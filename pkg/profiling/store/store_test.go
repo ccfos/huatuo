@@ -272,7 +272,7 @@ func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
 }
 
 func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
-	query := buildAggregationQuery(&Filter{Scope: observation.ScopeHost, Hostname: "host-a"})
+	query := buildAggregationQuery(&Filter{Scope: observation.ScopeTypeHost, Hostname: "host-a"})
 	want := []driver.Filter{
 		{Field: observation.FieldHostname + ".keyword", Op: driver.OpEq, Value: "host-a"},
 		{Field: observation.FieldContainerID, Op: driver.OpNotExists},
@@ -312,12 +312,12 @@ func TestBuildProfileScopeAndNodeFilters(t *testing.T) {
 		{name: "node spans scopes"},
 		{
 			name:  "host",
-			scope: observation.ScopeHost,
+			scope: observation.ScopeTypeHost,
 			want:  driver.OpNotExists,
 		},
 		{
 			name:  "container",
-			scope: observation.ScopeContainer,
+			scope: observation.ScopeTypeContainer,
 			want:  driver.OpExists,
 		},
 	} {

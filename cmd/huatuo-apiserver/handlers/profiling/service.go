@@ -342,10 +342,10 @@ func buildDashboardURL(baseURL string, resultJob *job.Job, region, profileType s
 	query.Set("var-task_id", resultJob.ID)
 	query.Set("var-type", profileType)
 	switch resultJob.Scope {
-	case observation.ScopeHost:
+	case observation.ScopeTypeHost:
 		query.Set("var-scope", "NOT _exists_:container_id")
 		query.Set("var-container_id", "$__all")
-	case observation.ScopeContainer:
+	case observation.ScopeTypeContainer:
 		query.Set("var-scope", "_exists_:container_id")
 		query.Set("var-container_id", resultJob.ContainerID)
 	default:

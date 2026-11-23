@@ -247,12 +247,12 @@ func buildAggregationQuery(filter *Filter) driver.Query {
 	appendTextFilter(fieldProfileType, filter.ProfileType)
 	appendTextFilter(observation.FieldHostname, filter.Hostname)
 	switch filter.Scope {
-	case observation.ScopeHost:
+	case observation.ScopeTypeHost:
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: observation.FieldContainerID,
 			Op:    driver.OpNotExists,
 		})
-	case observation.ScopeContainer:
+	case observation.ScopeTypeContainer:
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: observation.FieldContainerID,
 			Op:    driver.OpExists,

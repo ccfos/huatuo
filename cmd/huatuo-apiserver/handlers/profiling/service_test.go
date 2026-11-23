@@ -32,7 +32,7 @@ func TestValidateCreateInput(t *testing.T) {
 	valid := CreateInput{
 		Hostname:        "node-1",
 		DurationSeconds: 60,
-		Scope:           observation.ScopeHost,
+		Scope:           observation.ScopeTypeHost,
 		Spec: profilingdomain.Spec{
 			Type:     profilingdomain.TypeCPU,
 			Language: profilingdomain.LanguageGo,
@@ -107,7 +107,7 @@ func TestCreateRejectsInvalidDurationAtServiceBoundary(t *testing.T) {
 	input := &CreateInput{
 		Hostname:        "node-1",
 		DurationSeconds: 0,
-		Scope:           observation.ScopeHost,
+		Scope:           observation.ScopeTypeHost,
 		Spec: profilingdomain.Spec{
 			Type:     profilingdomain.TypeCPU,
 			Language: profilingdomain.LanguageGo,
@@ -134,7 +134,7 @@ func TestResultURLRequiresPublishedCompleteResult(t *testing.T) {
 		ID:        "job-1",
 		Kind:      job.KindProfiling,
 		Hostname:  "node+1&debug",
-		Scope:     observation.ScopeHost,
+		Scope:     observation.ScopeTypeHost,
 		Status:    job.StatusTerminal,
 		Terminal:  &job.TerminalResult{Outcome: job.OutcomeCompleted},
 		CreatedAt: base,
@@ -189,7 +189,7 @@ func TestBuildDashboardURL(t *testing.T) {
 		{
 			name:           "host cpu",
 			baseURL:        "https://grafana.example/d/",
-			input:          newJob(observation.ScopeHost, profilingdomain.TypeCPU),
+			input:          newJob(observation.ScopeTypeHost, profilingdomain.TypeCPU),
 			wantPath:       "/d/continuous-profiling",
 			wantScopeKey:   "var-hostname",
 			wantScopeValue: "node+1&debug",
@@ -197,14 +197,14 @@ func TestBuildDashboardURL(t *testing.T) {
 		{
 			name:           "container memory",
 			baseURL:        "https://grafana.example/d/",
-			input:          newJob(observation.ScopeContainer, profilingdomain.TypeMemory),
+			input:          newJob(observation.ScopeTypeContainer, profilingdomain.TypeMemory),
 			wantPath:       "/d/continuous-profiling",
 			wantScopeKey:   "var-container_id",
 			wantScopeValue: "container+1&debug",
 		},
 		{
 			name:    "missing base url",
-			input:   newJob(observation.ScopeHost, profilingdomain.TypeCPU),
+			input:   newJob(observation.ScopeTypeHost, profilingdomain.TypeCPU),
 			baseURL: "",
 		},
 		{
@@ -219,12 +219,12 @@ func TestBuildDashboardURL(t *testing.T) {
 		{
 			name:    "unsupported scope",
 			baseURL: "https://grafana.example/d",
-			input:   newJob(observation.ScopeUnknown, profilingdomain.TypeCPU),
+			input:   newJob(observation.ScopeTypeUnknown, profilingdomain.TypeCPU),
 		},
 		{
 			name:    "unsupported profile type",
 			baseURL: "https://grafana.example/d",
-			input:   newJob(observation.ScopeHost, profilingdomain.TypeLock),
+			input:   newJob(observation.ScopeTypeHost, profilingdomain.TypeLock),
 		},
 	}
 	for _, tt := range tests {
@@ -251,7 +251,7 @@ func TestBuildDashboardURL(t *testing.T) {
 				t.Fatalf("result metadata missing from URL: %v", query)
 			}
 			wantScope := "NOT _exists_:container_id"
-			if tt.input.Scope == observation.ScopeContainer {
+			if tt.input.Scope == observation.ScopeTypeContainer {
 				wantScope = "_exists_:container_id"
 			}
 			if query.Get("var-scope") != wantScope {

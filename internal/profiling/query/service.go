@@ -87,13 +87,13 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 		return nil, err
 	}
 
-	if filter.Scope == observation.ScopeUnknown {
+	if filter.Scope == observation.ScopeTypeUnknown {
 		return nil, fmt.Errorf("%w: scope must be host or container", ErrInvalidQuery)
 	}
 	if err := validateProfileHostScope(filter); err != nil {
 		return nil, err
 	}
-	if filter.Scope == observation.ScopeContainer && filter.ContainerID == "" && filter.ID == "" {
+	if filter.Scope == observation.ScopeTypeContainer && filter.ContainerID == "" && filter.ID == "" {
 		return nil, fmt.Errorf("%w: container scope requires a container id or task id", ErrInvalidQuery)
 	}
 
@@ -262,7 +262,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 }
 
 func validateProfileHostScope(filter *profilingstore.Filter) error {
-	if filter.Scope != observation.ScopeHost {
+	if filter.Scope != observation.ScopeTypeHost {
 		return nil
 	}
 
@@ -284,7 +284,7 @@ func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidQuery, err)
 		}
-		if filter.Scope != observation.ScopeUnknown && filter.Scope != scope {
+		if filter.Scope != observation.ScopeTypeUnknown && filter.Scope != scope {
 			return fmt.Errorf("%w: conflicting scope matchers", ErrInvalidQuery)
 		}
 		filter.Scope = scope
@@ -496,7 +496,7 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 	}
 
 	if req.Name == "scope" {
-		return &typesv1.LabelValuesResponse{Names: []string{string(observation.ScopeHost), string(observation.ScopeContainer)}}, nil
+		return &typesv1.LabelValuesResponse{Names: []string{string(observation.ScopeTypeHost), string(observation.ScopeTypeContainer)}}, nil
 	}
 
 	names, err := s.profileStorage.Values(ctx, filter, req.Name)
