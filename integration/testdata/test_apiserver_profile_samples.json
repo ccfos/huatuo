@@ -1,0 +1,224 @@
+[
+	{
+		"tracer_id": "sample-task-a",
+		"tracer_type": "profiling",
+		"hostname": "host-a",
+		"region": "east",
+		"started_timestamp": "1970-01-01T00:00:00Z",
+		"uploaded_timestamp": "1970-01-01T00:00:00Z",
+		"profile_data": {
+			"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			"profile": {
+				"string_table": [
+					"",
+					"cpu",
+					"nanoseconds",
+					"work",
+					"pid",
+					"comm",
+					"worker",
+					"future_label",
+					"a+b"
+				],
+				"sample_type": [
+					{
+						"type": 1,
+						"unit": 2
+					}
+				],
+				"function": [
+					{
+						"id": 1,
+						"name": 3
+					}
+				],
+				"location": [
+					{
+						"id": 1,
+						"line": [
+							{
+								"function_id": 1
+							}
+						]
+					}
+				],
+				"sample": [
+					{
+						"location_id": [
+							1
+						],
+						"value": [
+							7
+						],
+						"label": [
+							{
+								"key": 4,
+								"num": 123
+							},
+							{
+								"key": 5,
+								"str": 6
+							},
+							{
+								"key": 1,
+								"num": 0
+							},
+							{
+								"key": 7,
+								"str": 8
+							}
+						]
+					}
+				]
+			}
+		}
+	},
+	{
+		"tracer_id": "sample-task-a",
+		"tracer_type": "profiling",
+		"hostname": "host-a",
+		"region": "east",
+		"started_timestamp": "1970-01-01T00:00:00Z",
+		"uploaded_timestamp": "1970-01-01T00:00:00Z",
+		"profile_data": {
+			"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			"profile": {
+				"string_table": [
+					"",
+					"cpu",
+					"nanoseconds",
+					"work",
+					"pid",
+					"comm",
+					"all",
+					"future_label",
+					"other"
+				],
+				"sample_type": [
+					{
+						"type": 1,
+						"unit": 2
+					}
+				],
+				"function": [
+					{
+						"id": 1,
+						"name": 3
+					}
+				],
+				"location": [
+					{
+						"id": 1,
+						"line": [
+							{
+								"function_id": 1
+							}
+						]
+					}
+				],
+				"sample": [
+					{
+						"location_id": [
+							1
+						],
+						"value": [
+							11
+						],
+						"label": [
+							{
+								"key": 4,
+								"num": 456
+							},
+							{
+								"key": 5,
+								"str": 6
+							},
+							{
+								"key": 1,
+								"num": 1
+							},
+							{
+								"key": 7,
+								"str": 8
+							}
+						]
+					}
+				]
+			}
+		}
+	},
+	{
+		"tracer_id": "sample-task-b",
+		"tracer_type": "profiling",
+		"hostname": "host-a",
+		"region": "east",
+		"started_timestamp": "1970-01-01T00:00:00Z",
+		"uploaded_timestamp": "1970-01-01T00:00:00Z",
+		"profile_data": {
+			"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			"profile": {
+				"string_table": [
+					"",
+					"cpu",
+					"nanoseconds",
+					"work",
+					"pid",
+					"comm",
+					"worker",
+					"future_label",
+					"outside"
+				],
+				"sample_type": [
+					{
+						"type": 1,
+						"unit": 2
+					}
+				],
+				"function": [
+					{
+						"id": 1,
+						"name": 3
+					}
+				],
+				"location": [
+					{
+						"id": 1,
+						"line": [
+							{
+								"function_id": 1
+							}
+						]
+					}
+				],
+				"sample": [
+					{
+						"location_id": [
+							1
+						],
+						"value": [
+							99
+						],
+						"label": [
+							{
+								"key": 4,
+								"num": 789
+							},
+							{
+								"key": 5,
+								"str": 6
+							},
+							{
+								"key": 1,
+								"num": 0
+							},
+							{
+								"key": 7,
+								"str": 8
+							}
+						]
+					}
+				]
+			}
+		}
+	}
+]

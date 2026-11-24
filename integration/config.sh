@@ -411,10 +411,19 @@ EOF
 	write_config_apiserver_admin "${API_TOKEN}"
 }
 
-# The profile filter case supplies its API settings and isolated storage index.
+# Profile query cases supply their API settings and an isolated storage index.
 write_config_apiserver_profile_query() {
 	write_config_apiserver_base
-	write_config_apiserver_elasticsearch "${STORAGE_ADDR}" "elastic" "profile-filter-test" "${PROFILE_FILTER_INDEX}"
+	write_config_apiserver_elasticsearch "${STORAGE_ADDR}" "elastic" "profile-filter-test" "$1"
+	if [[ $# -gt 1 ]]; then
+		cat << EOF
+
+[[Auth.Users]]
+    ID = "profile-query-reader"
+    BearerToken = "$2"
+    Permissions = ["/v1/profiling/**"]
+EOF
+	fi
 }
 
 # The storage address and credentials are initialized by the calling test.

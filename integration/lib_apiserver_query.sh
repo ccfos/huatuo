@@ -143,13 +143,21 @@ PY
 
 assert_profile_query() {
 	local base=$1 token=$2 method=$3 body=$4 result=$5 expected=${6:-200}
-	local status content_type curl_status=0 codec_status=0
-	local request_file="${result%.json}.request.proto" response_file="${result%.json}.response.proto"
+	local codec_status=0
+	local request_file="${result%.json}.request.proto"
 	local error_file="${result%.json}.error"
 	printf '%s\n' "$body" > "${result%.json}.request.json"
 	profile_query_encode "$method" "$body" > "$request_file" 2> "$error_file" || codec_status=$?
 	report_http_response "$method request encoding" "${result%.json}.request.json" "$error_file"
 	assert_eq "$codec_status" 0 "$method request encoding" || fatal "$method request encoding failed"
+	assert_profile_query_response "$base" "$token" "$method" "$request_file" "$result" "$expected"
+}
+
+# Keep the HTTP contract shared with cases that deliberately send invalid Protobuf.
+assert_profile_query_response() {
+	local base=$1 token=$2 method=$3 request_file=$4 result=$5 expected=${6:-200}
+	local status content_type curl_status=0 codec_status=0
+	local response_file="${result%.json}.response.proto" error_file="${result%.json}.error"
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${token}" \
 		-H 'Content-Type: application/proto' --data-binary "@${request_file}" \
 		-o "$response_file" -w '%{http_code} %{content_type}' \
@@ -162,6 +170,8 @@ assert_profile_query() {
 	assert_eq "$curl_status" 0 "$method transport" || fatal "$method transport failed"
 	assert_eq "$status" "$expected" "$method HTTP status" || fatal "$method returned HTTP $status"
 	if [[ $status != 200 ]]; then
+		assert_eq "${content_type%%;*}" application/json "$method error content type" \
+			|| fatal "$method returned a non-JSON error: $content_type"
 		cp "$response_file" "$result"
 		return
 	fi
