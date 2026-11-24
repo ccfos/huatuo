@@ -15,23 +15,19 @@
 # limitations under the License.
 
 # Exercise profiling filters through the apiserver and real Elasticsearch.
-# LabelValues avoids coupling storage filtering to pprof decoding or sampling.
 
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/integration/config.sh"
+source "${ROOT_DIR}/integration/lib_apiserver_query.sh"
 
 readonly PROFILE_FILTER_INDEX=$(storage_test_index huatuo_profile_filters)
 readonly PROFILE_FILTER_TOKEN="profile-filter-admin"
 readonly PROFILE_FILTER_TYPE="process_cpu:cpu:nanoseconds:cpu:nanoseconds"
-readonly PROFILE_FILTER_ENDPOINT="/v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues"
-readonly PROFILE_FILTER_REQUEST="${HUATUO_BAMAI_TEST_TMPDIR}/filter-request.proto"
-readonly PROFILE_FILTER_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/filter-response.proto"
-readonly PROFILE_FILTER_EXPECTED="${HUATUO_BAMAI_TEST_TMPDIR}/filter-expected.proto"
 
-require_commands docker jq curl cmp od ss timeout
+require_commands docker jq curl ss timeout python3
 
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 profile_filter_port=$(allocate_available_port) || fatal "failed to allocate an apiserver port"
@@ -63,32 +59,18 @@ assert_profile_storage_request() {
 }
 
 assert_profile_filter() {
-	local matcher=$1 expected=$2 length status curl_status=0
-	# LabelValuesRequest: name (field 1), matcher (field 2), epoch time bounds.
-	# Region, scope and container selectors can require a two-byte varint length.
-	((${#matcher} < 16384)) || fatal "profile selector exceeds fixture encoding limit"
-	if ((${#matcher} < 128)); then
-		printf -v length '\\%03o' "${#matcher}"
-	else
-		printf -v length '\\%03o\\%03o' "$((${#matcher} % 128 + 128))" "$((${#matcher} / 128))"
-	fi
-	printf '\012\002id\022%b%s' "${length}" "${matcher}" > "${PROFILE_FILTER_REQUEST}"
-	printf '%b' "${expected}" > "${PROFILE_FILTER_EXPECTED}"
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
-		-H "Authorization: Bearer ${PROFILE_FILTER_TOKEN}" \
-		-H 'Content-Type: application/proto' \
-		--data-binary "@${PROFILE_FILTER_REQUEST}" \
-		-o "${PROFILE_FILTER_RESPONSE}" -w '%{http_code}' \
-		"${PROFILE_FILTER_ADDR}${PROFILE_FILTER_ENDPOINT}") || curl_status=$?
-	log_info "profile filter status=${status}, curl=${curl_status}, matcher=${matcher}"
-	od -An -tx1c "${PROFILE_FILTER_RESPONSE}" || true
-	assert_eq "${curl_status}" "0" "profile filter transport" || fatal "profile filter request failed"
-	assert_eq "${status}" "200" "profile filter HTTP status" || fatal "profile filter response is not successful"
-	if ! cmp -s "${PROFILE_FILTER_EXPECTED}" "${PROFILE_FILTER_RESPONSE}"; then
-		log_error "expected LabelValues response:"
-		od -An -tx1c "${PROFILE_FILTER_EXPECTED}"
-		fatal "profile filter returned unexpected IDs; actual response shown above"
-	fi
+	local matcher=$1 expected=$2
+	assert_profile_query_result LabelValues \
+		"$(jq -nc --arg matcher "$matcher" '{name:"id",matchers:[$matcher]}')" \
+		".names == $expected"
+}
+
+assert_profile_query_result() {
+	local method=$1 request_json=$2 predicate=$3
+	local result="${HUATUO_BAMAI_TEST_TMPDIR}/sample-query.json"
+	assert_profile_query "$PROFILE_FILTER_ADDR" "$PROFILE_FILTER_TOKEN" "$method" "$request_json" "$result"
+	assert_eq "$(jq "$predicate" "$result")" true "$method result" \
+		|| fatal "$method response does not match $predicate; inspect $result"
 }
 
 assert_profile_label_names() {
@@ -147,7 +129,7 @@ jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
   {tracer_id:"host-absent",hostname:"host-a"},
   {tracer_id:"host-null",hostname:"host-a",container_id:null},
   {tracer_id:"host-empty",hostname:"host-a",container_id:""},
-  {tracer_id:"container-exact",hostname:"host-a",container_id:"container-a",container_name:"worker",container_hostname:"pod-a",container_namespace:"production",container_type:"normal",container_qos:"burstable"},
+  {tracer_id:"container-exact",hostname:"host-a",container_id:"container-a",container_hostname:"pod-a",container_name:"worker",container_namespace:"production",container_type:"normal",container_qos:"burstable",tracer_name:"profiling"},
   {tracer_id:"container-phrase",hostname:"host-a",container_id:"container-b",container_name:"worker extra",container_hostname:"pod-a extra",container_namespace:"production extra",container_type:"sidecar",container_qos:"guaranteed"},
   {tracer_id:"host-other",hostname:"host-b"},
   {tracer_id:"host-west",hostname:"host-a",region:"west"},
@@ -155,7 +137,7 @@ jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
   {tracer_id:"host-before",hostname:"host-a",uploaded_timestamp:"1969-12-31T23:59:59.999Z"},
   {tracer_id:"host-after",hostname:"host-a",uploaded_timestamp:"1970-01-01T00:00:00.001Z"}
  ][] | {index:{_id:.tracer_id}},
- ({region:"east",uploaded_timestamp:"1970-01-01T00:00:00.000Z",profile_data:{profile_type:$type}} + .)
+ ({region:"east",uploaded_timestamp:"1970-01-01T00:00:00.000Z",profile_data:{profile_type:$type,profile:{string_table:["","cpu","nanoseconds"],sample_type:[{type:1,unit:2}],sample:[]}}} + .)
 ' > "${HUATUO_BAMAI_TEST_TMPDIR}/profiles.ndjson"
 assert_profile_storage_request "seed profiles" "${HUATUO_BAMAI_TEST_TMPDIR}/seed-profiles.json" \
 	-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
@@ -192,25 +174,27 @@ APISERVER_PORT="${PROFILE_FILTER_PORT}" APISERVER_ADDR="${PROFILE_FILTER_ADDR}" 
 	integration_huatuo_apiserver_start write_config_apiserver_profile_query
 
 assert_profile_label_names
+assert_profile_query_result LabelNames '{}' \
+	'.names == ["id","scope","region","hostname","container_id","container_name","container_hostname","container_namespace","container_type","container_qos"]'
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"host\"}" \
-	'\012\013host-absent\012\011host-null'
+	'["host-absent","host-null"]'
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"container\",container_id=\"container-a\"}" \
-	'\012\017container-exact'
+	'["container-exact"]'
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"west\",hostname=\"host-a\",scope=\"host\"}" \
-	'\012\011host-west'
-# Shared metadata filters use exact values rather than token or phrase matches.
+	'["host-west"]'
+# Shared metadata filters match complete field values.
 for metadata_filter in 'container_name="worker"' 'container_namespace="production"' 'container_type="normal"' 'container_qos="burstable"'; do
 	assert_profile_filter \
 		"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\",scope=\"container\",${metadata_filter}}" \
-		'\012\017container-exact'
+		'["container-exact"]'
 done
 # Without scope, hostname is only a node filter and includes container records.
 assert_profile_filter \
 	"{__profile_type__=\"${PROFILE_FILTER_TYPE}\",region=\"east\",hostname=\"host-a\"}" \
-	'\012\017container-exact\012\020container-phrase\012\013host-absent\012\012host-empty\012\011host-null'
+	'["container-exact","container-phrase","host-absent","host-empty","host-null"]'
 # Observation order differs from delivery order. An out-of-range observation
 # delivered inside the range must not replace the latest zero snapshot.
 jq -cn '
@@ -236,26 +220,103 @@ assert_profile_storage_request "seed live snapshots" "${HUATUO_BAMAI_TEST_TMPDIR
 assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-live.json")" \
 	false "seed live snapshots" || fatal "live snapshot writes failed"
 
-assert_latest_zero_snapshot() {
-	local profile_type="memory:physical_usage:bytes:space:bytes" matcher='{scope="host",id="live-task"}'
-	local type_length matcher_length status curl_status=0
-	printf -v type_length '%03o' "${#profile_type}"
-	printf -v matcher_length '%03o' "${#matcher}"
-	# SelectMergeStacktracesRequest fields 1/2; end=1000 milliseconds, start=0.
-	printf '\012%b%s\022%b%s\040\350\007' \
-		"\\${type_length}" "${profile_type}" "\\${matcher_length}" "${matcher}" > "${PROFILE_FILTER_REQUEST}"
-	# Empty flamegraph: one total root with four zero coordinates and no weight.
-	printf '\012\017\012\005total\022\006\012\004\000\000\000\000' > "${PROFILE_FILTER_EXPECTED}"
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
-		-H "Authorization: Bearer ${PROFILE_FILTER_TOKEN}" -H 'Content-Type: application/proto' \
-		--data-binary "@${PROFILE_FILTER_REQUEST}" -o "${PROFILE_FILTER_RESPONSE}" -w '%{http_code}' \
-		"${PROFILE_FILTER_ADDR}/v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces") || curl_status=$?
-	log_info "latest snapshot status=${status}, curl=${curl_status}"
-	od -An -tx1c "${PROFILE_FILTER_RESPONSE}" || true
-	assert_eq "${curl_status}" 0 "latest snapshot transport" || fatal "latest snapshot request failed"
-	assert_eq "${status}" 200 "latest snapshot status" || fatal "latest snapshot query failed"
-	cmp -s "${PROFILE_FILTER_EXPECTED}" "${PROFILE_FILTER_RESPONSE}" \
-		|| fatal "latest zero snapshot was merged, filtered by delivery time, or replaced by an older result"
-}
-assert_latest_zero_snapshot
+assert_profile_query_result SelectMergeStacktraces \
+	'{"profileTypeID":"memory:physical_usage:bytes:space:bytes","labelSelector":"{scope=\"host\",id=\"live-task\"}","end":"1000"}' \
+	'.flamegraph | .total == "0" and .names == ["total"] and .levels == [{values:[0,0,0,0]}]'
+
+# Two tasks share stack identities; task bounds and sample filters must both apply.
+jq -cn --arg type "${PROFILE_FILTER_TYPE}" '
+ [
+  {id:"sample-task-a",weight:7,pid:123,comm:"worker",cpu:0,tag:"a+b"},
+  {id:"sample-task-a",weight:11,pid:456,comm:"all",cpu:1,tag:"other"},
+  {id:"sample-task-b",weight:99,pid:789,comm:"worker",cpu:0,tag:"outside"}
+ ][] | {index:{}}, {
+  tracer_id:.id,tracer_type:"profiling",hostname:"host-a",region:"east",
+  started_timestamp:"1970-01-01T00:00:00Z",uploaded_timestamp:"1970-01-01T00:00:00Z",
+  profile_data:{profile_type:$type,profile:{
+   string_table:["","cpu","nanoseconds","work","pid","comm",.comm,"future_label",.tag],
+   sample_type:[{type:1,unit:2}],function:[{id:1,name:3}],
+   location:[{id:1,line:[{function_id:1}]}],
+   sample:[{location_id:[1],value:[.weight],label:[
+    {key:4,num:.pid},{key:5,str:6},{key:1,num:.cpu},{key:7,str:8}
+   ]}]
+  }}
+ }
+' > "${HUATUO_BAMAI_TEST_TMPDIR}/sample-profiles.ndjson"
+assert_profile_storage_request "seed sample labels" "${HUATUO_BAMAI_TEST_TMPDIR}/seed-sample-labels.json" \
+	-X POST "${STORAGE_ADDR}/${PROFILE_FILTER_INDEX}/_bulk?refresh=true" \
+	-H 'Content-Type: application/x-ndjson' \
+	--data-binary "@${HUATUO_BAMAI_TEST_TMPDIR}/sample-profiles.ndjson"
+assert_eq "$(jq -r '.errors' "${HUATUO_BAMAI_TEST_TMPDIR}/seed-sample-labels.json")" \
+	false "seed sample labels" || fatal "sample label writes failed"
+
+# Exercise the dashboard context against two tasks so value lookup cannot leak.
+profile_filter_dashboard_selector=$(jq -r --arg type "${PROFILE_FILTER_TYPE}" '
+	.panels[] | select(.id == 5) | .targets[0].data | fromjson | .[0]
+	| with_entries(.value |= (
+		if . == "${type:percentencode}" then $type
+		elif . == "${region:percentencode}" then "east"
+		elif . == "${hostname:percentencode}" then "host-a"
+		elif . == "${scope:text}" then "host"
+		elif . == "${task_id:percentencode}" then "sample-task-a"
+		else "*" end
+	)) | del(.filters) | .__profile_type__ = .profile_type | del(.profile_type)
+	| "{" + (to_entries | map(.key + "=" + (.value | tojson)) | join(",")) + "}"
+' "${ROOT_DIR}/build/docker/grafana/dashboards/continuous-profiling.json")
+assert_profile_query_result LabelValues \
+	"$(jq -nc --arg selector "$profile_filter_dashboard_selector" '{name:"pid",matchers:[$selector]}')" \
+	'.names == ["123","456"]'
+assert_profile_query_result LabelValues \
+	"$(jq -nc --arg selector "${profile_filter_dashboard_selector%\}},comm=\"worker\"}" '{name:"pid",matchers:[$selector]}')" \
+	'.names == ["123"]'
+
+profile_filter_sample_selector="{__profile_type__=\"${PROFILE_FILTER_TYPE}\",scope=\"host\",id=\"sample-task-a\"}"
+assert_profile_query_result LabelNames \
+	"$(jq -nc --arg selector "$profile_filter_sample_selector" '{matchers:[$selector]}')" \
+	'(.names | index("pid") != null) and (.names | index("future_label") != null)'
+assert_profile_query_result LabelValues \
+	"$(jq -nc --arg selector "$profile_filter_sample_selector" '{name:"pid",matchers:[$selector]}')" \
+	'.names == ["123","456"]'
+assert_profile_query_result LabelValues \
+	"$(jq -nc --arg selector "${profile_filter_sample_selector%\}},comm=\"worker\"}" '{name:"cpu",matchers:[$selector]}')" \
+	'.names == ["0"]'
+assert_profile_query_result LabelValues \
+	"$(jq -nc --arg selector "$profile_filter_sample_selector" '{name:"future_label",matchers:[$selector]}')" \
+	'.names == ["a+b","other"]'
+assert_profile_query_result LabelValues \
+	"$(jq -nc --arg selector "$profile_filter_sample_selector" '{name:"unknown_label",matchers:[$selector]}')" \
+	'.names == []'
+assert_profile_query_result SelectMergeStacktraces \
+	"$(jq -nc --arg type "$PROFILE_FILTER_TYPE" \
+		'{profileTypeID:$type,labelSelector:"{scope=\"host\",id=\"sample-task-a\",pid=\"123\"}"}')" \
+	'.flamegraph.total == "7"'
+# Literal values must not become regexes or an implicit All selection.
+assert_profile_query_result SelectMergeStacktraces \
+	"$(jq -nc --arg type "$PROFILE_FILTER_TYPE" \
+		'{profileTypeID:$type,labelSelector:"{scope=\"host\",id=\"sample-task-a\",comm=\"all\"}"}')" \
+	'.flamegraph.total == "11"'
+assert_profile_query_result SelectMergeStacktraces \
+	"$(jq -nc --arg type "$PROFILE_FILTER_TYPE" \
+		'{profileTypeID:$type,labelSelector:"{scope=\"host\",id=\"sample-task-a\",future_label=\"a+b\"}"}')" \
+	'.flamegraph.total == "7"'
+assert_profile_query_result LabelValues \
+	'{"name":"pid","matchers":["{__profile_type__=\"memory:physical_usage:bytes:space:bytes\",id=\"live-task\"}"],"end":"1000"}' \
+	'.names == []'
+
+# Indexed metadata remains queryable for current documents without decoding pprof.
+profile_filter_metadata_selector="{__profile_type__=\"${PROFILE_FILTER_TYPE}\",id=\"container-exact\"}"
+for profile_filter_metadata_pair in "profile_type|${PROFILE_FILTER_TYPE}" 'tracer_id|container-exact' \
+	'container_name|worker' 'container_namespace|production' 'container_type|normal' 'container_qos|burstable' 'tracer_name|profiling'; do
+	profile_filter_metadata_name=${profile_filter_metadata_pair%%|*}
+	profile_filter_metadata_value=${profile_filter_metadata_pair#*|}
+	assert_profile_query_result LabelValues \
+		"$(jq -nc --arg selector "$profile_filter_metadata_selector" --arg name "$profile_filter_metadata_name" '{name:$name,matchers:[$selector]}')" \
+		"$(jq -nr --arg value "$profile_filter_metadata_value" '".names == [" + ($value|tojson) + "]"')"
+done
+
+assert_profile_query "$PROFILE_FILTER_ADDR" "$PROFILE_FILTER_TOKEN" LabelValues \
+	"$(jq -nc --arg selector "$profile_filter_sample_selector" '{name:"__future__",matchers:[$selector]}')" \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/invalid-sample-query.json" 400
+assert_eq "$(jq -r '.error.code' "${HUATUO_BAMAI_TEST_TMPDIR}/invalid-sample-query.json")" \
+	invalid_request "reserved sample label error" || fatal "reserved label returned an unexpected error"
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" "huatuo-apiserver"

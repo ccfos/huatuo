@@ -914,3 +914,535 @@ func TestLabelValuesRejectsHostScopeWithContainerMetadata(t *testing.T) {
 		})
 	}
 }
+
+func labelQueryDocument(t testing.TB, profileType string, observed int64) json.RawMessage {
+	t.Helper()
+	profile := &googlev1.Profile{
+		TimeNanos:   observed,
+		StringTable: []string{"", "cpu", "nanoseconds", "work", "pid", "123", "456", "789", "comm", "worker", "all", "cpu", "0", "1", "custom", "a+b", "size", "bytes", "physical_usage", "role", "reader", "writer"},
+		SampleType: []*googlev1.ValueType{{
+			Type: 1,
+			Unit: 2,
+		}},
+		Function: []*googlev1.Function{{
+			Id:   1,
+			Name: 3,
+		}},
+		Location: []*googlev1.Location{{
+			Id:   1,
+			Line: []*googlev1.Line{{FunctionId: 1}},
+		}},
+		Sample: []*googlev1.Sample{
+			{
+				LocationId: []uint64{1},
+				Value:      []int64{7},
+				Label: []*googlev1.Label{{
+					Key: 4,
+					Str: 5,
+				}, {
+					Key: 8,
+					Str: 9,
+				}, {
+					Key: 11,
+					Str: 12,
+				}, {
+					Key: 14,
+					Str: 15,
+				}, {
+					Key:     16,
+					Num:     4096,
+					NumUnit: 17,
+				}, {
+					Key: 19,
+					Str: 20,
+				}, {
+					Key: 19,
+					Str: 21,
+				}},
+			},
+			{
+				LocationId: []uint64{1},
+				Value:      []int64{11},
+				Label: []*googlev1.Label{{
+					Key: 4,
+					Str: 6,
+				}, {
+					Key: 8,
+					Str: 10,
+				}, {
+					Key: 11,
+					Str: 13,
+				}, {
+					Key:     16,
+					Num:     8192,
+					NumUnit: 17,
+				}},
+			},
+			{
+				LocationId: []uint64{1},
+				Value:      []int64{13},
+				Label: []*googlev1.Label{{
+					Key: 4,
+					Str: 7,
+				}, {
+					Key: 8,
+					Str: 9,
+				}},
+			},
+		},
+	}
+	if profileType == "memory:physical_usage:bytes:space:bytes" {
+		profile.SampleType = []*googlev1.ValueType{{
+			Type: 18,
+			Unit: 17,
+		}}
+		if observed > 1 {
+			profile.Sample = profile.Sample[1:]
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"hostname": "node-1", "region": "test", "tracer_id": "job-1",
+		"uploaded_timestamp": "2026-10-08T00:00:00Z", "started_timestamp": "2026-10-08T00:00:00Z", "tracer_type": "profiling",
+		"profile_data": profilingstore.ProfileData{
+			ProfileType: profileType,
+			Profile:     profile,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return data
+}
+
+func TestProfileQuerySampleLabels(t *testing.T) {
+	const profileType = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	for _, tc := range []struct {
+		name, selector string
+		total          int64
+	}{
+		{
+			"unfiltered",
+			"",
+			31,
+		},
+		{
+			"pid",
+			`,pid="123"`,
+			7,
+		},
+		{
+			"comm",
+			`,comm="worker"`,
+			20,
+		},
+		{
+			"cpu zero",
+			`,cpu="0"`,
+			7,
+		},
+		{
+			"all includes missing cpu",
+			`,cpu=~".*"`,
+			31,
+		},
+		{
+			"literal all",
+			`,comm="all"`,
+			11,
+		},
+		{
+			"new label",
+			`,custom="a+b"`,
+			7,
+		},
+		{
+			"escaped regexp",
+			`,custom=~"a\\+b"`,
+			7,
+		},
+		{
+			"numeric with unit",
+			`,size="4096 bytes"`,
+			7,
+		},
+		{
+			"and",
+			`,comm="worker",cpu="0"`,
+			7,
+		},
+		{
+			"unknown label",
+			`,future_label="value"`,
+			0,
+		},
+		{
+			"multi value",
+			`,role="writer"`,
+			7,
+		},
+		{
+			"multiple values of one label",
+			`,role="reader",role="writer"`,
+			7,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newProfileQueryStore(t, 1, false, labelQueryDocument(t, profileType, 1))
+			service, err := NewProfileQueryService(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				ProfileTypeID: profileType,
+				LabelSelector: `{scope="host",id="job-1"` + tc.selector + `}`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.GetFlamegraph().GetTotal() != tc.total {
+				t.Fatalf("total=%d, want %d", response.GetFlamegraph().GetTotal(), tc.total)
+			}
+		})
+	}
+}
+
+func TestProfileQuerySampleLabelDiscovery(t *testing.T) {
+	const profileType = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	store := newProfileQueryStore(t, 2, false, labelQueryDocument(t, profileType, 1))
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := `{__profile_type__="` + profileType + `",id="job-1"`
+	for _, tc := range []struct {
+		name, label, selector string
+		want                  []string
+	}{
+		{
+			"pid",
+			"pid",
+			"",
+			[]string{"123", "456", "789"},
+		},
+		{
+			"comm filters pid",
+			"pid",
+			`,comm="worker"`,
+			[]string{"123", "789"},
+		},
+		{
+			"numeric label",
+			"size",
+			"",
+			[]string{"4096 bytes", "8192 bytes"},
+		},
+		{
+			"new label",
+			"custom",
+			"",
+			[]string{"a+b"},
+		},
+		{
+			"multi label",
+			"role",
+			"",
+			[]string{"reader", "writer"},
+		},
+		{
+			"unknown",
+			"future",
+			"",
+			[]string{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+				Name:     tc.label,
+				Matchers: []string{base + tc.selector + `}`},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(response.Names, tc.want) {
+				t.Fatalf("values=%v, want %v", response.Names, tc.want)
+			}
+		})
+	}
+
+	response, err := service.LabelNames(t.Context(), &typesv1.LabelNamesRequest{Matchers: []string{base + `,pid="123"}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pid", "cpu", "comm", "custom", "size", "role"} {
+		if !slices.Contains(response.Names, name) {
+			t.Errorf("names=%v, missing %q", response.Names, name)
+		}
+	}
+}
+
+func TestProfileQuerySampleLabelsUseLatestSnapshot(t *testing.T) {
+	const profileType = "memory:physical_usage:bytes:space:bytes"
+	store := newProfileQueryStore(t, 2, false, labelQueryDocument(t, profileType, 1), labelQueryDocument(t, profileType, 2))
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+		ProfileTypeID: profileType,
+		LabelSelector: `{scope="host",id="job-1",pid="123"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetFlamegraph().GetTotal() != 0 {
+		t.Fatalf("total=%d, want no samples in latest snapshot", response.GetFlamegraph().GetTotal())
+	}
+	values, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+		Name:     "pid",
+		Matchers: []string{`{__profile_type__="` + profileType + `",id="job-1"}`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(values.Names, []string{"456", "789"}) {
+		t.Fatalf("values=%v, want only latest snapshot PIDs", values.Names)
+	}
+}
+
+func TestProfileQueryRejectsInvalidSampleLabels(t *testing.T) {
+	for _, expression := range []string{`{scope="host",id="job-1",__future__="x"}`, `{scope="host",id="job-1",pid!="123"}`} {
+		if _, err := parseProfileSelector(expression, "process_cpu:cpu:nanoseconds:cpu:nanoseconds"); !errors.Is(err, ErrInvalidQuery) {
+			t.Errorf("selector=%s, error=%v, want invalid query", expression, err)
+		}
+	}
+
+	profile := &googlev1.Profile{StringTable: []string{"", "pid"}}
+	for _, label := range []*googlev1.Label{{
+		Key: 1,
+		Str: 2,
+	}, {
+		Key:     1,
+		NumUnit: 2,
+	}} {
+		if _, err := profileLabelValue(profile, label); err == nil {
+			t.Errorf("label=%v, want corrupt string table error", label)
+		}
+	}
+}
+
+func BenchmarkMatchSampleLabels(b *testing.B) {
+	var document profilingstore.Document
+	if err := json.Unmarshal(labelQueryDocument(b, "process_cpu:cpu:nanoseconds:cpu:nanoseconds", 1), &document); err != nil {
+		b.Fatal(err)
+	}
+	for _, expression := range []string{`{pid="123",cpu="0"}`, `{comm=~"work.*",cpu=~".*"}`} {
+		b.Run(expression, func(b *testing.B) {
+			selector, err := parseProfileSelector(expression, "")
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				matched, err := matchSampleLabels(document.ProfileData.Profile, document.ProfileData.Profile.Sample[0], selector.sampleMatchers)
+				if err != nil || !matched {
+					b.Fatalf("matched=%v,error=%v", matched, err)
+				}
+			}
+		})
+	}
+}
+
+func TestProfileQueryFiltersNumericLabelsBeforeMerge(t *testing.T) {
+	const profileType = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	var document profilingstore.Document
+	if err := json.Unmarshal(labelQueryDocument(t, profileType, 1), &document); err != nil {
+		t.Fatal(err)
+	}
+	profile := document.ProfileData.Profile
+	profile.Sample = profile.Sample[:2]
+	// These samples differ only in numeric label values, which the merger ignores.
+	profile.Sample[0].Label = []*googlev1.Label{{
+		Key:     16,
+		Num:     4096,
+		NumUnit: 17,
+	}}
+	profile.Sample[1].Label = []*googlev1.Label{{
+		Key:     16,
+		Num:     8192,
+		NumUnit: 17,
+	}}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newProfileQueryStore(t, 1, false, data)
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+		ProfileTypeID: profileType,
+		LabelSelector: `{scope="host",id="job-1",size="4096 bytes"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GetFlamegraph().GetTotal() != 7 {
+		t.Fatalf("total=%d, want 7 before numeric labels collapse", result.GetFlamegraph().GetTotal())
+	}
+}
+
+func TestProfileQueryLabelValueLimit(t *testing.T) {
+	const profileType = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	var document profilingstore.Document
+	if err := json.Unmarshal(labelQueryDocument(t, profileType, 1), &document); err != nil {
+		t.Fatal(err)
+	}
+	profile := document.ProfileData.Profile
+	profile.Sample = nil
+	for i := 0; i <= maxProfileLabelValues; i++ {
+		index := int64(len(profile.StringTable))
+		profile.StringTable = append(profile.StringTable, fmt.Sprint(i))
+		profile.Sample = append(profile.Sample, &googlev1.Sample{
+			LocationId: []uint64{1},
+			Value:      []int64{1},
+			Label: []*googlev1.Label{{
+				Key: 4,
+				Str: index,
+			}},
+		})
+	}
+
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newProfileQueryStore(t, 1, false, data)
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+		Name:     "pid",
+		Matchers: []string{`{__profile_type__="` + profileType + `",id="job-1"}`},
+	})
+	if !errors.Is(err, ErrInvalidQuery) || result != nil {
+		t.Fatalf("result=%v, error=%v; want no partial label value list", result, err)
+	}
+}
+
+func TestProfileQueryDocumentLabelValues(t *testing.T) {
+	var field atomic.Value
+	field.Store("")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/" {
+			_, _ = w.Write([]byte(`{"version":{"number":"8.15.5"}}`))
+			return
+		}
+
+		var request struct {
+			Aggregations map[string]struct {
+				Terms struct {
+					Field string `json:"field"`
+				} `json:"terms"`
+			} `json:"aggregations"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+
+		indexedField := request.Aggregations["terms"].Terms.Field
+		field.Store(indexedField)
+		if indexedField == "" {
+			http.Error(w, "expected indexed aggregation", http.StatusBadRequest)
+			return
+		}
+
+		_, _ = w.Write([]byte(`{"timed_out":false,"_shards":{"failed":0},"hits":{"hits":[]},"aggregations":{"sterms#terms":{"buckets":[{"key":"indexed-value","doc_count":1}]}}}`))
+	}))
+	t.Cleanup(server.Close)
+	store, err := profilingstore.NewFromConfig(t.Context(), profilingstore.Config{
+		Addresses: []string{server.URL},
+		Index:     "profiles",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := store.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{
+		"id", "region", "hostname", "container_id", "container_name", "container_hostname", "container_namespace",
+		"profile_type", "container_type", "container_qos", "tracer_name", "tracer_id", "tracer_type",
+	} {
+		t.Run(name, func(t *testing.T) {
+			response, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+				Name:     name,
+				Matchers: []string{`{__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds",id="job-1"}`},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !slices.Equal(response.Names, []string{"indexed-value"}) {
+				t.Errorf("values=%v, want indexed values", response.Names)
+			}
+
+			wantField := name + ".keyword"
+			switch name {
+			case "id":
+				wantField = "tracer_id.keyword"
+			case "profile_type":
+				wantField = "profile_data.profile_type.keyword"
+			}
+			if field.Load() != wantField {
+				t.Errorf("aggregation field=%v, want %s", field.Load(), wantField)
+			}
+		})
+	}
+}
+
+func TestProfileSelectorPublicMetadata(t *testing.T) {
+	for _, field := range documentLabelNames[2:] {
+		t.Run(field, func(t *testing.T) {
+			selector, err := parseProfileSelector(fmt.Sprintf(`{%s="value"}`, field), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(selector.sampleMatchers) != 0 {
+				t.Fatalf("public metadata %q classified as sample label", field)
+			}
+			_, err = parseProfileSelector(fmt.Sprintf(`{%s=~"value.*"}`, field), "")
+			if !errors.Is(err, ErrInvalidQuery) {
+				t.Fatalf("public metadata regexp error = %v, want invalid query", err)
+			}
+		})
+	}
+}
+
+func TestLabelNamesRejectsHostScopeWithContainerMetadata(t *testing.T) {
+	service := newQueryServiceWithoutStorage(t)
+	for _, field := range []string{
+		"container_id", "container_name", "container_hostname",
+		"container_namespace", "container_type", "container_qos",
+	} {
+		t.Run(field, func(t *testing.T) {
+			_, err := service.LabelNames(t.Context(), &typesv1.LabelNamesRequest{
+				Matchers: []string{fmt.Sprintf(`{scope="host",%s="worker"}`, field)},
+			})
+			if !errors.Is(err, ErrInvalidQuery) || !strings.Contains(err.Error(), "host scope") {
+				t.Fatalf("LabelNames() error = %v, want host scope conflict before storage access", err)
+			}
+		})
+	}
+}

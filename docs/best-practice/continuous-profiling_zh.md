@@ -159,6 +159,20 @@ curl -fsS -H "Authorization: Bearer ${API_TOKEN}" \
 
 ![宿主机 CPU 火焰图与函数统计](/docs/img/continuous-profiling-grafana-host.png)
 
+#### 标签过滤
+
+目标变量栏下方的 Labels 过滤条支持按 `comm`、`pid`、`cpu` 或扩展标签精确过滤。
+`pid` 为宿主机 PID；`cpu` 仅适用于 native on-CPU 采集。
+
+- 点击 `+` 选择标签和取值，立即刷新火焰图；多条条件按 AND 组合。
+- 点击已有条件可编辑，点击 `×` 删除。
+- 切换目标、任务或 Profile type 时清空标签条件；调整全局时间范围时保留条件并刷新候选值，
+  无匹配的已选值会标记警告。
+- 候选值受当前任务、类型、时间和其他条件约束，编辑时排除该条件自身。
+
+标签过滤只影响火焰图，窗口曲线不变。容器选择 All 时，任务仍限定到一个目标；
+`physical_usage` 始终要求单个任务并只取最新快照。
+
 本地试用结束后，可在仓库根目录运行 `docker compose --project-directory ./build/docker down` 停止并移除本次 Compose 服务。
 
 ## 命令行采集

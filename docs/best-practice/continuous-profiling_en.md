@@ -28,6 +28,7 @@ Use Docker Compose to collect a host CPU profile and view its flame graph in Gra
 Follow [Docker Deployment](/docs/deployment/docker_en.md) to prepare a Linux node, Docker Compose, and `build/docker/.env`. The example requires `curl` and `jq`; the target node should have CPU activity to analyze.
 
 Write the settings below to `huatuo-bamai.conf` and `huatuo-apiserver.conf` in the repository root, which Compose mounts. huatuo-bamai writes profiles and huatuo-apiserver queries them; both must connect to the same ES index. Match the ES password to `ELASTIC_PASSWORD` in `.env`. Use the same node token in both files; the API token authenticates subsequent requests.
+In Grafana's `pyroscope.yaml`, configure the Pyroscope and Infinity data sources with the same API token.
 
 In `huatuo-bamai.conf`:
 
@@ -157,6 +158,22 @@ Steps:
 4. Choose Both to show the flame graph and function statistics together.
 
 ![Host CPU flame graph and function statistics](/docs/img/continuous-profiling-grafana-host.png)
+
+#### Label filters
+
+The Labels bar below the target variables filters `comm`, `pid`, `cpu`, or extension labels by exact
+value. `pid` is the host PID; `cpu` is available only for native on-CPU profiling.
+
+- Click `+` and select a label and value to refresh the flame graph. Conditions use AND.
+- Click an existing condition to edit it or its `×` to remove it.
+- Changing the target, task, or profile type clears conditions. Changing the global time range
+  preserves them and refreshes suggestions, with warnings for selected values that no longer match.
+- Suggestions use the current task, type, time range, and other conditions, excluding the condition
+  being edited.
+
+Label filters affect only the flame graph; the window timeline is unchanged.
+With All containers selected, the task still identifies one target. Physical usage always requires
+one task and selects only the latest snapshot.
 
 After the local trial, run `docker compose --project-directory ./build/docker down` from the repository root to stop and remove these Compose services.
 
