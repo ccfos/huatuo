@@ -108,7 +108,7 @@ run_container_latency() {
 			"${CONTAINER_WORK}/last-interval" || status=$?
 		((status == 0 || status == 3)) || return "${status}"
 		awk -v active="${active}" -v disk="${container_latency_disk}" -v pod_namespace="${POD_NAMESPACE}" \
-			-v strict="${strict}" -v mode="${mode}" -v id0="${container_ids[0]}" -v id1="${container_ids[1]}" '
+			-v strict="${strict}" -v mode="${mode}" -v id0="${container_ids[0]}" -v id1="${container_ids[1]:-}" '
 		function label(row, key, parts) {
 			if (split(row, parts, key "=\"") != 2) return ""
 			sub(/".*/, "", parts[2]); return parts[2]
