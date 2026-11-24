@@ -108,7 +108,8 @@ run_container_latency() {
 			"${CONTAINER_WORK}/last-interval" || status=$?
 		((status == 0 || status == 3)) || return "${status}"
 		awk -v active="${active}" -v disk="${container_latency_disk}" -v pod_namespace="${POD_NAMESPACE}" \
-			-v strict="${strict}" -v mode="${mode}" -v id0="${container_ids[0]}" -v id1="${container_ids[1]:-}" '
+			-v strict="${strict}" -v mode="${mode}" -v id0="${container_ids[0]}" -v id1="${container_ids[1]:-}" \
+			-v label0="${container_labels[0]}" -v label1="${container_labels[1]:-}" '
 		function label(row, key, parts) {
 			if (split(row, parts, key "=\"") != 2) return ""
 			sub(/".*/, "", parts[2]); return parts[2]
@@ -135,10 +136,14 @@ run_container_latency() {
 				if (bound == "+Inf" && $2 + 0 > 0) has_positive = 1
 				next
 			}
-			owner = label($1, "container_name"); sub(/^reader-/, "", owner)
-			if (owner !~ /^[01]$/ || label($1, "container_hostname") != "huatuo-io-" owner ||
+			id = label($1, "container_id")
+			if (id == id0) owner = 0
+			else if (id1 != "" && id == id1) owner = 1
+			else { fail("unknown container ID: " $0); next }
+			metadata_owner = (owner == 0 ? label0 : label1)
+			if (label($1, "container_name") != "reader-" metadata_owner ||
+				label($1, "container_hostname") != "huatuo-io-" metadata_owner ||
 				label($1, "container_qos") != "besteffort" || label($1, "container_type") != "normal") fail("incorrect container labels: " $0)
-			if (label($1, "container_id") != (owner == "0" ? id0 : id1)) fail("container ID differs from discovered owner: " $0)
 			if (++seen[owner, key] != 1) fail("duplicate container bucket: " $0)
 			if (!(owner in wanted) && $2 + 0 != 0) fail("inactive container received IO: " $0)
 			if (bound == "+Inf" && $2 + 0 > 0) positive[owner, name] = has_positive = 1
@@ -161,7 +166,7 @@ run_container_latency() {
 	}
 
 	assert_container_window() {
-		local active=$1 owners=$2 output=$3 index strict=0 expected_sectors before after status=0
+		local active=$1 output=$2 index strict=0 expected_sectors before after status=0
 		io_container_phase="blk_iotrace/${output##*/}"
 		local -a readers=() stats_before=() stats_after=()
 		read -ra stats_before < "/sys/block/${container_latency_disk}/stat"
@@ -187,7 +192,7 @@ run_container_latency() {
 			log_info "NOT_RUN L08 strict conservation for ${output##*/}: disk ownership, lock or read-byte isolation was not established"
 		fi
 		status=0
-		assert_container_metrics "${owners}" "${output}" "${strict}" || status=$?
+		assert_container_metrics "${active}" "${output}" "${strict}" || status=$?
 		((status == 0)) || fatal "container labels, mandatory distributions or same-window bucket conservation failed for ${active}"
 		if ((strict)); then
 			log_info "L08: same-window host/container bucket sums verified for ${output##*/}"
@@ -221,7 +226,7 @@ run_container_latency() {
 	start_io_container 1
 	assert_container_io_ready blk_iotrace/distinct 0 1
 	for active in 0 1 0,1; do
-		assert_container_window "${active}" "${active}" "${CONTAINER_WORK}/active-${active}.metrics"
+		assert_container_window "${active}" "${CONTAINER_WORK}/active-${active}.metrics"
 	done
 	log_info "L08: ordinary single/dual container IO labels, nonempty distributions and owner isolation verified"
 
@@ -233,12 +238,11 @@ run_container_latency() {
 	assert_container_io_ready blk_iotrace/shared 0 1
 	lock_container_disk
 	assert_container_distribution_ready shared
-	# Each real identity must contribute to the same public label set, including
-	# when both read between scrapes. Duplicate label sets fail the same checker.
+	# Shared metadata must not merge distinct container IDs into one series.
 	for active in 1 0,1; do
-		assert_container_window "${active}" 0 "${CONTAINER_WORK}/shared-active-${active}.metrics"
+		assert_container_window "${active}" "${CONTAINER_WORK}/shared-active-${active}.metrics"
 	done
-	log_info "L08: different container identities merged into one public histogram label set"
+	log_info "L08: shared container metadata preserves distinct histogram series by container ID"
 	exit 0
 }
 
