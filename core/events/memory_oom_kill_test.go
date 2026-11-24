@@ -47,7 +47,7 @@ func TestMemoryEventsBlacklist(t *testing.T) {
 	}
 }
 
-func TestPruneOOMCounterContainers(t *testing.T) {
+func TestPruneDeletedContainerOOMCounters(t *testing.T) {
 	mutex.Lock()
 	outOfMemoryCounterContainer = map[string]*oomMetric{
 		"keep": {count: 3, latestVictimComm: "keep-comm"},
@@ -59,7 +59,7 @@ func TestPruneOOMCounterContainers(t *testing.T) {
 	}()
 
 	containers := map[string]*pod.Container{"keep": {ID: "keep"}}
-	pruneOOMCounterContainers(containers)
+	pruneDeletedContainerOOMCounters(containers)
 
 	kept, ok := outOfMemoryCounterContainer["keep"]
 	if !ok {
