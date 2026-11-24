@@ -85,4 +85,21 @@ make compose-dev-up
 [查看火焰图](/docs/best-practice/continuous-profiling_zh.md#5-查看火焰图)。
 
 脚本用于默认开发栈；自定义采集请求见 [Profiling API](/docs/reference/profiling-api_zh.md)。
+
+也可以直接部署并压测 Redis 或 PostgreSQL，采集服务容器的 CPU 火焰图：
+
+```bash
+./build/docker/run_test_redis_profiling.sh
+./build/docker/run_test_postgres_profiling.sh
+```
+
+运行前先执行 `make compose-dev-up` 启动开发栈。脚本需要 `curl`、`jq`、`kubectl`、`ip`、`crictl`
+和本机 Kubernetes 节点，以及本机 containerd 的访问权限。脚本通过 `crictl` 预拉取缺少的业务镜像，
+默认运行时地址为 `unix:///run/containerd/containerd.sock`，可通过 `CONTAINER_RUNTIME_ENDPOINT` 修改。
+镜像分别为 `redis` + `redislabs/memtier_benchmark`、`postgres`；
+无需在宿主机安装压测工具。Redis 使用混合读写，采样 30 秒；PostgreSQL 初始化临时数据后执行只读查询，采样 60 秒。
+采样任务由 apiserver 创建，完成后停止压测，再生成火焰图地址。
+成功时退出码为 0，输出 JSON 的 `grafana_url` 为火焰图地址，`output_dir` 为结果和压测日志目录；
+失败时退出码非 0，`grafana_url` 为 `null`。退出时清理临时服务、数据和压测容器，保留开发栈和采集结果。
+
 试用结束后运行 `make compose-dev-down` 停止并移除开发栈。

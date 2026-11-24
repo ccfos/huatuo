@@ -16,85 +16,36 @@
 # Exercise an existing development stack; Kubernetes owns the temporary workload.
 set -euo pipefail
 
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+readonly ROOT_DIR
+source "${ROOT_DIR}/build/docker/lib_profiling.sh"
+readonly WORKLOAD_IMAGE='gcc:14'
+readonly DURATION_SECONDS=20
 readonly PROFILING_SCOPE_HOST='host'
 readonly PROFILING_SCOPE_CONTAINER='container'
+readonly API_BASE='http://127.0.0.1:12740'
+readonly API_TOKEN='huatuo-dev-api-token'
+readonly NODE_BASE='http://127.0.0.1:19704'
+readonly NODE_TOKEN='huatuo-dev-node-token'
+readonly GRAFANA_BASE='http://127.0.0.1:3000'
+readonly GRAFANA_AUTH='admin:admin'
+readonly TARGET_HOST='huatuo-dev-node'
+readonly REGION='example'
+readonly KUBECTL=(kubectl --request-timeout=10s)
 
 scope=${1:-all}
 if (($# > 1)) || [[ "$scope" != all && "$scope" != "$PROFILING_SCOPE_HOST" && "$scope" != "$PROFILING_SCOPE_CONTAINER" ]]; then
 	echo "Usage: run_test_profiling.sh [all|host|container] after make compose-dev-up." >&2
 	exit 2
 fi
-for dependency in curl jq; do
-	command -v "$dependency" > /dev/null || {
-		printf 'Install %s before running run_test_profiling.sh.\n' "$dependency" >&2
-		exit 1
-	}
-done
-
-readonly API_BASE='http://127.0.0.1:12740'
-readonly GRAFANA_BASE='http://127.0.0.1:3000'
-readonly TARGET_HOST='huatuo-dev-node'
-readonly REGION='example'
-readonly NODE_BASE='http://127.0.0.1:19704'
-readonly NODE_TOKEN='huatuo-dev-node-token'
-readonly WORKLOAD_IMAGE='gcc:14'
-readonly KUBECTL=(kubectl --request-timeout=10s)
-readonly API_TOKEN='huatuo-dev-api-token'
-readonly GRAFANA_AUTH='admin:admin'
-readonly DURATION_SECONDS=20
-ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-readonly ROOT_DIR
-
-request() {
-	local label=$1 url=$2
-	local auth=(-H "Authorization: Bearer ${API_TOKEN}")
-	[[ "$label" != flamegraph ]] || auth=(-u "$GRAFANA_AUTH")
-	shift 2
-	# A transport failure may leave no response, or an earlier polling response.
-	: > "${output_dir}/${label}.response.json"
-	curl --noproxy 127.0.0.1,localhost --fail-with-body -sS --connect-timeout 2 --max-time 60 "${auth[@]}" \
-		-o "${output_dir}/${label}.response.json" "$@" "$url" 2> "${output_dir}/${label}.log" || {
-		printf '%s request to %s failed; inspect %s/%s.log.\n' "$label" "$url" "$output_dir" "$label" >&2
-		cat "${output_dir}/${label}.log" >&2
-		[[ ! -s "${output_dir}/${label}.response.json" ]] || cat "${output_dir}/${label}.response.json" >&2
-		return 1
-	}
-}
+require_commands curl jq
 
 run_scope() {
 	local scope=$1 output_dir=$2
-	local container_id namespace job_id deadline status raw_count node dependency workload_error
-	local start_ms end_ms node_count
+	local container_id namespace job_id node pod_file
 	container_id=''
 	if [[ "$scope" == "$PROFILING_SCOPE_CONTAINER" ]]; then
-		for dependency in kubectl ip; do
-			command -v "$dependency" > /dev/null || {
-				printf 'Missing command: %s.\n' "$dependency" >&2
-				return 1
-			}
-		done
-		"${KUBECTL[@]}" get nodes -o json > "${output_dir}/nodes.json" 2> "${output_dir}/kubernetes.log" || {
-			cat "${output_dir}/kubernetes.log" >&2
-			return 1
-		}
-		ip -j address > "${output_dir}/addresses.json" 2>> "${output_dir}/kubernetes.log" || {
-			cat "${output_dir}/kubernetes.log" >&2
-			return 1
-		}
-		node=$(jq -er --slurpfile addresses "${output_dir}/addresses.json" '
-  [$addresses[0][].addr_info[].local] as $local
-  | [.items[] | select(any(.status.addresses[]; .type == "InternalIP" and (.address as $ip | $local | index($ip) != null)))
-     | .metadata.name]
-  | if length == 1 then .[0] else error("Expected one local Kubernetes node") end
- ' "${output_dir}/nodes.json" 2>> "${output_dir}/kubernetes.log") || {
-			printf 'No unique Kubernetes node matches this host.\n' >&2
-			return 1
-		}
-		if ! kubectl --request-timeout=15s wait --for=condition=Ready "node/$node" --timeout=10s \
-			>> "${output_dir}/kubernetes.log" 2>&1; then
-			printf 'Kubernetes node %s did not become ready.\n' "$node" >&2
-			return 1
-		fi
+		node=$(require_local_kubernetes_node "$output_dir") || return 1
 		namespace="huatuo-profiling-${run_dir##*.}"
 		namespace=${namespace,,}
 		"${KUBECTL[@]}" create namespace "$namespace" >> "${output_dir}/kubernetes.log" || return 1
@@ -112,103 +63,51 @@ run_scope() {
      volumeMounts:[{name:"source",mountPath:"/src",readOnly:true}]}],
     volumes:[{name:"source",configMap:{name:"workload"}}]}
   }' > "${output_dir}/workload.request.json" || return 1
-		"${KUBECTL[@]}" -n "$namespace" create -f "${output_dir}/workload.request.json" \
-			>> "${output_dir}/kubernetes.log" || return 1
-		if ! kubectl --request-timeout=310s -n "$namespace" wait pod/workload --for=condition=Ready --timeout=300s \
-			>> "${output_dir}/kubernetes.log" 2>&1; then
-			workload_error=''
-			if "${KUBECTL[@]}" -n "$namespace" get pod workload -o json \
-				> "${output_dir}/workload.response.json" 2>> "${output_dir}/kubernetes.log"; then
-				workload_error=$(jq -r '
-  if .status.reason then .status.reason + ": " + (.status.message // "")
-  else [((.status.initContainerStatuses // []) + (.status.containerStatuses // []))[]
-    | .state | to_entries[]
-    | select(.key == "waiting" or (.key == "terminated" and .value.exitCode != 0))
-    | (.value.reason // "Container failed") + ": " + (.value.message // "")]
-    | join("\n") end' "${output_dir}/workload.response.json")
-			fi
-			"${KUBECTL[@]}" -n "$namespace" describe pod workload > "${output_dir}/pod-describe.log" 2>&1 || true
-			printf '%s\n' "${workload_error:-Workload did not become ready.}" >&2
-			return 1
-		fi
-		"${KUBECTL[@]}" -n "$namespace" get pod workload -o json > "${output_dir}/workload.response.json" || return 1
-		container_id=$(jq -er '.status.containerStatuses[] | select(.name == "workload")
-   | .containerID | sub("^[^:]+://"; "") | select(test("^[0-9a-fA-F]{12,64}$"))' \
-			"${output_dir}/workload.response.json") || return 1
-		# Pod readiness precedes the Agent kubelet cache refresh.
-		deadline=$((SECONDS + 90))
-		until curl --noproxy 127.0.0.1,localhost --fail-with-body -sS --connect-timeout 2 --max-time 5 -H "Authorization: Bearer ${NODE_TOKEN}" \
-			"${NODE_BASE}/v1/containers/${container_id}" -o "${output_dir}/container.response.json" 2> "${output_dir}/container.log"; do
-			if ((SECONDS >= deadline)); then
-				printf 'Agent did not discover container %s.\n' "$container_id" >&2
-				return 1
-			fi
-			sleep 2 || return 1
-		done
+		kubernetes_pod_create "$output_dir" "$namespace" "${output_dir}/workload.request.json" || return 1
+		pod_file=$(kubernetes_pod_wait_ready "$output_dir" "$namespace" workload) || return 1
+		kubernetes_pod_container_get "$pod_file" workload > "${output_dir}/target.json" || return 1
+		container_id=$(jq -er .container_id "${output_dir}/target.json") || return 1
+		node_container_wait_discovered "$output_dir" "$NODE_BASE" "$NODE_TOKEN" "$container_id" || return 1
 	fi
 
-	jq -n --arg host "$TARGET_HOST" --arg scope "$scope" --arg container "$container_id" \
-		--arg scope_container "$PROFILING_SCOPE_CONTAINER" --argjson duration "$DURATION_SECONDS" '{
-		type:"cpu", language:"c", mode:"oncpu", scope:$scope,
-		duration_seconds:$duration, hostname:$host
-	} + (if $scope == $scope_container then {container_id:$container} else {} end)' > "${output_dir}/create.request.json" || return 1
-	request create "${API_BASE}/v1/profiling" -X POST \
-		-H 'Content-Type: application/json' \
-		--data-binary "@${output_dir}/create.request.json" || return 1
-	job_id=$(jq -er '.data.request_id | select(type == "string" and test("^[A-Za-z0-9_-]+$"))' \
-		"${output_dir}/create.response.json") || return 1
-
-	deadline=$((SECONDS + DURATION_SECONDS + 120))
-
-	while true; do
-		request status "${API_BASE}/v1/profiling/${job_id}" || return 1
-		status=$(jq -er .data.status "${output_dir}/status.response.json") || return 1
-		[[ "$status" != terminal ]] || break
-		if ((SECONDS >= deadline)); then
-			printf 'ERROR: %s\n' "Task ${job_id} timed out; inspect ${output_dir}/status.response.json." >&2
-			return 1
-		fi
-		sleep 5 || return 1
-	done
-
-	jq -e '.data.terminal | .outcome == "completed" or error(.message // .reason // .outcome)' \
-		"${output_dir}/status.response.json" > /dev/null || return 1
-
-	request raw "${API_BASE}/v1/profiling/${job_id}/raw?limit=1" || return 1
-	raw_count=$(jq -er '.data.items | arrays | length' "${output_dir}/raw.response.json") || return 1
-	if [[ "$scope" == "$PROFILING_SCOPE_CONTAINER" ]]; then
-		jq -e --arg container "$container_id" '.data.items
-   | (length > 0 and all(.[]; .container_id == $container)) or error("Missing windows or incorrect container ID")' \
-			"${output_dir}/raw.response.json" > /dev/null || return 1
+	jq -n --arg scope "$scope" --arg container "$container_id" --arg host "$TARGET_HOST" --argjson duration "$DURATION_SECONDS" '
+ {type:"cpu",language:"c",mode:"oncpu",scope:$scope,hostname:$host,duration_seconds:$duration}
+ + (if $scope=="container" then {container_id:$container} else {} end)' > "${output_dir}/create.request.json" || return 1
+	job_id=$(profiling_task_create "$output_dir" "$API_BASE" "$API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id) || return 1
+	profiling_task_wait_completed "$output_dir" "$API_BASE" "$API_TOKEN" "$job_id" "$((DURATION_SECONDS + 120))" > "${output_dir}/task.json" || return 1
+	profiling_raw_query "$output_dir" "$API_BASE" "$API_TOKEN" "$job_id" > "${output_dir}/raw.json" || return 1
+	if [[ $scope == container ]]; then
+		jq -e --arg container "$container_id" '.items | length > 0 and all(.[]; .container_id == $container)' "${output_dir}/raw.json" > /dev/null || return 1
 	fi
-
-	# The client may have a different clock from the development node.
-	start_ms=$(jq -er '.data.created_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 * 1000' "${output_dir}/status.response.json") || return 1
-	# Round up the server's end time to include subsecond publication timestamps.
-	end_ms=$(jq -er '.data.ended_at | sub("\\.[0-9]+Z$"; "Z") | (fromdateiso8601 + 1) * 1000' "${output_dir}/status.response.json") || return 1
-	jq -n --arg id "$job_id" --arg host "$TARGET_HOST" --arg region "$REGION" \
-		--arg scope "$scope" --arg scope_container "$PROFILING_SCOPE_CONTAINER" --arg container "$container_id" --arg from "$start_ms" --arg to "$end_ms" '{
-		from:$from, to:$to, queries:[{
-			refId:"A", queryType:"profile",
-			datasource:{type:"grafana-pyroscope-datasource",uid:"huatuo-apiserver-pyroscope"},
-			profileTypeId:"process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-			labelSelector:("{scope=" + ($scope | tojson) + (if $scope == $scope_container then ",container_id=" + ($container | tojson) else "" end) + ",region=" + ($region | tojson) + ",hostname=" + ($host | tojson) + ",id=" + ($id | tojson) + "}")
-		}]
-	}' > "${output_dir}/flamegraph.request.json" || return 1
-	request flamegraph "${GRAFANA_BASE}/api/ds/query" \
-		-H 'Content-Type: application/json' --data-binary "@${output_dir}/flamegraph.request.json" || return 1
-	node_count=$(jq -er '.results.A
-  | if .status == 200 and (.error | not) then [.frames[]?.data.values[0] | length] | add // 0
-    else error("Grafana query failed: " + tostring) end' "${output_dir}/flamegraph.response.json") || return 1
-	if ((node_count == 0)); then
+	jq '{request_id,hostname,scope,container_id,time_range:{
+ from_ms:(.created_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601*1000),
+ to_ms:(.ended_at|sub("\\.[0-9]+Z$";"Z")|(fromdateiso8601+1)*1000)}}' "${output_dir}/task.json" > "${output_dir}/profile.json" || return 1
+	grafana_flamegraph_query "$output_dir" "$GRAFANA_BASE" "$GRAFANA_AUTH" "$REGION" "${output_dir}/profile.json" > "${output_dir}/flamegraph.json" || return 1
+	local nodes
+	nodes=$(jq -er '[.frames[]?.data.values[0]|length]|add // 0' "${output_dir}/flamegraph.json") || return 1
+	if ((nodes == 0)); then
 		printf 'No flame graph nodes; inspect %s/raw.response.json and the target workload.\n' "$output_dir" >&2
-		[[ "$scope" == "$PROFILING_SCOPE_HOST" ]] || return 1
+		[[ $scope == host ]] || return 1
 	fi
+	jq --arg output "$output_dir" --slurpfile raw "${output_dir}/raw.json" --argjson nodes "$nodes" '
+ . + {status:"passed",output_dir:$output,raw_windows:($raw[0].items|length),flamegraph_nodes:$nodes}' "${output_dir}/profile.json"
 
-	jq -n --arg scope "$scope" --arg id "$job_id" --arg container "$container_id" \
-		--arg output "$output_dir" --argjson windows "$raw_count" --argjson nodes "$node_count" \
-		--argjson from "$start_ms" --argjson to "$end_ms" \
-		'{scope:$scope,status:"passed",request_id:$id,container_id:(if $container == "" then null else $container end),raw_windows:$windows,flamegraph_nodes:$nodes,output_dir:$output,time_range:{from_ms:$from,to_ms:$to}}'
+}
+
+scope_results_write() {
+	local output=$1 elapsed=$2 status=$3 range file url
+	shift 3
+	range=$(jq -s '[.[]|select(.status=="passed")|.time_range] | {from_ms:(map(.from_ms)|min),to_ms:(map(.to_ms)|max)}' "$@") || return 1
+	for file in "$@"; do
+		if jq -e '.status=="passed"' "$file" > /dev/null; then
+			jq --argjson range "$range" '.time_range=$range' "$file" > "${file}.tmp" || return 1
+			url=$(grafana_profiling_url_build "$GRAFANA_BASE" "$REGION" "${file}.tmp") || return 1
+			jq --arg url "$url" '.grafana_url=$url' "${file}.tmp" > "$file" || return 1
+		fi
+	done
+	jq -s --arg output "$output" --argjson elapsed "$elapsed" --argjson status "$status" '
+ {status:(if $status==0 and all(.[];.status=="passed") then "passed" else "failed" end),
+ elapsed_seconds:$elapsed,output_dir:$output,results:.}' "$@"
 }
 
 printf 'Starting CPU profiling (%ss per scope)...\n' "$DURATION_SECONDS" >&2
@@ -250,21 +149,6 @@ for target in "${scopes[@]}"; do
 done
 if ! cleanup; then result=1; fi
 # Use one server-time range so switching Scope keeps both tasks selectable.
-jq -s --arg output "$run_dir" --argjson elapsed "$((SECONDS - started))" --argjson exit_status "$result" \
-	--arg grafana "$GRAFANA_BASE" --arg host "$TARGET_HOST" --arg region "$REGION" \
-	--arg scope_host "$PROFILING_SCOPE_HOST" --arg scope_container "$PROFILING_SCOPE_CONTAINER" '
- ([.[] | select(.status == "passed")]) as $passed
- | ($passed | map(.time_range.from_ms) | min) as $from
- | ($passed | map(.time_range.to_ms) | max) as $to
- | map(if .status == "passed" then
-     .time_range = {from_ms:$from,to_ms:$to}
-     | .grafana_url = ($grafana + "/d/continuous-profiling?var-region=" + ($region | @uri)
-       + "&var-hostname=" + ($host | @uri) + "&var-task_id=" + .request_id
-       + "&var-scope=" + ((if .scope == $scope_host then "NOT _exists_:container_id" else "_exists_:container_id" end) | @uri)
-       + (if .scope == $scope_container then "&var-container_id=" + .container_id else "" end)
-       + "&var-type=process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds&from=" + ($from | tostring) + "&to=" + ($to | tostring))
-   else . end)
- | {status:(if $exit_status == 0 and all(.[]; .status == "passed") then "passed" else "failed" end),elapsed_seconds:$elapsed,output_dir:$output,results:.}
-' "${files[@]}" > "${run_dir}/result.json"
+scope_results_write "$run_dir" "$((SECONDS - started))" "$result" "${files[@]}" > "${run_dir}/result.json"
 jq . "${run_dir}/result.json"
 exit "$result"

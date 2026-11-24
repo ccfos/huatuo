@@ -85,4 +85,27 @@ The temporary container workload is removed on exit; collected results remain qu
 For label filtering, see [View the Flame Graph](/docs/best-practice/continuous-profiling_en.md#5-view-the-flame-graph).
 
 The script targets the default development stack. For custom collection requests, see
-[Profiling API](/docs/reference/profiling-api_en.md). After the trial, run `make compose-dev-down` to stop and remove the development stack.
+[Profiling API](/docs/reference/profiling-api_en.md).
+
+To deploy and benchmark Redis or PostgreSQL and collect a CPU profile of the service container:
+
+```bash
+./build/docker/run_test_redis_profiling.sh
+./build/docker/run_test_postgres_profiling.sh
+```
+
+Run `make compose-dev-up` before these scripts. They require `curl`, `jq`, `kubectl`,
+`ip`, `crictl`, a Kubernetes node on the local host, and access to its containerd runtime.
+They preload missing workload images with `crictl`. The runtime endpoint defaults to
+`unix:///run/containerd/containerd.sock`; override it with `CONTAINER_RUNTIME_ENDPOINT`.
+They use `redis` with
+`redislabs/memtier_benchmark`, or `postgres`; no benchmark tools need installing on the host.
+Redis runs mixed reads and writes with a 30-second profile. PostgreSQL initializes temporary data
+and runs read-only queries with a 60-second profile. Tasks are created through the apiserver;
+the scripts stop the benchmark after task completion, then generate the flame graph link.
+Success exits with code 0; the JSON output contains the flame graph link in `grafana_url` and the
+results and benchmark log directory in `output_dir`. Failure exits with a nonzero code and
+`grafana_url: null`. Temporary services, data, and benchmark containers are removed on exit;
+the development stack and collected results remain available.
+
+After the trial, run `make compose-dev-down` to stop and remove the development stack.
