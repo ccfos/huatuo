@@ -17,3 +17,4 @@ weight: 11
 | [硬件事件字段](/docs/reference/hardware-events_zh.md) | RAS 计数、严重级别、寄存器和错误编码 |
 | [Profiling API](/docs/reference/profiling-api_zh.md) | 任务创建、状态、结果查询及停止规则 |
 | [profiler 命令行参数](/docs/reference/profiler-cli_zh.md) | 参数默认值、范围和适用模式 |
+| [HUATUO 性能影响评估报告](/docs/reference/performance-impact_zh.md) | 各采集功能对业务吞吐、尾延迟和资源占用的实测影响及适用范围 |
