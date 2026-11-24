@@ -301,6 +301,21 @@ Grafana 使用 `/v1/profiling/flamegraph/querier.v1.QuerierService/` 下的 Pyro
 `all`、`*`、空字符串均为真实值。多值标签按值集合匹配，数值标签格式如 `4096 bytes`。
 `physical_usage` 先选最新快照再过滤，不回退到旧快照。
 
+原生 off-CPU 样本使用 `offcpu_reason` 表示离开 CPU 后的时间归因，取值为：
+
+| 值 | 含义 |
+| --- | --- |
+| `blocked` | 切出至唤醒的阻塞等待 |
+| `runqueue` | 唤醒后等待 CPU |
+| `runqueue_preempted` | 被抢占后等待 CPU |
+| `runqueue_yielded` | 可运行任务非抢占切出后等待 CPU |
+| `runqueue_missed_wakeup` | 未观察到唤醒，无法区分阻塞与运行队列等待的区间 |
+| `unknown` | 未识别的事件种类 |
+
+例如 `{scope="host",id="job-1",offcpu_reason="blocked"}` 仅选择阻塞等待；
+`offcpu_reason=~"runqueue.*"` 选择所有 `runqueue` 前缀的归因，其中
+`runqueue_missed_wakeup` 不能视为已确认的运行队列等待。样本权重单位为纳秒。
+
 标签查询方法为 `LabelNames`、`LabelValues`：
 
 | 字段 | 约束 |

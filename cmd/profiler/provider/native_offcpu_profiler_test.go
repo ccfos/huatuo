@@ -45,42 +45,52 @@ func TestOffCPUEventABI(t *testing.T) {
 	require.Equal(t, uintptr(40), unsafe.Offsetof(event.Kind))
 }
 
-func TestOffCPUCategory(t *testing.T) {
+func TestOffCPUReason(t *testing.T) {
 	tests := []struct {
+		name string
 		kind abi.ProfilerOffCPUEventKind
 		want string
 	}{
 		{
+			name: "unknown",
 			kind: abi.ProfilerOffCPUEventUnknown,
 			want: "unknown",
 		},
 		{
+			name: "blocked",
 			kind: abi.ProfilerOffCPUEventBlocked,
 			want: "blocked",
 		},
 		{
+			name: "runqueue",
 			kind: abi.ProfilerOffCPUEventRunqueue,
 			want: "runqueue",
 		},
 		{
+			name: "runqueue_preempted",
 			kind: abi.ProfilerOffCPUEventRunqueuePreempted,
 			want: "runqueue_preempted",
 		},
 		{
+			name: "runqueue_yielded",
 			kind: abi.ProfilerOffCPUEventRunqueueYielded,
 			want: "runqueue_yielded",
 		},
 		{
+			name: "runqueue_missed_wakeup",
 			kind: abi.ProfilerOffCPUEventRunqueueMissedWakeup,
 			want: "runqueue_missed_wakeup",
 		},
 		{
+			name: "unrecognized kind",
 			kind: 99,
 			want: "unknown",
 		},
 	}
 	for _, tt := range tests {
-		require.Equal(t, tt.want, offCPUCategory(tt.kind))
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, offCPUReason(tt.kind))
+		})
 	}
 }
 
@@ -303,7 +313,7 @@ func TestEnqueueOffCPUBatch(t *testing.T) {
 		),
 	)
 	require.Len(t, samples, 5)
-	type sampleKey struct{ PID, Category string }
+	type sampleKey struct{ PID, Reason string }
 	values := make(map[sampleKey]int64)
 	for i := range samples {
 		sample := &samples[i]
@@ -313,8 +323,8 @@ func TestEnqueueOffCPUBatch(t *testing.T) {
 				key.PID = label.StringValue
 			}
 
-			if label.Name == "offcpu_category" {
-				key.Category = label.StringValue
+			if label.Name == "offcpu_reason" {
+				key.Reason = label.StringValue
 			}
 		}
 
@@ -322,16 +332,16 @@ func TestEnqueueOffCPUBatch(t *testing.T) {
 	}
 
 	require.Equal(t, int64(30), values[sampleKey{
-		PID:      "100",
-		Category: "blocked",
+		PID:    "100",
+		Reason: "blocked",
 	}])
 	require.Equal(t, int64(30), values[sampleKey{
-		PID:      "100",
-		Category: "runqueue",
+		PID:    "100",
+		Reason: "runqueue",
 	}])
 	require.Equal(t, int64(40), values[sampleKey{
-		PID:      "200",
-		Category: "blocked",
+		PID:    "200",
+		Reason: "blocked",
 	}])
 }
 

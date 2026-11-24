@@ -105,6 +105,20 @@ jq -c --arg type "$PROFILE_LABEL_TYPE" '
   .profile_data.profile.sample[0].label = [{key:4,num:$case.pid},{key:9,str:6}])
 ' "${ROOT_DIR}/integration/testdata/test_apiserver_profile_samples.json" \
 	>> "${HUATUO_BAMAI_TEST_TMPDIR}/labels.ndjson"
+# Shared stacks must remain separable by off-CPU reason.
+jq -c '
+ .[0] as $base | [{reason:"blocked",weight:7},{reason:"runqueue",weight:11}][]
+ | . as $case | {index:{}},
+ ($base | .tracer_id="offcpu-task"
+  | .profile_data.profile_type="process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"
+  | .profile_data.profile |= (
+    (.string_table | length) as $key
+    | .string_table[1]="offcpu"
+    | .string_table += ["offcpu_reason",$case.reason]
+    | .sample[0].label=[{key:$key,str:($key+1)}]
+    | .sample[0].value=[$case.weight]))
+' "${ROOT_DIR}/integration/testdata/test_apiserver_profile_samples.json" \
+	>> "${HUATUO_BAMAI_TEST_TMPDIR}/labels.ndjson"
 # Metadata values must come from indexed fields even when the profile is empty.
 jq -nc --arg type "$PROFILE_LABEL_TYPE" '
  {index:{}}, {tracer_id:"metadata-task",tracer_type:"profiling",hostname:"host-a",region:"east",
@@ -197,6 +211,27 @@ for profile_label_pair in 'container-a|901' 'container-b|902'; do
 		"$(jq -nc --arg type "$PROFILE_LABEL_TYPE" --arg container "$profile_label_container" \
 			'{matchers:["{__profile_type__="+($type|tojson)+",id=\"sample-task-a\",scope=\"container\",container_id="+($container|tojson)+"}"]}')" \
 		"$(jq -nc --argjson names "$PROFILE_LABEL_DOCUMENT_NAMES" --arg key "${profile_label_container//-/_}" '$names + ["pid",$key] | sort')"
+done
+
+profile_label_offcpu_selector='{__profile_type__="process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds",scope="host",id="offcpu-task"}'
+assert_profile_labels LabelNames \
+	"$(jq -nc --arg s "$profile_label_offcpu_selector" '{matchers:[$s]}')" \
+	"$(jq -nc --argjson names "$PROFILE_LABEL_DOCUMENT_NAMES" '$names + ["offcpu_reason"] | sort')"
+assert_profile_labels LabelValues \
+	"$(jq -nc --arg s "$profile_label_offcpu_selector" '{name:"offcpu_reason",matchers:[$s]}')" '["blocked","runqueue"]'
+assert_profile_labels LabelValues \
+	"$(jq -nc --arg s "${profile_label_offcpu_selector%\}},offcpu_reason=\"blocked\"}" \
+		'{name:"offcpu_reason",matchers:[$s]}')" '["blocked"]'
+for profile_label_pair in 'blocked|7' 'runqueue|11'; do
+	profile_label_reason=${profile_label_pair%%|*}
+	profile_label_result="${HUATUO_BAMAI_TEST_TMPDIR}/offcpu-${profile_label_reason}.json"
+	assert_profile_query "$PROFILE_LABEL_ADDR" "$PROFILE_LABEL_TOKEN" SelectMergeStacktraces \
+		"$(jq -nc --arg reason "$profile_label_reason" \
+			'{profileTypeID:"process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds",
+			labelSelector:("{scope=\"host\",id=\"offcpu-task\",offcpu_reason="+($reason|tojson)+"}")}')" \
+		"$profile_label_result"
+	assert_eq "$(jq -r '.flamegraph.total' "$profile_label_result")" "${profile_label_pair#*|}" \
+		"off-CPU reason nanoseconds" || fatal "incorrect weight for offcpu_reason=$profile_label_reason"
 done
 
 profile_label_metadata_selector="{__profile_type__=\"${PROFILE_LABEL_TYPE}\",id=\"metadata-task\"}"

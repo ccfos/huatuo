@@ -1181,6 +1181,112 @@ func TestProfileQuerySampleLabelDiscovery(t *testing.T) {
 	}
 }
 
+func TestProfileQueryOffCPUReasons(t *testing.T) {
+	const profileType = "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"
+	var document profilingstore.Document
+	if err := json.Unmarshal(labelQueryDocument(t, profileType, 1), &document); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := document.ProfileData.Profile
+	profile.StringTable[1] = "offcpu"
+	key := int64(len(profile.StringTable))
+	profile.StringTable = append(
+		profile.StringTable,
+		"offcpu_reason",
+		"blocked",
+		"runqueue",
+		"runqueue_preempted",
+	)
+	for i, sample := range profile.Sample {
+		sample.Label = append(sample.Label, &googlev1.Label{
+			Key: key,
+			Str: key + int64(i) + 1,
+		})
+	}
+
+	data, err := json.Marshal(&document)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := newProfileQueryStore(
+		t,
+		1,
+		false,
+		data,
+	)
+	service, err := NewProfileQueryService(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := `{__profile_type__="` + profileType + `",scope="host",id="job-1"`
+	names, err := service.LabelNames(t.Context(), &typesv1.LabelNamesRequest{Matchers: []string{base + `}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Contains(names.Names, "offcpu_reason") {
+		t.Fatalf("label names = %v, missing offcpu_reason", names.Names)
+	}
+
+	values, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+		Name:     "offcpu_reason",
+		Matchers: []string{base + `}`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := []string{"blocked", "runqueue", "runqueue_preempted"}; !slices.Equal(values.Names, want) {
+		t.Fatalf("off-CPU reasons = %v, want %v", values.Names, want)
+	}
+
+	for _, tc := range []struct {
+		name, selector string
+		total          int64
+	}{
+		{
+			name:  "all",
+			total: 31,
+		},
+		{
+			name:     "blocked",
+			selector: `,offcpu_reason="blocked"`,
+			total:    7,
+		},
+		{
+			name:     "runqueue",
+			selector: `,offcpu_reason="runqueue"`,
+			total:    11,
+		},
+		{
+			name:     "runqueue regexp",
+			selector: `,offcpu_reason=~"runqueue.*"`,
+			total:    24,
+		},
+		{
+			name:     "absent",
+			selector: `,offcpu_reason="unknown"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response, err := service.SelectMergeStacktraces(t.Context(), &querierv1.SelectMergeStacktracesRequest{
+				ProfileTypeID: profileType,
+				LabelSelector: base + tc.selector + `}`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := response.GetFlamegraph().GetTotal(); got != tc.total {
+				t.Fatalf("off-CPU nanoseconds = %d, want %d", got, tc.total)
+			}
+		})
+	}
+}
+
 func TestProfileQuerySampleLabelsUseLatestSnapshot(t *testing.T) {
 	const profileType = "memory:physical_usage:bytes:space:bytes"
 	store := newProfileQueryStore(t, 2, false, labelQueryDocument(t, profileType, 1), labelQueryDocument(t, profileType, 2))

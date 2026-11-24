@@ -232,7 +232,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 		pid := uint32(event.Base.PIDTGID >> 32)
 		labels := append(
 			nativeProcessLabels(pid, taskCommString(event.Base.Comm)),
-			types.ProfileStringLabel("offcpu_category", offCPUCategory(event.Kind)),
+			types.ProfileStringLabel("offcpu_reason", offCPUReason(event.Kind)),
 		)
 		labels, err := types.NormalizeLabels(labels)
 		if err != nil {
@@ -282,7 +282,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 	return builder.Flush(enqueue)
 }
 
-var offCPUCategories = [...]string{
+var offCPUReasons = [...]string{
 	abi.ProfilerOffCPUEventUnknown:              "unknown",
 	abi.ProfilerOffCPUEventBlocked:              "blocked",
 	abi.ProfilerOffCPUEventRunqueue:             "runqueue",
@@ -291,13 +291,13 @@ var offCPUCategories = [...]string{
 	abi.ProfilerOffCPUEventRunqueueMissedWakeup: "runqueue_missed_wakeup",
 }
 
-func offCPUCategory(kind abi.ProfilerOffCPUEventKind) string {
+func offCPUReason(kind abi.ProfilerOffCPUEventKind) string {
 	index := uint64(kind)
-	if index >= uint64(len(offCPUCategories)) {
-		return offCPUCategories[abi.ProfilerOffCPUEventUnknown]
+	if index >= uint64(len(offCPUReasons)) {
+		return offCPUReasons[abi.ProfilerOffCPUEventUnknown]
 	}
 
-	return offCPUCategories[index]
+	return offCPUReasons[index]
 }
 
 var offCPUStatNames = [abi.ProfilerOffCPUStatMax]string{

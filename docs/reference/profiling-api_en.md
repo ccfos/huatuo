@@ -277,6 +277,22 @@ including missing labels. Values `all`, `*`, and empty strings are literal. Mult
 match their value sets; numeric labels use forms such as `4096 bytes`.
 Physical usage selects the latest snapshot before filtering, without falling back to older snapshots.
 
+Native off-CPU samples use `offcpu_reason` to attribute time away from the CPU:
+
+| Value | Meaning |
+| --- | --- |
+| `blocked` | Blocked time from switch-out to wakeup |
+| `runqueue` | Waiting for CPU after wakeup |
+| `runqueue_preempted` | Waiting for CPU after preemption |
+| `runqueue_yielded` | Waiting for CPU after a non-preemptive switch-out while runnable |
+| `runqueue_missed_wakeup` | No wakeup was observed, so blocked and run queue time cannot be separated |
+| `unknown` | Unrecognized event kind |
+
+For example, `{scope="host",id="job-1",offcpu_reason="blocked"}` selects blocked time.
+`offcpu_reason=~"runqueue.*"` selects all reasons with the `runqueue` prefix;
+`runqueue_missed_wakeup` does not establish that the interval was spent on a run queue.
+Sample weights are in nanoseconds.
+
 Label queries use `LabelNames` and `LabelValues`:
 
 | Field | Constraints |
