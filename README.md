@@ -70,12 +70,14 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   To launch the full stack (Elasticsearch, Prometheus, Grafana, and huatuo) using Docker Compose:
 
-        $ docker compose --project-directory ./build/docker up
+        $ make compose-dev-up
 
   Once running, access the monitoring dashboard at http://localhost:3000.
 
   ![](/docs/img/quickstart-components.png)  
   
+  ![](/docs/img/quickstart-continuous-profiling.png)
+
   ![](/docs/img/quickstart-autotracing-event.png)
 
 - **NOTE**
