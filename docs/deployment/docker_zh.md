@@ -72,12 +72,18 @@ make compose-dev-up
 
 ```bash
 # 采集现有宿主机负载
-./build/docker/run_test_profiling.sh host
+./build/docker/run_test_cpu_profiling.sh --with-host
 # 创建临时容器负载并采集
-./build/docker/run_test_profiling.sh container
+./build/docker/run_test_cpu_profiling.sh --with-container
+# 采集宿主机或容器的 off-CPU 等待时间
+./build/docker/run_test_cpu_profiling.sh --with-host --offcpu
+./build/docker/run_test_cpu_profiling.sh --with-container --offcpu
 ```
 
-省略参数时依次采集宿主机和容器；不具备 Kubernetes 条件时使用 `host`。
+`--with-host` 和 `--with-container` 选择采集范围，`--oncpu` 和 `--offcpu` 选择模式；
+各开关可组合，顺序不限，重复开关只生效一次。省略范围时选择宿主机和容器，省略模式时选择 on-CPU。
+同时传入四个开关会依次执行四个组合，每个任务 20 秒。不具备 Kubernetes 条件时使用 `--with-host`。
+`--offcpu` 验证结果中的 `offcpu_reason` 标签，并生成对应 off-CPU 类型的 Grafana 查询和链接。
 
 完成后打开输出中的 Grafana 地址查看火焰图，首次登录为 `admin / admin`。
 结果和诊断文件保存在输出的 `output_dir`（位于 `_output/profiling/run.XXXXXX/`）。

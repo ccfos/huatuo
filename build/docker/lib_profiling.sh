@@ -197,7 +197,7 @@ grafana_flamegraph_query() {
 	jq --arg region "$region" '
  {from:(.time_range.from_ms|tostring),to:(.time_range.to_ms|tostring),queries:[{
  refId:"A",queryType:"profile",datasource:{type:"grafana-pyroscope-datasource",uid:"huatuo-apiserver-pyroscope"},
- profileTypeId:"process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+ profileTypeId:.profile_type,
  labelSelector:(["scope="+(.scope|tojson),"region="+($region|tojson),"hostname="+(.hostname|tojson),"id="+(.request_id|tojson)]
  + (if .scope=="container" then ["container_id="+(.container_id|tojson)] else [] end) | "{"+join(",")+"}")
  }]}' "$profile" > "${output_dir}/flamegraph.request.json" || return 1
@@ -214,7 +214,7 @@ grafana_profiling_url_build() {
  +"&var-hostname="+(.hostname|@uri)+"&var-task_id="+(.request_id|@uri)
  +"&var-scope="+((if .scope=="host" then "NOT _exists_:container_id" else "_exists_:container_id" end)|@uri)
  +(if .scope=="container" then "&var-container_id="+(.container_id|@uri) else "" end)
- +"&var-type=process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds&from="+(.time_range.from_ms|tostring)
+ +"&var-type="+(.profile_type|@uri)+"&from="+(.time_range.from_ms|tostring)
  +"&to="+(.time_range.to_ms|tostring)' "$profile"
 }
 

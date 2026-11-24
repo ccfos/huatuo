@@ -195,7 +195,7 @@ main() {
 	memtier_stop "$output_dir" "$namespace"
 	redis_stage=flamegraph
 	profiling_raw_query "$output_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "$redis_job_id" > "${output_dir}/raw.json"
-	jq '{request_id,hostname,scope,container_id,time_range:{
+	jq '{request_id,hostname,scope,container_id,profile_type:"process_cpu:cpu:nanoseconds:cpu:nanoseconds",time_range:{
    from_ms:(.created_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601*1000),
    to_ms:(.ended_at|sub("\\.[0-9]+Z$";"Z")|(fromdateiso8601+1)*1000)}}' \
 		"${output_dir}/task.json" > "${output_dir}/profile.json"

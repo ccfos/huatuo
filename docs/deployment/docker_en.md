@@ -72,12 +72,19 @@ After startup, select a scope from another terminal at the repository root. Each
 
 ```bash
 # Profile existing host workloads
-./build/docker/run_test_profiling.sh host
+./build/docker/run_test_cpu_profiling.sh --with-host
 # Create and profile a temporary container workload
-./build/docker/run_test_profiling.sh container
+./build/docker/run_test_cpu_profiling.sh --with-container
+# Profile off-CPU waiting time on the host or in a container
+./build/docker/run_test_cpu_profiling.sh --with-host --offcpu
+./build/docker/run_test_cpu_profiling.sh --with-container --offcpu
 ```
 
-Without an argument, the script profiles the host and then the container. Use `host` without Kubernetes.
+Select scopes with `--with-host` and `--with-container`, and modes with `--oncpu` and `--offcpu`.
+Flags can be combined in any order; repeated flags have no additional effect. The defaults are both scopes
+and on-CPU. Passing all four flags runs four combinations sequentially, for 20 seconds each.
+Use `--with-host` without Kubernetes. Off-CPU trials check for `offcpu_reason` sample labels and generate
+Grafana queries and links for the off-CPU profile type.
 
 After completion, open the Grafana URL in the output to view the flame graph. The initial login is `admin / admin`.
 Results and diagnostics are saved to the reported `output_dir` under `_output/profiling/run.XXXXXX/`.
