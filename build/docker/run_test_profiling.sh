@@ -41,7 +41,7 @@ readonly WORKLOAD_IMAGE='gcc:14'
 readonly KUBECTL=(kubectl --request-timeout=10s)
 readonly API_TOKEN='huatuo-dev-api-token'
 readonly GRAFANA_AUTH='admin:admin'
-readonly DURATION_SECONDS=60
+readonly DURATION_SECONDS=20
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 readonly ROOT_DIR
 
@@ -50,22 +50,54 @@ request() {
 	local auth=(-H "Authorization: Bearer ${API_TOKEN}")
 	[[ "$label" != flamegraph ]] || auth=(-u "$GRAFANA_AUTH")
 	shift 2
-	curl --fail-with-body -sS --connect-timeout 2 --max-time 60 "${auth[@]}" \
+	# A transport failure may leave no response, or an earlier polling response.
+	: > "${output_dir}/${label}.response.json"
+	curl --noproxy 127.0.0.1,localhost --fail-with-body -sS --connect-timeout 2 --max-time 60 "${auth[@]}" \
 		-o "${output_dir}/${label}.response.json" "$@" "$url" 2> "${output_dir}/${label}.log" || {
-		cat "${output_dir}/${label}.log" "${output_dir}/${label}.response.json" >&2
+		printf '%s request to %s failed; inspect %s/%s.log.\n' "$label" "$url" "$output_dir" "$label" >&2
+		cat "${output_dir}/${label}.log" >&2
+		[[ ! -s "${output_dir}/${label}.response.json" ]] || cat "${output_dir}/${label}.response.json" >&2
 		return 1
 	}
 }
 
 run_scope() {
 	local scope=$1 output_dir=$2
-	local container_id namespace job_id deadline status raw_count
+	local container_id namespace job_id deadline status raw_count node dependency workload_error
 	local start_ms end_ms node_count
 	container_id=''
 	if [[ "$scope" == "$PROFILING_SCOPE_CONTAINER" ]]; then
+		for dependency in kubectl ip; do
+			command -v "$dependency" > /dev/null || {
+				printf 'Missing command: %s.\n' "$dependency" >&2
+				return 1
+			}
+		done
+		"${KUBECTL[@]}" get nodes -o json > "${output_dir}/nodes.json" 2> "${output_dir}/kubernetes.log" || {
+			cat "${output_dir}/kubernetes.log" >&2
+			return 1
+		}
+		ip -j address > "${output_dir}/addresses.json" 2>> "${output_dir}/kubernetes.log" || {
+			cat "${output_dir}/kubernetes.log" >&2
+			return 1
+		}
+		node=$(jq -er --slurpfile addresses "${output_dir}/addresses.json" '
+  [$addresses[0][].addr_info[].local] as $local
+  | [.items[] | select(any(.status.addresses[]; .type == "InternalIP" and (.address as $ip | $local | index($ip) != null)))
+     | .metadata.name]
+  | if length == 1 then .[0] else error("Expected one local Kubernetes node") end
+ ' "${output_dir}/nodes.json" 2>> "${output_dir}/kubernetes.log") || {
+			printf 'No unique Kubernetes node matches this host.\n' >&2
+			return 1
+		}
+		if ! kubectl --request-timeout=15s wait --for=condition=Ready "node/$node" --timeout=10s \
+			>> "${output_dir}/kubernetes.log" 2>&1; then
+			printf 'Kubernetes node %s did not become ready.\n' "$node" >&2
+			return 1
+		fi
 		namespace="huatuo-profiling-${run_dir##*.}"
 		namespace=${namespace,,}
-		"${KUBECTL[@]}" create namespace "$namespace" > "${output_dir}/kubernetes.log" || return 1
+		"${KUBECTL[@]}" create namespace "$namespace" >> "${output_dir}/kubernetes.log" || return 1
 		workload_namespace=$namespace
 		"${KUBECTL[@]}" -n "$namespace" create configmap workload \
 			--from-file="workload.c=${ROOT_DIR}/integration/testdata/test_apiserver_profiling_workload.c" \
@@ -74,22 +106,29 @@ run_scope() {
    apiVersion:"v1",kind:"Pod",metadata:{name:"workload"},
    spec:{nodeName:$node,restartPolicy:"Never",terminationGracePeriodSeconds:2,
     containers:[{name:"workload",image:$image,imagePullPolicy:"IfNotPresent",
-     command:["sh","-c","gcc -O1 -g -fno-omit-frame-pointer /src/workload.c -o /tmp/workload && exec /tmp/workload"],
-     resources:{requests:{cpu:"100m",memory:"32Mi"},limits:{cpu:"500m",memory:"256Mi"}},
-     readinessProbe:{exec:{command:["test","-x","/tmp/workload"]},periodSeconds:1},
+     command:["sh","-c","gcc -O1 -g -pthread -fno-omit-frame-pointer -fno-optimize-sibling-calls /src/workload.c -o /tmp/workload && exec /tmp/workload --label-workers /tmp/workload.ready"],
+     resources:{requests:{cpu:"100m",memory:"32Mi"},limits:{cpu:"2",memory:"256Mi"}},
+     readinessProbe:{exec:{command:["test","-s","/tmp/workload.ready"]},periodSeconds:1},
      volumeMounts:[{name:"source",mountPath:"/src",readOnly:true}]}],
     volumes:[{name:"source",configMap:{name:"workload"}}]}
   }' > "${output_dir}/workload.request.json" || return 1
 		"${KUBECTL[@]}" -n "$namespace" create -f "${output_dir}/workload.request.json" \
 			>> "${output_dir}/kubernetes.log" || return 1
 		if ! kubectl --request-timeout=310s -n "$namespace" wait pod/workload --for=condition=Ready --timeout=300s \
-			>> "${output_dir}/kubernetes.log"; then
-			"${KUBECTL[@]}" -n "$namespace" get pod workload -o json > "${output_dir}/workload.response.json" \
-				&& jq -r '.status.containerStatuses[]? | .state | to_entries[]
-   | "Workload \(.key): \(.value.reason // "unknown"): \(.value.message // "")"' \
-					"${output_dir}/workload.response.json" >&2
+			>> "${output_dir}/kubernetes.log" 2>&1; then
+			workload_error=''
+			if "${KUBECTL[@]}" -n "$namespace" get pod workload -o json \
+				> "${output_dir}/workload.response.json" 2>> "${output_dir}/kubernetes.log"; then
+				workload_error=$(jq -r '
+  if .status.reason then .status.reason + ": " + (.status.message // "")
+  else [((.status.initContainerStatuses // []) + (.status.containerStatuses // []))[]
+    | .state | to_entries[]
+    | select(.key == "waiting" or (.key == "terminated" and .value.exitCode != 0))
+    | (.value.reason // "Container failed") + ": " + (.value.message // "")]
+    | join("\n") end' "${output_dir}/workload.response.json")
+			fi
 			"${KUBECTL[@]}" -n "$namespace" describe pod workload > "${output_dir}/pod-describe.log" 2>&1 || true
-			printf 'Workload is not ready; inspect %s/pod-describe.log and workload.log.\n' "$output_dir" >&2
+			printf '%s\n' "${workload_error:-Workload did not become ready.}" >&2
 			return 1
 		fi
 		"${KUBECTL[@]}" -n "$namespace" get pod workload -o json > "${output_dir}/workload.response.json" || return 1
@@ -98,10 +137,10 @@ run_scope() {
 			"${output_dir}/workload.response.json") || return 1
 		# Pod readiness precedes the Agent kubelet cache refresh.
 		deadline=$((SECONDS + 90))
-		until curl --fail-with-body -sS --connect-timeout 2 --max-time 5 -H "Authorization: Bearer ${NODE_TOKEN}" \
+		until curl --noproxy 127.0.0.1,localhost --fail-with-body -sS --connect-timeout 2 --max-time 5 -H "Authorization: Bearer ${NODE_TOKEN}" \
 			"${NODE_BASE}/v1/containers/${container_id}" -o "${output_dir}/container.response.json" 2> "${output_dir}/container.log"; do
 			if ((SECONDS >= deadline)); then
-				printf 'Agent did not discover container %s; check kubelet synchronization and Agent logs.\n' "$container_id" >&2
+				printf 'Agent did not discover container %s.\n' "$container_id" >&2
 				return 1
 			fi
 			sleep 2 || return 1
@@ -172,7 +211,7 @@ run_scope() {
 		'{scope:$scope,status:"passed",request_id:$id,container_id:(if $container == "" then null else $container end),raw_windows:$windows,flamegraph_nodes:$nodes,output_dir:$output,time_range:{from_ms:$from,to_ms:$to}}'
 }
 
-printf 'Starting CPU profiling (60s per scope)...\n' >&2
+printf 'Starting CPU profiling (%ss per scope)...\n' "$DURATION_SECONDS" >&2
 started=$SECONDS
 mkdir -p -- "${ROOT_DIR}/_output/profiling"
 run_dir=$(mktemp -d "${ROOT_DIR}/_output/profiling/run.XXXXXX")
@@ -192,22 +231,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-scopes=("$PROFILING_SCOPE_HOST")
-if [[ "$scope" != "$PROFILING_SCOPE_HOST" ]] && command -v kubectl > /dev/null && command -v ip > /dev/null \
-	&& "${KUBECTL[@]}" get nodes -o json > "${run_dir}/nodes.json" 2> "${run_dir}/kubernetes.log" \
-	&& ip -j address > "${run_dir}/addresses.json" 2>> "${run_dir}/kubernetes.log" \
-	&& node=$(jq -er --slurpfile addresses "${run_dir}/addresses.json" '
-  [$addresses[0][].addr_info[].local] as $local
-  | [.items[] | select(.spec.unschedulable != true)
-     | select(any(.status.conditions[]; .type == "Ready" and .status == "True"))
-     | select(all(.status.conditions[]; if (.type | endswith("Pressure")) or .type == "NetworkUnavailable" then .status == "False" else true end))
-     | select(any(.status.addresses[]; .type == "InternalIP" and (.address as $ip | $local | index($ip) != null)))
-     | .metadata.name]
-  | if length == 1 then .[0] else error("Expected one local healthy Kubernetes node") end
- ' "${run_dir}/nodes.json" 2>> "${run_dir}/kubernetes.log"); then
-	scopes=("$PROFILING_SCOPE_CONTAINER")
-	[[ "$scope" != all ]] || scopes=("$PROFILING_SCOPE_HOST" "$PROFILING_SCOPE_CONTAINER")
-fi
+case $scope in
+all) scopes=("$PROFILING_SCOPE_HOST" "$PROFILING_SCOPE_CONTAINER") ;;
+host) scopes=("$PROFILING_SCOPE_HOST") ;;
+container) scopes=("$PROFILING_SCOPE_CONTAINER") ;;
+esac
 result=0
 files=()
 for target in "${scopes[@]}"; do

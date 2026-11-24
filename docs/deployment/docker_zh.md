@@ -53,26 +53,36 @@ $ docker compose --project-directory ./build/docker up
 
 Docker Compose 安装方法见[安装说明](https://docs.docker.com/compose/install/linux/)。
 
-Compose 自动安装 IO 周期总览使用的 Business Charts（`volkovlabs-echarts-panel`）；
+Compose 自动安装 IO 周期总览和性能剖析标签过滤使用的 Business Charts（`volkovlabs-echarts-panel`）；
 使用已有 Grafana 实例时，需自行安装该插件。
 
 ### 开发栈持续性能剖析
 
-`make compose-dev-up` 使用 `build/docker/devconf/`，已配置 ES 存储、API 鉴权和
-Grafana 数据源。固定凭据仅用于开发环境；修改 `.env` 的 ES 密码时，同步修改
-两份开发配置和 Grafana ES 数据源。
-
-启动开发栈后，在另一个终端从仓库根目录运行（需要 Bash、`curl`、`jq`）：
+在仓库根目录启动已配置 ES 存储、API 鉴权和 Grafana 数据源的开发栈：
 
 ```bash
-./build/docker/run_test_profiling.sh
+make compose-dev-up
 ```
 
-脚本自动创建 60 秒宿主机 CPU 采集任务，等待完成，查询原始结果和火焰图，
-保存到 `_output/profiling/run.XXXXXX/`，并输出已选定任务及时间范围的 Grafana 地址。
-统一面板按 Region、节点、范围、容器、指标和任务筛选，并显示任务状态。
-采集期间运行待分析的业务负载；Grafana 首次登录为 `admin / admin`。
+固定凭据仅用于开发环境；修改 `build/docker/.env` 的 ES 密码时，同步修改
+`build/docker/devconf/` 下两份服务配置和 Grafana ES 数据源。
 
-脚本固定使用本地开发栈配置；若修改服务地址、节点名或凭据，同步调整脚本顶部常量。
-更多参数见 [Profiling API](/docs/reference/profiling-api_zh.md)。
-使用 `make compose-dev-down` 停止开发栈。
+采集脚本需要 Bash、`curl`、`jq`。容器采集还需要 `kubectl`、`ip`、本机可用的 Kubernetes
+节点和 `gcc:14` 镜像访问权限。启动后，在另一个终端从仓库根目录选择采集范围，每个任务持续 20 秒：
+
+```bash
+# 采集现有宿主机负载
+./build/docker/run_test_profiling.sh host
+# 创建临时容器负载并采集
+./build/docker/run_test_profiling.sh container
+```
+
+省略参数时依次采集宿主机和容器；不具备 Kubernetes 条件时使用 `host`。
+
+完成后打开输出中的 Grafana 地址查看火焰图，首次登录为 `admin / admin`。
+结果和诊断文件保存在输出的 `output_dir`（位于 `_output/profiling/run.XXXXXX/`）。
+容器临时负载在退出时清理，已采集结果仍可查询。标签过滤操作见
+[查看火焰图](/docs/best-practice/continuous-profiling_zh.md#5-查看火焰图)。
+
+脚本用于默认开发栈；自定义采集请求见 [Profiling API](/docs/reference/profiling-api_zh.md)。
+试用结束后运行 `make compose-dev-down` 停止并移除开发栈。

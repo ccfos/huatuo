@@ -52,28 +52,37 @@ $ docker compose --project-directory ./build/docker up
 See the [installation guide](https://docs.docker.com/compose/install/linux/) to install Docker Compose.
 
 Compose installs Business Charts (`volkovlabs-echarts-panel`) for the IO
-interval overview. Install this plugin when using an existing Grafana instance.
+interval overview and profiling label filters. Install this plugin when using an existing Grafana instance.
 
 ### Continuous profiling in the development stack
 
-`make compose-dev-up` uses `build/docker/devconf/` with ES storage, API credentials,
-and Grafana data sources configured. Fixed credentials are for development only.
-When changing the ES password in `.env`, update both development configuration
-files and the Grafana ES data source.
-
-After startup, run from the repository root in another terminal with Bash,
-`curl`, and `jq` installed:
+From the repository root, start the development stack with ES storage, API authentication,
+and Grafana data sources configured:
 
 ```bash
-./build/docker/run_test_profiling.sh
+make compose-dev-up
 ```
 
-The script creates a 60-second host CPU profiling task, waits for completion,
-queries raw results and the flame graph, saves them to `_output/profiling/run.XXXXXX/`,
-and prints a Grafana URL with the task and time range selected. Run the target
-workload during collection. The shared dashboard filters by Region, node, scope,
-container, profile type, and task, and displays task status. The initial Grafana login is `admin / admin`.
+Fixed credentials are for development only. When changing the ES password in `build/docker/.env`,
+update both service configurations under `build/docker/devconf/` and the Grafana ES data source.
 
-The script uses fixed local development settings. If addresses, the node name, or
-credentials change, update the constants at the top of the script. See
-[Profiling API](/docs/reference/profiling-api_en.md) for other parameters. Stop the stack with `make compose-dev-down`.
+The collection script requires Bash, `curl`, and `jq`. Container collection also requires `kubectl`,
+`ip`, an available Kubernetes node on the local host, and access to the `gcc:14` image.
+After startup, select a scope from another terminal at the repository root. Each task runs for 20 seconds:
+
+```bash
+# Profile existing host workloads
+./build/docker/run_test_profiling.sh host
+# Create and profile a temporary container workload
+./build/docker/run_test_profiling.sh container
+```
+
+Without an argument, the script profiles the host and then the container. Use `host` without Kubernetes.
+
+After completion, open the Grafana URL in the output to view the flame graph. The initial login is `admin / admin`.
+Results and diagnostics are saved to the reported `output_dir` under `_output/profiling/run.XXXXXX/`.
+The temporary container workload is removed on exit; collected results remain queryable.
+For label filtering, see [View the Flame Graph](/docs/best-practice/continuous-profiling_en.md#5-view-the-flame-graph).
+
+The script targets the default development stack. For custom collection requests, see
+[Profiling API](/docs/reference/profiling-api_en.md). After the trial, run `make compose-dev-down` to stop and remove the development stack.
