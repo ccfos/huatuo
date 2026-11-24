@@ -149,10 +149,10 @@ quiesce_apt_updates() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package toml_repo='' toml_repo_package=''
-	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat "linux-headers-$(uname -r)")
+	# BPF builds use repository headers; tests load prebuilt distribution modules.
+	local -a deb_packages=(curl gdb fio mdadm xfsprogs build-essential libelf-dev kmod python3-toml stress-ng sysstat)
 	local -a rpm_packages=(
 		curl gdb fio mdadm xfsprogs gcc make elfutils-libelf-devel kmod kernel-headers stress-ng sysstat
-		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
 	local -a missing_toml_packages=()
@@ -250,7 +250,7 @@ install_test_dependencies() {
 			rpm -q "$package" > /dev/null 2>&1 || missing_toml_packages+=("$package")
 		done
 		if ((${#missing_toml_packages[@]})); then
-			# Keep optional TOML repositories out of kernel dependency resolution.
+			# Keep optional TOML repositories out of build dependency resolution.
 			if ! timeout 90 "$package_manager" --disablerepo='*' --enablerepo="$toml_repo" \
 				--setopt=timeout=10 --setopt=retries=0 install -y "${missing_toml_packages[@]}"; then
 				vm_log "$ID $toml_repo TOML packages unavailable; checking installed modules"
