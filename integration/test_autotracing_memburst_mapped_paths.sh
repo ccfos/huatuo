@@ -50,6 +50,19 @@ assert_burst_executable_path() {
 	assert_burst_mapped_path "${expected}"
 }
 
+assert_burst_mapped_jvm() {
+	local java_home=$1
+	assert_burst_executable_path "${java_home}/bin/java"
+	# JDKs can ship test JVMs; only the library mapped by this target matters.
+	jq -e --arg prefix "${java_home}/" '
+ [ .[] | select(endswith("/libjvm.so")) ] | unique
+ | length == 1 and all(.[]; startswith($prefix))
+' "${HUATUO_BAMAI_TEST_TMPDIR}/mapped-paths.json" > /dev/null || {
+		cat "${HUATUO_BAMAI_TEST_TMPDIR}/mapped-paths.json" >&2
+		fatal "target ${burst_runtime_pid} must map one libjvm.so from copied JDK ${java_home}"
+	}
+}
+
 assert_burst_mapped_snapshot() {
 	local language=$1
 	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
@@ -219,8 +232,7 @@ for memburst_path_case in ordinary consecutive_spaces tab; do
 			mv "${memburst_java_home}" "${memburst_path_runtime}"
 			memburst_java_home=${memburst_path_runtime}
 			burst_start_runtime java "${memburst_java_home}/bin/java"
-			memburst_java_library=$(find "${memburst_java_home}" -type f -name libjvm.so -print -quit)
-			assert_burst_mapped_path "${memburst_java_library}"
+			assert_burst_mapped_jvm "${memburst_java_home}"
 		fi
 		burst_capture_mapped_path "${memburst_path_language}"
 		log_info "PASS: ${memburst_path_mode} mapped pathname ${memburst_path_case}"
