@@ -22,7 +22,7 @@ Both `--output-path` and `--output-format` must be explicit. The declared defaul
 | `--aggr-interval` | `10` | All | Aggregation interval in seconds; cannot exceed duration |
 | `--freq`, `-F` | `99` | CPU | Samples per second; Java maximum: 1000 |
 | `--output-path` | Required | All | Local file, directory, or `stdout`; Unix socket for `remote-store`. End new directory paths with `/` |
-| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `json`, or `remote-store`; must be explicit together with `--output-path` |
+| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `json`, `speedscope`, `chrometrace`, or `remote-store`; `chrometrace` needs a time-based profile and is rejected for `--type=memory`; must be explicit together with `--output-path` |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
 | `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
