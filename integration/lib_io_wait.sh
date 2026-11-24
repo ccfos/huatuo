@@ -43,6 +43,7 @@ assert_io_wait_slowdown() {
 
 assert_io_wait_metrics() {
 	local collector="" disk="" operation="" namespace="" positive_windows=0 container_groups=null
+	local expected_containers=null
 	local is_idle=false is_warmup=false requires_other=false is_json=false document documents summary path
 	while (($#)); do
 		case $1 in
@@ -72,6 +73,10 @@ assert_io_wait_metrics() {
 			;;
 		--container-groups)
 			container_groups=$2
+			shift 2
+			;;
+		--expected-containers)
+			expected_containers=$2
 			shift 2
 			;;
 		--warmup)
@@ -108,6 +113,7 @@ assert_io_wait_metrics() {
 	summary=$(jq -s -e --arg collector "${collector}" --arg disk "${disk}" \
 		--arg operation "${operation}" --arg namespace "${namespace}" \
 		--argjson positive_windows "${positive_windows}" --argjson container_groups "${container_groups}" \
+		--argjson expected_containers "${expected_containers}" \
 		--argjson is_idle "${is_idle}" --argjson is_warmup "${is_warmup}" \
 		--argjson requires_other "${requires_other}" '
 		def abs: if . < 0 then -. else . end;
@@ -117,6 +123,13 @@ assert_io_wait_metrics() {
 		"delayed_io_count" as $count |
 		["hostname", "region", "disk", "operation"] as $common |
 		["container_id", "container_hostname", "container_namespace", "container_name", "container_type", "container_qos"] as $container |
+		assert_value($expected_containers == null or ($expected_containers | type == "object");
+			"expected wait containers must be an object keyed by container ID") |
+		assert_value($expected_containers == null or $container_groups == null or
+			$container_groups == ($expected_containers | length); "conflicting expected wait container counts") |
+		(if $expected_containers == null then $container_groups else ($expected_containers | length) end) as $container_groups |
+		($expected_containers // {} | keys) as $expected_ids |
+		(map(.source) | join(", ")) as $sources |
 		map(. as $document |
 			[.metrics[] | select(.name | startswith($prefix)) |
 				. + {suffix: (.name | ltrimstr($prefix))} |
@@ -143,13 +156,15 @@ assert_io_wait_metrics() {
 					"invalid wait value: " + (.raw_value | tostring)) |
 				assert_value(.field != "count" or .value == (.value | floor);
 					"noninteger wait count") |
-				if .is_container and $namespace != "" and .labels.container_namespace == $namespace then
+				.labels.container_id as $id |
+				if .is_container and $expected_containers != null and
+					($namespace == "" or .labels.container_namespace == $namespace or ($expected_containers | has($id))) then
 					assert_value(
-						(.labels.container_name == "reader-0" or
-						 ($container_groups == 2 and .labels.container_name == "reader-1")) and
-						.labels.container_hostname == ("huatuo-io-" + (.labels.container_name | ltrimstr("reader-"))) and
-						.labels.container_type == "normal" and .labels.container_qos == "besteffort";
-						"incorrect known-container labels")
+						$expected_containers | has($id);
+						"unknown wait container ID: \($id), expected=\($expected_ids | tojson), file=\($document.source)") |
+					(.labels | with_entries(select(.key | startswith("container_"))) | del(.container_id)) as $metadata |
+					assert_value($metadata == $expected_containers[$id];
+						"incorrect wait container metadata: id=\($id), expected=\($expected_containers[$id] | tojson), actual=\($metadata | tojson), file=\($document.source)")
 				else . end
 			] as $rows |
 			[.metrics[] | select(.name == "huatuo_bamai_scrape_collector_success" and
@@ -193,19 +208,24 @@ assert_io_wait_metrics() {
 					($namespace == "" or .labels.container_namespace == $namespace)) | .labels]}
 			end
 		) |
+		([.[].containers[].container_id] | unique) as $positive_ids |
 		{host_count: ([.[].count] | add), other_count: ([.[].other] | add),
 		 positive_windows: ([.[].positive] | add), container_groups: ([.[].containers[]] | unique | length),
 		 unconfirmed_windows: ([.[].unconfirmed] | add), healthy_windows: ([.[].healthy] | add)} |
+		if $expected_containers != null then
+			. + {missing_container_ids: ($expected_ids - $positive_ids)}
+		else . end |
 		assert_value(($is_idle | not) or .host_count == 0; "quiet intervals repeated old waits") |
 		assert_value($is_warmup or .positive_windows >= $positive_windows; "confirmed sustained waits lack positive output windows") |
 		assert_value($container_groups == null or .container_groups == $container_groups
 			or ($is_warmup and .container_groups < $container_groups);
-			"unexpected positive container groups") |
+			"unexpected positive container groups: expected=\($container_groups), actual=\(.container_groups), ids=\($positive_ids | tojson), files=\($sources)") |
 		assert_value($is_warmup or ($requires_other | not) or .other_count > 0; "confirmed unattributed waits lack Other output")
 	' <<< "${documents}") || return 1
 	jq 'del(.healthy_windows)' <<< "${summary}"
 	if [[ ${is_warmup} == true ]] && ! jq -e --argjson windows "${positive_windows}" \
-		--argjson groups "${container_groups}" --argjson other "${requires_other}" '
+		--argjson groups "${container_groups}" --argjson expected "${expected_containers}" --argjson other "${requires_other}" '
+		(if $expected == null then $groups else ($expected | length) end) as $groups |
 		.positive_windows >= $windows and ($groups == null or .container_groups == $groups)
 		and (($other | not) or .other_count > 0)
 	' <<< "${summary}" > /dev/null; then

@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # Combine two Kubernetes readers and one unattributed cgroup reader. Distinct
-# and shared Pod hostnames exercise public aggregation through real discovery.
+# and shared metadata must preserve independent container IDs through discovery.
 
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
@@ -294,27 +294,39 @@ assert_container_wait_jobs_completed() {
 }
 
 assert_container_wait_ready() {
-	local container_wait_phase=$1 expected=$2 deadline=$((SECONDS + 30)) attempt=0 directory status
+	local container_wait_phase=$1 deadline=$((SECONDS + 30)) attempt=0 directory status expected
 	io_container_phase="${container_wait_collector}/${container_wait_phase}"
 	container_wait_ready_dir=""
+	# Shared metadata recreates reader 1, so capture its current discovered ID.
+	expected=$(jq -nc --arg id0 "${container_ids[0]}" --arg id1 "${container_ids[1]}" \
+		--arg label0 "${container_labels[0]}" --arg label1 "${container_labels[1]}" --arg namespace "${POD_NAMESPACE}" '
+		if $id0 == $id1 then error("expected two distinct IO container IDs") else
+			[{id: $id0, label: $label0}, {id: $id1, label: $label1}] |
+			map({key: .id, value: {
+				container_name: ("reader-" + .label), container_hostname: ("huatuo-io-" + .label),
+				container_namespace: $namespace, container_type: "normal", container_qos: "besteffort"
+			}}) | from_entries
+		end
+	') || fatal "cannot prepare expected container identities for ${io_container_phase}"
 	while true; do
 		attempt=$((attempt + 1))
 		directory="${WAIT_WORK}/${container_wait_collector}/${container_wait_phase}-warmup-${attempt}"
 		mkdir -p "${directory}"
+		printf '%s\n' "${expected}" > "${directory}/expected-containers.json"
 		huatuo_bamai_metrics > "${directory}/before.metrics" || fatal "wait startup baseline scrape failed"
 		start_wait_jobs "${directory}"
 		assert_container_wait_jobs_completed
 		huatuo_bamai_metrics > "${directory}/after.metrics" || fatal "wait startup scrape failed"
 		status=0
 		assert_io_wait_metrics --collector "${container_wait_collector}" --disk "${container_wait_disk}" --operation read \
-			--warmup --positive-windows 1 --container-groups "${expected}" --namespace "${POD_NAMESPACE}" \
+			--warmup --positive-windows 1 --expected-containers "${expected}" --namespace "${POD_NAMESPACE}" \
 			--require-other "${directory}/after.metrics" > "${directory}/summary.json" || status=$?
 		if ((status == 0)); then
 			container_wait_ready_dir=${directory}
 			return 0
 		fi
-		((status == 3)) || fatal "invalid ${container_wait_collector}/${container_wait_phase} output during startup qualification"
-		((SECONDS < deadline)) || fatal "${container_wait_collector}/${container_wait_phase} did not produce healthy Host, Other and container waits before startup deadline"
+		((status == 3)) || fatal "invalid ${io_container_phase} output; inspect ${directory}/after.metrics and ${directory}/expected-containers.json"
+		((SECONDS < deadline)) || fatal "${io_container_phase} startup deadline: missing_container_ids=$(jq -c '.missing_container_ids' "${directory}/summary.json"); inspect ${directory}/summary.json"
 	done
 }
 
@@ -368,21 +380,19 @@ for container_wait_collector in "${collectors[@]}"; do
 	assert_container_wait_jobs_completed
 	mode_complete=1
 	for container_wait_phase in distinct shared; do
-		expected=2
 		if [[ ${container_wait_phase} == shared ]]; then
 			huatuo_bamai_stop
 			io_container_set_labels shared
 			container_wait_refresh_groups
 			io_test_start_bamai write_config_bamai_io_container_wait --region dev --disable-storage --log-debug
 			assert_container_io_ready "${container_wait_collector}/shared" 0 1
-			expected=1
 		fi
 		if ! container_wait_control 1; then
 			log_info "SKIP ${container_wait_collector} container waits: controller settings could not be established and read back"
 			mode_complete=0
 			break
 		fi
-		assert_container_wait_ready "${container_wait_phase}" "${expected}"
+		assert_container_wait_ready "${container_wait_phase}"
 		phase_status=0
 		assert_container_wait_inputs "${container_wait_phase}" || phase_status=$?
 		container_wait_control 0 || fatal "cannot restore IO controls after ${container_wait_phase}"
@@ -391,14 +401,14 @@ for container_wait_collector in "${collectors[@]}"; do
 			break
 		fi
 		((phase_status == 0)) || fatal "container wait phase failed: ${container_wait_collector}/${container_wait_phase}"
-		log_info "PASS ${container_wait_collector}/${container_wait_phase}: Host=Other+containers with ${expected} public container groups"
+		log_info "PASS ${container_wait_collector}/${container_wait_phase}: Host=Other+containers with two independent container IDs"
 	done
 	container_wait_control 0 || fatal "cannot restore owned IO controls"
 	huatuo_bamai_stop
 	cp "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${WAIT_WORK}/${container_wait_collector}/huatuo.log"
 	if ((mode_complete)); then
 		passed=$((passed + 1))
-		log_info "W04/W05 ${container_wait_collector}: distinct/shared labels and Other aggregation verified"
+		log_info "W04/W05 ${container_wait_collector}: independent IDs with distinct/shared metadata and Other aggregation verified"
 	fi
 done
 ((passed)) || skip "no container waiting mode established all required external workloads"
