@@ -66,6 +66,10 @@ A flame graph shows call paths and their cumulative values. Width represents CPU
 
 View results in Grafana or export them locally as SVG, folded stacks, or JSON for offline analysis and further processing.
 
+Use `--output-format=tui` to open an interactive terminal flame graph after collection. Press `v` to cycle through the graph, the full frame list, and Top Table. In the graph, Up selects the parent, Down selects the first child or returns from a leaf to the root of the current view, and Left/Right select adjacent frames at the same depth. The frame list includes frames narrower than one terminal column. Up and Down move one row at a time in the list and Top Table.
+
+Enter zooms in, Backspace zooms out, `r` returns to the full graph, and `/` searches. Press `g` in the graph or frame list to group stacks by sample fields, such as `cpu,comm`. With a file or directory set via `--output-path`, pressing `q` saves a gob report that you can reopen by passing its path to `--tui-report`. Omit `--output-path` or use `stdout` or `-` for terminal viewing only.
+
 ### Collection windows
 
 Native CPU, native memory, and Java collection process data periodically; Python produces one result when collection ends. Window timestamps describe reception and aggregation intervals, not exact execution times for individual samples.

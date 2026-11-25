@@ -226,17 +226,27 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	if !ctx.IsSet("output-path") || !ctx.IsSet("output-format") {
-		return fmt.Errorf("--output-path and --output-format must both be specified")
+	format, path := ctx.String("output-format"), ctx.String("output-path")
+	if format == string(output.FormatTUI) {
+		if err := output.ValidateTUIDestination(path); err != nil {
+			return err
+		}
+	} else {
+		if !ctx.IsSet("output-path") || !ctx.IsSet("output-format") {
+			return fmt.Errorf("--output-path and --output-format must both be specified")
+		}
+		if err := output.ValidateDestination(path); err != nil {
+			return err
+		}
 	}
-	if err := output.ValidateDestination(ctx.String("output-path")); err != nil {
-		return err
-	}
-	if ctx.String("output-format") == "remote-store" && ctx.String("task-id") == "" {
+	if format == string(output.FormatRemoteStore) && ctx.String("task-id") == "" {
 		return fmt.Errorf("--task-id must not be empty when --output-format=remote-store")
 	}
-	if err := validateOutputFormat(ctx.String("output-format"), profiling.Type(ctx.String("type"))); err != nil {
+	if err := validateOutputFormat(format, profiling.Type(ctx.String("type"))); err != nil {
 		return err
+	}
+	if format == string(output.FormatTUI) {
+		return output.ValidateTUITerminal()
 	}
 
 	return nil
@@ -327,7 +337,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 
 func validateOutputFormat(format string, profileType profiling.Type) error {
 	switch format {
-	case "collapsed", "flamegraph", "svg", "json", "speedscope", "remote-store":
+	case "collapsed", "flamegraph", "svg", "tui", "json", "speedscope", "remote-store":
 		return nil
 	case "chrometrace":
 		// The trace formatter derives event durations from the sample unit, and

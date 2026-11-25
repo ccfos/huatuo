@@ -16,15 +16,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
+	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/utils/bytesutil"
 
@@ -76,10 +79,15 @@ func findOrAdd(strA string, b []string) (int, []string) {
 	return index, b
 }
 
-func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
+// walkPerfStacks visits root-first stacks. The visitor borrows frames only
+// for the duration of the call.
+func walkPerfStacks(b bpf.BPF, visit func(frames []string, weight int64) error) error {
 	items, err := b.DumpMapByName("counts")
-	if err != nil || items == nil {
-		return nil, err
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return nil
 	}
 
 	var keyValuePairs []struct {
@@ -87,19 +95,14 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 		Value uint64
 	}
 
-	u := symbol.NewUsymResolver()
 	for _, v := range items {
 		ed := eventdata{}
 		var count uint64
-		buf := bytes.NewReader(v.Key)
-		err := binary.Read(buf, binary.LittleEndian, &ed)
-		if err != nil {
-			return nil, err
+		if err := binary.Read(bytes.NewReader(v.Key), binary.LittleEndian, &ed); err != nil {
+			return fmt.Errorf("decode counts map key: %w", err)
 		}
-		buf = bytes.NewReader(v.Value)
-		err = binary.Read(buf, binary.LittleEndian, &count)
-		if err != nil {
-			return nil, err
+		if err := binary.Read(bytes.NewReader(v.Value), binary.LittleEndian, &count); err != nil {
+			return fmt.Errorf("decode counts map value: %w", err)
 		}
 
 		keyValuePairs = append(keyValuePairs, struct {
@@ -114,40 +117,65 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 		return keyValuePairs[i].Value < keyValuePairs[j].Value
 	})
 
+	u := symbol.NewUsymResolver()
+	frames := make([]string, 0, 1+2*perfStackDepth)
+	for _, kv := range keyValuePairs {
+		frames = append(frames[:0], bytesutil.ToStr(kv.Key.Name[:]))
+		if kv.Key.UstackSize > 0 {
+			for _, frame := range u.UsymStackStrsReversed(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize)) {
+				if frame != "" {
+					frames = append(frames, frame)
+				}
+			}
+		}
+		if kv.Key.KstackSize > 0 {
+			for _, frame := range symbol.KsymStackStrsReversed(kv.Key.Kstack[:], perfStackDepth) {
+				if frame != "" {
+					frames = append(frames, frame+"_[k]")
+				}
+			}
+		}
+		if err := visit(frames, int64(kv.Value)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runTUI(ctx context.Context, b bpf.BPF) error {
+	tree := flamegraphtui.NewStackTree(ctx)
+	path := []string{"total"}
+	if err := walkPerfStacks(b, func(frames []string, weight int64) error {
+		path = append(path[:1], frames...)
+		return tree.Add(path, weight)
+	}); err != nil {
+		return fmt.Errorf("read perf stacks: %w", err)
+	}
+
+	model, err := tree.BuildModel()
+	if err != nil {
+		return fmt.Errorf("prepare perf TUI: %w", err)
+	}
+
+	_, err = flamegraphtui.Run(ctx, model)
+	return err
+}
+
+func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	var stacktraces []*ingestv1.StacktraceSample
 	var functionNames []string
-
-	for k := range keyValuePairs {
-		sample := &ingestv1.StacktraceSample{}
-		var index int
-		kv := keyValuePairs[k]
-		sample.Value = int64(kv.Value)
-
-		if kv.Key.KstackSize > 0 {
-			frames := symbol.KsymStackStrs(kv.Key.Kstack[:], perfStackDepth)
-			for _, frame := range frames {
-				if frame != "" {
-					index, functionNames = findOrAdd(frame+"_[k]", functionNames)
-					sample.FunctionIds = append(sample.FunctionIds, int32(index))
-				}
-			}
+	err := walkPerfStacks(b, func(frames []string, weight int64) error {
+		sample := &ingestv1.StacktraceSample{Value: weight}
+		for _, frame := range slices.Backward(frames) {
+			var index int
+			index, functionNames = findOrAdd(frame, functionNames)
+			sample.FunctionIds = append(sample.FunctionIds, int32(index))
 		}
-
-		if kv.Key.UstackSize > 0 {
-			frames := u.UsymStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
-			for _, frame := range frames {
-				if frame != "" {
-					index, functionNames = findOrAdd(frame, functionNames)
-					sample.FunctionIds = append(sample.FunctionIds, int32(index))
-				}
-			}
-		}
-
-		sttitle := bytesutil.ToStr(kv.Key.Name[:])
-		index, functionNames = findOrAdd(sttitle, functionNames)
-		sample.FunctionIds = append(sample.FunctionIds, int32(index))
-
 		stacktraces = append(stacktraces, sample)
+		return nil
+	})
+	if err != nil || len(stacktraces) == 0 {
+		return nil, err
 	}
 
 	// Convert data formats

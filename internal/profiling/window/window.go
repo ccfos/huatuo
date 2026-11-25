@@ -38,17 +38,22 @@ func Validate(w *types.AggregationWindow) error {
 		return fmt.Errorf("profiling window requires a positive timestamp and nonnegative duration")
 	}
 
+	for reason := range w.DroppedSamples {
+		if reason != types.DropReasonCollection && reason != types.DropReasonAggregationQueue {
+			return fmt.Errorf("unsupported profiling drop reason %q", reason)
+		}
+	}
+
+	return ValidateAggregated(a)
+}
+
+// ValidateAggregated verifies the dictionary references in a decoded profile.
+func ValidateAggregated(a *types.AggregatedProfile) error {
 	framesOverflow := uint64(len(a.Frames)) > math.MaxUint32
 	stacksOverflow := uint64(len(a.Stacks)) > math.MaxUint32
 	labelsOverflow := uint64(len(a.LabelSets)) > math.MaxUint32
 	if framesOverflow || stacksOverflow || labelsOverflow {
 		return fmt.Errorf("profiling dictionary exceeds uint32 capacity")
-	}
-
-	for reason := range w.DroppedSamples {
-		if reason != types.DropReasonCollection && reason != types.DropReasonAggregationQueue {
-			return fmt.Errorf("unsupported profiling drop reason %q", reason)
-		}
 	}
 
 	for i, stack := range a.Stacks {

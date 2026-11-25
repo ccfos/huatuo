@@ -16,6 +16,8 @@ package main
 
 import "github.com/urfave/cli/v2"
 
+const tuiReportFlag = "tui-report"
+
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "type",
@@ -103,8 +105,12 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format: collapsed|flamegraph|svg|json|speedscope|chrometrace|remote-store",
+		Usage: "Output format: collapsed|flamegraph|svg|tui|json|speedscope|chrometrace|remote-store",
 		Value: "collapsed",
+	},
+	&cli.StringFlag{
+		Name:  tuiReportFlag,
+		Usage: "Open a saved profiler report from `FILE` in the terminal",
 	},
 	&cli.StringFlag{
 		Name:  "log-level",
