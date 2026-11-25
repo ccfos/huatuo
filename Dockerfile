@@ -66,4 +66,4 @@ COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 
 FROM run-${BUILD_MODE:-static}
-CMD ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf"]
+CMD ["./bin/huatuo-bamai", "--region", "pre-test", "--config", "huatuo-bamai.conf"]

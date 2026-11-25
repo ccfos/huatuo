@@ -77,6 +77,13 @@ struct {
 	__type(value, u64);
 } file_io_dropped SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, u32);
+} file_io_active SEC(".maps");
+
 struct hash_key {
 	dev_t dev;
 	u32 _pad;
@@ -352,12 +359,20 @@ get_file_io_entry(struct io_key *key, struct file *file)
 	return entry;
 }
 
+static __always_inline bool file_io_is_active(void)
+{
+	u32 zero = 0;
+	u32 *active = bpf_map_lookup_elem(&file_io_active, &zero);
+
+	return active && *active;
+}
+
 static __always_inline void record_file_io_drop(void)
 {
 	u32 zero = 0;
 	u64 *dropped = bpf_map_lookup_elem(&file_io_dropped, &zero);
 
-	if (dropped)
+	if (dropped && file_io_is_active())
 		__sync_fetch_and_add(dropped, 1);
 }
 
@@ -387,6 +402,9 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u32 file_flags = 0;
 	u64 inode_number = 0;
+
+	if (!file_io_is_active())
+		return 0;
 
 	/* A previous operation still present here missed its return probe. */
 	if (bpf_map_lookup_elem(&file_io_start_map, &pid_tgid)) {
@@ -456,6 +474,9 @@ static __always_inline int bpf_file_read_write_return(struct pt_regs *ctx)
 	struct io_data *entry;
 	s64 result = PT_REGS_RC(ctx);
 	u64 bytes;
+
+	if (!file_io_is_active())
+		return 0;
 
 	pending = bpf_map_lookup_elem(&file_io_start_map, &pid_tgid);
 	if (!pending)

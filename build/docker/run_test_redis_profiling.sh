@@ -29,7 +29,7 @@ readonly REDIS_NODE_TOKEN='huatuo-dev-node-token'
 readonly REDIS_GRAFANA_BASE='http://127.0.0.1:3000'
 readonly REDIS_GRAFANA_AUTH='admin:admin'
 readonly REDIS_TARGET_HOST='huatuo-dev-node'
-readonly REDIS_REGION='example'
+readonly REDIS_REGION='pre-test'
 readonly REDIS_CRI_ENDPOINT=${CONTAINER_RUNTIME_ENDPOINT:-unix:///run/containerd/containerd.sock}
 
 write_config_redis_pod() {

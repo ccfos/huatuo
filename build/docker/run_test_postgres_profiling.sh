@@ -29,7 +29,7 @@ readonly POSTGRES_NODE_TOKEN='huatuo-dev-node-token'
 readonly POSTGRES_GRAFANA_BASE='http://127.0.0.1:3000'
 readonly POSTGRES_GRAFANA_AUTH='admin:admin'
 readonly POSTGRES_TARGET_HOST='huatuo-dev-node'
-readonly POSTGRES_REGION='example'
+readonly POSTGRES_REGION='pre-test'
 readonly POSTGRES_CRI_ENDPOINT=${CONTAINER_RUNTIME_ENDPOINT:-unix:///run/containerd/containerd.sock}
 
 write_config_postgres_pod() {

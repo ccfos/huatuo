@@ -70,6 +70,10 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 	}
 	defer reader.Close()
 
+	if err := setFileIOAccounting(b, 1); err != nil {
+		return nil, err
+	}
+
 	// Probe setup must not consume the requested capture window.
 	timer := time.AfterFunc(time.Duration(cfg.durationSecond)*time.Second, cancel)
 	defer timer.Stop()
@@ -84,8 +88,10 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 func collectReport(b bpf.BPF, reader bpf.PerfEventReader, cfg ioConfig, started time.Time) (*types.IOTracingSnapshot, error) {
 	stalls, collectErr := collectStalls(reader, cfg.maxStack)
 
+	// Detach order is unspecified; stop pairing before either side disappears.
+	stopErr := setFileIOAccounting(b, 0)
 	if err := b.Detach(); err != nil {
-		return nil, fmt.Errorf("detach bpf: %w", err)
+		return nil, errors.Join(stopErr, fmt.Errorf("detach bpf: %w", err))
 	}
 
 	// The configured deadline is not the sample duration after an early exit.
@@ -99,6 +105,10 @@ func collectReport(b bpf.BPF, reader bpf.PerfEventReader, cfg ioConfig, started 
 	if collectErr != nil {
 		snapshot.FailureReason = types.IOTracingFailureReader
 	}
+	if stopErr != nil && snapshot.FailureReason == "" {
+		snapshot.FailureReason = types.IOTracingFailureAccounting
+	}
+	collectErr = errors.Join(collectErr, stopErr)
 	if err := fileIOAccountingError(b); err != nil {
 		if snapshot.FailureReason == "" {
 			snapshot.FailureReason = types.IOTracingFailureAccounting
@@ -106,6 +116,15 @@ func collectReport(b bpf.BPF, reader bpf.PerfEventReader, cfg ioConfig, started 
 		collectErr = errors.Join(collectErr, err)
 	}
 	return snapshot, collectErr
+}
+
+func setFileIOAccounting(b bpf.BPF, active uint32) error {
+	value := make([]byte, 4)
+	binary.LittleEndian.PutUint32(value, active)
+	if err := b.WriteMapItems(b.MapIDByName("file_io_active"), []bpf.MapItem{{Key: make([]byte, 4), Value: value}}); err != nil {
+		return fmt.Errorf("set file IO accounting: %w", err)
+	}
+	return nil
 }
 
 // Report failed inserts and stale pairs; calls still in flight are not completions.

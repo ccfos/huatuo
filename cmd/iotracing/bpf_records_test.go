@@ -205,11 +205,16 @@ type reportTestBPF struct {
 	t             *testing.T
 	rows          []bpf.MapItem
 	detached      bool
+	stopped       bool
+	stopErr       error
 	dropped       uint64
 	accountingErr error
 }
 
 func (b *reportTestBPF) Detach() error {
+	if !b.stopped {
+		b.t.Fatal("detach before stopping file IO accounting")
+	}
 	b.detached = true
 	return nil
 }
@@ -227,10 +232,37 @@ func (b *reportTestBPF) DumpMapByName(name string) ([]bpf.MapItem, error) {
 
 func (b *reportTestBPF) MapIDByName(name string) uint32 {
 	b.t.Helper()
-	if name != "file_io_dropped" {
+	switch name {
+	case "file_io_dropped":
+		return 1
+	case "file_io_active":
+		return 2
+	default:
 		b.t.Fatalf("unexpected map: %s", name)
+		return 0
 	}
-	return 1
+}
+
+func (b *reportTestBPF) WriteMapItems(id uint32, items []bpf.MapItem) error {
+	b.t.Helper()
+	if b.detached || id != 2 || len(items) != 1 || len(items[0].Key) != 4 ||
+		binary.LittleEndian.Uint32(items[0].Key) != 0 || len(items[0].Value) != 4 ||
+		binary.LittleEndian.Uint32(items[0].Value) != 0 {
+		b.t.Fatal("invalid capture stop or stop after detach")
+	}
+	b.stopped = true
+	return b.stopErr
+}
+
+func TestCollectReportDetachesAfterAccountingStopFailure(t *testing.T) {
+	object := &reportTestBPF{t: t, stopErr: syscall.EIO}
+	snapshot, err := collectReport(object,
+		&reportTestReader{hasRead: true, readErr: types.ErrExitByCancelCtx},
+		ioConfig{}, time.Now())
+	require.ErrorIs(t, err, syscall.EIO)
+	require.True(t, object.detached)
+	require.NotNil(t, snapshot)
+	require.Equal(t, types.IOTracingFailureAccounting, snapshot.FailureReason)
 }
 
 func (b *reportTestBPF) ReadMap(id uint32, key []byte) ([]byte, error) {

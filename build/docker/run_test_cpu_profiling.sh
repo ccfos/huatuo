@@ -30,7 +30,7 @@ readonly CPU_PROFILER_NODE_TOKEN='huatuo-dev-node-token'
 readonly CPU_PROFILER_GRAFANA_BASE='http://127.0.0.1:3000'
 readonly CPU_PROFILER_GRAFANA_AUTH='admin:admin'
 readonly CPU_PROFILER_TARGET_HOST='huatuo-dev-node'
-readonly CPU_PROFILER_REGION='example'
+readonly CPU_PROFILER_REGION='pre-test'
 readonly CPU_PROFILER_KUBECTL=(kubectl --request-timeout=10s)
 
 usage() {
