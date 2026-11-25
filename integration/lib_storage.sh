@@ -73,8 +73,13 @@ storage_start_instance() {
 	STORAGE_USERNAME=""
 	STORAGE_PASSWORD=""
 	case ${profile} in
-	default)
-		environment+=(--env xpack.security.enabled=false --env ES_JAVA_OPTS=-Xms512m\ -Xmx512m)
+	default | profiling_control)
+		local heap=512m
+		if [[ ${profile} == profiling_control ]]; then
+			# Result commits need headroom for bulk writes during the lifecycle test.
+			heap=1g
+		fi
+		environment+=(--env xpack.security.enabled=false --env "ES_JAVA_OPTS=-Xms${heap} -Xmx${heap}")
 		;;
 	elasticsearch_v7)
 		image="${STORAGE_ES7_IMAGE}"
@@ -102,7 +107,7 @@ storage_start_instance() {
 
 	# Compatibility cases verify the published images, including their pullability.
 	started=${SECONDS}
-	if [[ ${profile} != default ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
+	if [[ ${profile} != default && ${profile} != profiling_control ]] || ! docker image inspect "${image}" > /dev/null 2>&1; then
 		log_info "pulling storage image: ${image}"
 		if ! timeout 5m docker pull "${image}" \
 			> "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-pull.log" 2>&1; then

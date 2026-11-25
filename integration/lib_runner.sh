@@ -104,7 +104,6 @@ declare -A runner_test_bamai_startup=(
 declare -A runner_shared_storage_tests=(
 	["integration/test_apiserver_continuous_profiling_api.sh"]=1
 	["integration/test_apiserver_continuous_profiling_concurrent_jobs.sh"]=1
-	["integration/test_apiserver_continuous_profiling_control.sh"]=1
 	["integration/test_apiserver_job_recovery.sh"]=1
 	["integration/test_apiserver_profile_filters.sh"]=1
 	["integration/test_autotracing_irqtracing.sh"]=1

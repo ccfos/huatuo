@@ -438,7 +438,7 @@ skip) skip "fixture skip after storage startup";;
 failure) fatal "fixture failure after storage startup";;
 esac
 EOF
-	cp "${RUNNER_FIXTURE}/integration/"test_apiserver_continuous_profiling_{api,control}.sh
+	cp "${RUNNER_FIXTURE}/integration/"test_apiserver_continuous_profiling_{api,concurrent_jobs}.sh
 	for runner_mode in success skip failure; do
 		export runner_storage_mode=${runner_mode}
 		: > "${RUNNER_FIXTURE}/storage-lifecycle"

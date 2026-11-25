@@ -74,7 +74,7 @@ EOF
 }
 
 start_control_stack() {
-	storage_start
+	storage_start profiling_control
 	integration_huatuo_bamai_start \
 		write_config_bamai_profiling_control \
 		--region integration \
