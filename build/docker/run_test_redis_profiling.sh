@@ -167,7 +167,7 @@ main() {
 	local output_dir=$1 node address batches namespace container_id
 	require_commands kubectl ip curl crictl
 	redis_stage=development-stack
-	require_development_stack "$output_dir" "$REDIS_NODE_BASE" "$REDIS_API_BASE"
+	require_endpoints_ready "$output_dir" "$REDIS_NODE_BASE" "$REDIS_API_BASE"
 	node=$(require_local_kubernetes_node "$output_dir")
 	redis_stage=image-pull
 	cri_images_ensure_present "$output_dir" "$REDIS_CRI_ENDPOINT" "$REDIS_IMAGE" "$REDIS_MEMTIER_IMAGE"

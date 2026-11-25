@@ -186,7 +186,7 @@ main() {
 	offcpu) profile_type='process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds' ;;
 	esac
 	require_commands kubectl ip curl crictl
-	require_development_stack "$output_dir" "$POSTGRES_NODE_BASE" "$POSTGRES_API_BASE"
+	require_endpoints_ready "$output_dir" "$POSTGRES_NODE_BASE" "$POSTGRES_API_BASE"
 	node=$(require_local_kubernetes_node "$output_dir")
 	cri_images_ensure_present "$output_dir" "$POSTGRES_CRI_ENDPOINT" "$POSTGRES_IMAGE"
 	namespace="huatuo-postgres-${output_dir##*.}"

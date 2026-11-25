@@ -218,13 +218,13 @@ grafana_profiling_url_build() {
  +"&to="+(.time_range.to_ms|tostring)' "$profile"
 }
 
-require_development_stack() {
+require_endpoints_ready() {
 	local output_dir=$1 node_base=$2 api_base=$3
 	if ! curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 2 --max-time 3 "${node_base}/readyz" \
 		> "${output_dir}/node-ready.response" 2> "${output_dir}/node-ready.log" \
 		|| ! curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 2 --max-time 3 "${api_base}/readyz" \
 			> "${output_dir}/api-ready.response" 2> "${output_dir}/api-ready.log"; then
-		printf 'Huatuo development stack is not ready. Run make compose-dev-up first; inspect %s/*ready.log if it still fails.\n' "$output_dir" >&2
+		printf 'Node or API server readiness endpoint check failed. Run make compose-dev-up first; inspect %s/*ready.log if it still fails.\n' "$output_dir" >&2
 		return 1
 	fi
 }

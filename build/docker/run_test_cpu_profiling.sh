@@ -100,7 +100,7 @@ run_scope() {
 	oncpu) profile_type='process_cpu:cpu:nanoseconds:cpu:nanoseconds' ;;
 	offcpu) profile_type='process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds' ;;
 	esac
-	require_development_stack "$output_dir" "$CPU_PROFILER_NODE_BASE" "$CPU_PROFILER_API_BASE" || return 1
+	require_endpoints_ready "$output_dir" "$CPU_PROFILER_NODE_BASE" "$CPU_PROFILER_API_BASE" || return 1
 	container_id=''
 	if [[ "$scope" == "$CPU_PROFILER_SCOPE_CONTAINER" ]]; then
 		node=$(require_local_kubernetes_node "$output_dir") || return 1
