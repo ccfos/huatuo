@@ -100,7 +100,7 @@ func ValidateLabels(labels []ProfileLabel) error {
 
 func singleProfileLabel(name string) bool {
 	switch name {
-	case "pid", "cpu", "comm", "lock_address", "irq", "softirq_vector", "offcpu_reason":
+	case "pid", "cpu", "comm", "lock_address", "irq_context", "irq_type", "irq_vector", "offcpu_reason":
 		return true
 	default:
 		return false
@@ -136,7 +136,7 @@ func validateProfileLabel(label *ProfileLabel) error {
 	value := label.StringValue
 	var digits [20]byte // Enough for a uint64 in decimal or hexadecimal without heap allocation.
 	switch label.Name {
-	case "pid", "cpu", "softirq_vector":
+	case "pid", "cpu", "irq_vector":
 		n, err := strconv.ParseUint(value, 10, 32)
 		if err != nil || string(strconv.AppendUint(digits[:0], n, 10)) != value {
 			return fmt.Errorf("label %q requires a canonical unsigned decimal: %q", label.Name, value)
@@ -150,9 +150,13 @@ func validateProfileLabel(label *ProfileLabel) error {
 		if err != nil || string(strconv.AppendUint(digits[:0], n, 16)) != value[2:] {
 			return fmt.Errorf("lock_address requires canonical hexadecimal: %q", value)
 		}
-	case "irq":
+	case "irq_context":
 		if value != "source" && value != "victim" {
-			return fmt.Errorf("irq requires source or victim: %q", value)
+			return fmt.Errorf("irq_context requires source or victim: %q", value)
+		}
+	case "irq_type":
+		if value != "softirq" && value != "hardirq" {
+			return fmt.Errorf("irq_type requires softirq or hardirq: %q", value)
 		}
 	case "offcpu_reason":
 		if value == "" {

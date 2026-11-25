@@ -458,7 +458,7 @@ func TestSoftIRQWindowUsesCommonProfileAndQuality(t *testing.T) {
 	if err := p.Enqueue(t.Context(), &SampleBatch{
 		Samples: []aggregation.Sample{{
 			UserFrames: frames("raise"),
-			Labels:     []types.ProfileLabel{types.ProfileCPULabel(2), types.ProfileStringLabel("irq", "source")},
+			Labels:     []types.ProfileLabel{types.ProfileCPULabel(2), types.ProfileStringLabel("irq_context", "source")},
 			Value:      7,
 		}},
 		DroppedSamples: map[string]uint64{types.DropReasonCollection: 3},

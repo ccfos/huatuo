@@ -135,9 +135,11 @@ irq_profile_selector=$(jq -nr --arg id "${irq_profile_id}" --arg type "${IRQ_PRO
 irq_profile_query=$(jq -nc --arg s "${irq_profile_selector}" '{matchers:[$s],end:"4102444800000"}')
 assert_profile_query "${APISERVER_ADDR}" "${API_TOKEN}" LabelNames "${irq_profile_query}" \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-labels.json"
-jq -e '.names | index("irq") != null and index("softirq_vector") != null and index("cpu") != null' \
+jq -e '.names | index("irq_context") != null and index("irq_type") != null and index("irq_vector") != null and
+    index("cpu") != null and index("pid") != null and index("comm") != null and
+    index("irq") == null and index("softirq_vector") == null' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-labels.json" > /dev/null || fatal "IRQ sample labels are missing"
-for irq_profile_label in irq softirq_vector cpu; do
+for irq_profile_label in irq_context irq_type irq_vector cpu pid comm; do
 	irq_profile_query=$(jq -nc --arg s "${irq_profile_selector}" --arg name "${irq_profile_label}" \
 		'{name:$name,matchers:[$s],end:"4102444800000"}')
 	assert_profile_query "${APISERVER_ADDR}" "${API_TOKEN}" LabelValues "${irq_profile_query}" \
@@ -147,12 +149,20 @@ for irq_profile_label in irq softirq_vector cpu; do
 done
 jq -e --arg cpu "${IRQ_PROFILE_CPU}" '.names == [$cpu]' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-cpu.json" > /dev/null || fatal "IRQ collected a CPU outside the selection"
-irq_profile_query=$(jq -nc --arg type "${IRQ_PROFILE_TYPE}" --arg id "${irq_profile_id}" \
-	'{profileTypeID:$type,labelSelector:("{scope=\"host\",id="+($id|tojson)+",irq=\"source\"}"),end:"4102444800000"}')
-assert_profile_query "${APISERVER_ADDR}" "${API_TOKEN}" SelectMergeStacktraces "${irq_profile_query}" \
-	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-flamegraph.json"
-jq -e '.flamegraph.total | tonumber > 0' "${HUATUO_BAMAI_TEST_TMPDIR}/irq-flamegraph.json" > /dev/null \
-	|| fatal "IRQ source filter returned no samples"
+jq -e '.names == ["softirq"]' "${HUATUO_BAMAI_TEST_TMPDIR}/irq-irq_type.json" > /dev/null \
+	|| fatal "IRQ type is not softirq"
+jq -e '.names | index("source") != null and all(.[]; . == "source" or . == "victim")' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-irq_context.json" > /dev/null || fatal "IRQ contexts are invalid"
+irq_profile_vector=$(jq -er '.names[0]' "${HUATUO_BAMAI_TEST_TMPDIR}/irq-irq_vector.json")
+for irq_profile_filter in 'irq_context="source"' "irq_type=\"softirq\",irq_vector=\"${irq_profile_vector}\""; do
+	irq_profile_query=$(jq -nc --arg type "${IRQ_PROFILE_TYPE}" --arg id "${irq_profile_id}" \
+		--arg filter "${irq_profile_filter}" \
+		'{profileTypeID:$type,labelSelector:("{scope=\"host\",id="+($id|tojson)+","+$filter+"}"),end:"4102444800000"}')
+	assert_profile_query "${APISERVER_ADDR}" "${API_TOKEN}" SelectMergeStacktraces "${irq_profile_query}" \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/irq-flamegraph.json"
+	jq -e '.flamegraph.total | tonumber > 0' "${HUATUO_BAMAI_TEST_TMPDIR}/irq-flamegraph.json" > /dev/null \
+		|| fatal "IRQ filter ${irq_profile_filter} returned no samples"
+done
 
 storage_request "${HUATUO_BAMAI_TEST_TMPDIR}/irq-metadata.json" \
 	-H 'Content-Type: application/json' \

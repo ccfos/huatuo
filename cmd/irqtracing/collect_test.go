@@ -225,7 +225,7 @@ func TestEnqueueStackMapFrameCount(t *testing.T) {
 			assert.Empty(t, items[i].UserFrames)
 			assert.Empty(t, items[i].KernelFrames)
 			assert.Contains(t, items[i].Labels, types.ProfileCPULabel(uint32(i)))
-			assert.Contains(t, items[i].Labels, types.ProfileStringLabel("irq", "source"))
+			assert.Contains(t, items[i].Labels, types.ProfileStringLabel("irq_context", "source"))
 		}
 
 		assert.Equal(t, int64(3), items[0].Value+items[1].Value)
@@ -446,9 +446,16 @@ func TestEnqueueIRQStacks(t *testing.T) {
 		)
 		assert.NoError(t, err)
 		require.Len(t, samples, 2)
-		assert.Contains(t, samples[0].Labels, types.ProfileStringLabel("irq", "source"))
+		for i := range samples {
+			assert.Len(t, samples[i].Labels, 6)
+			assert.Contains(t, samples[i].Labels, types.ProfileStringLabel("irq_type", "softirq"))
+			assert.Contains(t, samples[i].Labels, types.ProfileStringLabel("irq_vector", "3"))
+			assert.Contains(t, samples[i].Labels, types.ProfileCPULabel(0))
+		}
+
+		assert.Contains(t, samples[0].Labels, types.ProfileStringLabel("irq_context", "source"))
 		assert.Contains(t, samples[0].Labels, types.ProfileStringLabel("comm", "raiser"))
-		assert.Contains(t, samples[1].Labels, types.ProfileStringLabel("irq", "victim"))
+		assert.Contains(t, samples[1].Labels, types.ProfileStringLabel("irq_context", "victim"))
 		assert.Contains(t, samples[1].Labels, types.ProfilePIDLabel(22))
 		values := []int64{samples[0].Value, samples[1].Value}
 		slices.Sort(values)

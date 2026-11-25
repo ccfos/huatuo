@@ -129,7 +129,7 @@ assert_irqtracing_dropped_samples() {
         .dropped_samples.collection > 0 and
         ($p.sample | length) > 0 and $p.duration_nanos > 0 and
         all($p.sample[];
-            sample_label($p; "irq") != "victim" or
+            sample_label($p; "irq_context") != "victim" or
             (sample_label($p; "comm") | startswith("ksoftirqd") | not))
     ' "${result_file}" > /dev/null; then
 		log_error "expected an IRQ profile with collection loss and no ksoftirqd victim: ${result_file}"

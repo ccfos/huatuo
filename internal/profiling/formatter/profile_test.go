@@ -76,18 +76,23 @@ func TestDisplayLabelsNamesSoftIRQVectors(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		got := DisplayLabels(
-			nil,
-			[]types.ProfileLabel{types.ProfileStringLabel(
-				"softirq_vector",
-				strconv.FormatUint(
-					uint64(tt.vec),
-					10,
-				),
-			)},
-		)
-		if got[0] != "softirq_vector="+strconv.Quote(tt.want) {
-			t.Fatal(got)
+		for _, irqType := range []string{"softirq", "hardirq", ""} {
+			t.Run(strconv.FormatUint(uint64(tt.vec), 10)+"/"+irqType, func(t *testing.T) {
+				labels := []types.ProfileLabel{types.ProfileStringLabel("irq_vector", strconv.FormatUint(uint64(tt.vec), 10))}
+				want := strconv.FormatUint(uint64(tt.vec), 10)
+				if irqType != "" {
+					labels = append(labels, types.ProfileStringLabel("irq_type", irqType))
+				}
+
+				if irqType == "softirq" {
+					want = tt.want
+				}
+
+				got := DisplayLabels(nil, labels)
+				if got[0] != "irq_vector="+strconv.Quote(want) {
+					t.Fatalf("DisplayLabels() = %v, want irq_vector=%q", got, want)
+				}
+			})
 		}
 	}
 }

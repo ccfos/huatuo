@@ -83,8 +83,20 @@ Use `--output-format json --output-path irqtracing.json` to save the same window
 }
 ```
 
-`profile` uses pprof format. Samples distinguish roles with `irq=source|victim`
-and retain process, CPU, and softirq-vector labels. Kernel frames use the `_[k]` suffix.
+`profile` uses pprof format with these sample labels:
+
+| Label | Meaning |
+| --- | --- |
+| `irq_type` | Currently `softirq`; `hardirq` is reserved for future hardware interrupt collection |
+| `irq_vector` | Currently the softirq vector number, as a decimal string without leading zeros |
+| `irq_context` | `source` is the context at raise; `victim` is the directly preempted task's context |
+| `cpu` | Host logical CPU ID at sampling |
+| `pid`, `comm` | Process ID (TGID) and current task name at sampling; source does not establish business ownership |
+
+Display formats map `irq_vector` to names such as NET_RX only for `irq_type=softirq`;
+storage and queries retain the numeric string. Kernel frames use the `_[k]` suffix.
+New results replace `irq` and `softirq_vector` with `irq_context` and `irq_vector`.
+Historical data is unchanged; queries for those results still use the original labels.
 
 `dropped_samples.collection` combines losses from rate limiting and counts-map
 write failures without distinguishing their causes. Nonzero values indicate

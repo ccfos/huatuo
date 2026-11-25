@@ -84,8 +84,19 @@ sudo ./_output/bin/irqtracing \
 }
 ```
 
-`profile` 为 pprof 格式。样本通过 `irq=source|victim` 区分角色，并保留进程、
-CPU 和 softirq 向量标签；内核栈帧带 `_[k]` 后缀。
+`profile` 为 pprof 格式，样本包含以下标签：
+
+| 标签 | 含义 |
+| --- | --- |
+| `irq_type` | 当前为 `softirq`；`hardirq` 保留用于未来硬件中断采集 |
+| `irq_vector` | 当前为 softirq 向量编号，使用无前导零的十进制字符串 |
+| `irq_context` | `source` 为 raise 时的上下文；`victim` 为直接被抢占任务的上下文 |
+| `cpu` | 采样所在宿主机逻辑 CPU 编号 |
+| `pid`、`comm` | 采样时的进程 ID（TGID）和当前任务名；source 不代表业务来源进程归属 |
+
+展示时仅对 `irq_type=softirq` 将 `irq_vector` 映射为 NET_RX 等名称；存储和查询仍使用编号。
+内核栈帧带 `_[k]` 后缀。新结果使用 `irq_context`、`irq_vector` 替代原来的 `irq`、
+`softirq_vector`；历史数据不改写，查询历史结果时仍使用原标签。
 
 `dropped_samples.collection` 合计限速和 counts map 写入失败的丢样数，不区分原因。
 非零表示结果不完整；读取计数器失败则采集失败。零值可省略。

@@ -25,6 +25,14 @@ import (
 // DisplayLabels projects labels only at the presentation boundary. Quoting
 // prevents multi-value and numeric labels from becoming ambiguous prefixes.
 func DisplayLabels(dst []string, labels []types.ProfileLabel) []string {
+	var isSoftIRQ bool
+	for i := range labels {
+		if labels[i].Name == "irq_type" {
+			isSoftIRQ = labels[i].StringValue == "softirq"
+			break
+		}
+	}
+
 	for i := range labels {
 		label := &labels[i]
 		value := strconv.Quote(label.StringValue)
@@ -32,7 +40,7 @@ func DisplayLabels(dst []string, labels []types.ProfileLabel) []string {
 			value = strconv.FormatInt(label.NumberValue, 10) + " " + strconv.Quote(label.NumberUnit)
 		}
 
-		if label.Name == "softirq_vector" {
+		if isSoftIRQ && label.Name == "irq_vector" {
 			names := [...]string{"HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "IRQ_POLL", "TASKLET", "SCHED", "HRTIMER", "RCU"}
 			n, err := strconv.ParseUint(label.StringValue, 10, 32)
 			if err == nil && n < uint64(len(names)) {

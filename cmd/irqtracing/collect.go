@@ -173,8 +173,9 @@ func enqueueStackMap(
 			labels, err := types.NormalizeLabels([]types.ProfileLabel{
 				types.ProfilePIDLabel(key.PID), types.ProfileCPULabel(uint32(offset / 8)),
 				types.ProfileStringLabel("comm", bytesutil.ToStr(key.Comm[:])),
-				types.ProfileStringLabel("irq", role),
-				types.ProfileStringLabel("softirq_vector", strconv.FormatUint(uint64(key.Vec), 10)),
+				types.ProfileStringLabel("irq_context", role),
+				types.ProfileStringLabel("irq_type", "softirq"),
+				types.ProfileStringLabel("irq_vector", strconv.FormatUint(uint64(key.Vec), 10)),
 			})
 			if err != nil {
 				return err

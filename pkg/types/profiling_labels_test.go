@@ -17,7 +17,7 @@ package types
 import "testing"
 
 func TestValidateNumericProfileLabels(t *testing.T) {
-	for _, name := range []string{"pid", "cpu", "softirq_vector", "lock_address"} {
+	for _, name := range []string{"pid", "cpu", "irq_vector", "lock_address"} {
 		t.Run(name, func(t *testing.T) {
 			valid := []string{"0", "1", "4294967295"}
 			invalid := []string{"", "00", "01", "+1", "-1", " 1", "1 ", "1_0", "4294967296"}
@@ -36,6 +36,57 @@ func TestValidateNumericProfileLabels(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateIRQLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		values []string
+	}{
+		{
+			name:   "irq_context",
+			values: []string{"source", "victim"},
+		},
+		{
+			name:   "irq_type",
+			values: []string{"hardirq", "softirq"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, value := range tc.values {
+				if err := ValidateLabels([]ProfileLabel{ProfileStringLabel(tc.name, value)}); err != nil {
+					t.Errorf("valid %s=%q: %v", tc.name, value, err)
+				}
+			}
+
+			for _, value := range []string{"", "unknown", "SOURCE", "softirq ", "0"} {
+				if err := ValidateLabels([]ProfileLabel{ProfileStringLabel(tc.name, value)}); err == nil {
+					t.Errorf("accepted invalid %s=%q", tc.name, value)
+				}
+			}
+
+			if err := ValidateLabels([]ProfileLabel{{
+				Name: tc.name,
+				Kind: ProfileLabelNumber,
+			}}); err == nil {
+				t.Error("accepted numeric enum label")
+			}
+
+			if _, err := NormalizeLabels([]ProfileLabel{
+				ProfileStringLabel(tc.name, tc.values[0]),
+				ProfileStringLabel(tc.name, tc.values[1]),
+			}); err == nil {
+				t.Error("accepted multiple enum values")
+			}
+		})
+	}
+
+	if _, err := NormalizeLabels([]ProfileLabel{
+		ProfileStringLabel("irq_vector", "1"),
+		ProfileStringLabel("irq_vector", "2"),
+	}); err == nil {
+		t.Error("accepted multiple IRQ vectors")
 	}
 }
 
