@@ -18,6 +18,21 @@
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib_memburst.sh"
 require_commands go jq mount umount awk timeout python3 readelf readlink
+
+# Run the real-process PIE regressions in the normal Shell integration suite.
+# An unsupported test-binary layout must not silently turn coverage into SKIP.
+if [[ $(go env GOARCH) == amd64 ]]; then
+	pie_log="${HUATUO_BAMAI_TEST_TMPDIR}/pie-regressions.json"
+	(cd "${ROOT_DIR}" && go test -mod=vendor -tags=integration -buildmode=pie \
+		-ldflags='-s=false -w=false' -run '^TestPIEExecutable' -count=1 -json \
+		./internal/memsnapshot/providers/golang) > "${pie_log}" \
+		|| fatal "PIE load-bias regressions failed; inspect ${pie_log}"
+	jq -se '
+		[.[] | select(.Test == "TestPIEExecutableDataMapping" or
+			.Test == "TestPIEExecutableSplitMapping") | select(.Action == "pass")]
+		| length == 2
+	' "${pie_log}" > /dev/null || fatal "both PIE load-bias regressions must run without SKIP"
+fi
 burst_setup
 readonly MEMBURST_PIE_FIXTURE="${MEMSNAP_ACCEPTANCE_ARTIFACTS}/go-snapshot-pie"
 trap burst_cleanup EXIT
