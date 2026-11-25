@@ -22,6 +22,11 @@ spec:
       - name: huatuo
         image: docker.io/huatuo/huatuo-bamai:latest
         imagePullPolicy: IfNotPresent
+        env:
+        - name: KUBELET_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
         resources:
           limits:
             cpu: '2'

@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -660,6 +661,10 @@ func TestInitManagerRequiresCertOrTokenAndCA(t *testing.T) {
 		ReleaseManager()
 		t.Fatal("started without a client certificate or CA certificate")
 	}
+	if err := InitManager(&ManagerCtx{PodAuthorizedPort: 10250, PodClientCertPath: ","}); err == nil {
+		ReleaseManager()
+		t.Fatal("accepted malformed comma-only client certificate path")
+	}
 }
 
 func TestReadOnlyPortFailureWithoutAuthorizedPortSkipsHTTPS(t *testing.T) {
@@ -682,5 +687,141 @@ func TestReadOnlyPortFailureWithoutAuthorizedPortSkipsHTTPS(t *testing.T) {
 	}
 	if !strings.HasPrefix(err.Error(), "podlist http:") || strings.Contains(err.Error(), "https://") {
 		t.Fatalf("err = %v, want the read-only port error without an HTTPS attempt", err)
+	}
+}
+
+func TestValidateKubeletHost(t *testing.T) {
+	for _, valid := range []string{"", "127.0.0.1", "10.20.30.40", "::1", "fd00::1", "worker-1.cluster.local"} {
+		if err := ValidateKubeletHost(valid); err != nil {
+			t.Fatalf("ValidateKubeletHost(%q) = %v, want nil", valid, err)
+		}
+	}
+	for _, invalid := range []string{"https://10.0.0.1", "10.0.0.1:10250", "10.0.0.1/pods", "node 1", "user@node", "[::1]", "[evil]", `node\foo`, "host%00", "-bad.node"} {
+		if err := ValidateKubeletHost(invalid); err == nil {
+			t.Fatalf("ValidateKubeletHost(%q) = nil, want error", invalid)
+		}
+	}
+}
+
+func TestKubeletTokenClientVerifiesNodeSANForPodsAndConfigz(t *testing.T) {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-cluster-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srvKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Sign a kubelet serving cert whose SAN has only node IP/DNS (no 127.0.0.1).
+	srvTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "worker-1.cluster.local"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"worker-1.cluster.local"},
+		IPAddresses:  []net.IP{net.ParseIP("10.20.30.40"), net.ParseIP("fd00::1")},
+	}
+	srvDER, err := x509.CreateCertificate(rand.Reader, srvTmpl, caCert, &srvKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hits atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") != "Bearer node-san-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/pods":
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case "/configz":
+			_, _ = w.Write([]byte(`{"kubeletconfig":{"cgroupDriver":"systemd","containerRuntimeEndpoint":"unix:///run/containerd/containerd.sock"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{srvDER}, PrivateKey: srvKey}},
+	}
+	srv.StartTLS()
+	defer srv.Close()
+
+	setupServiceAccountFilesForTest(t, "node-san-token\n", caCert)
+	port := uint32(srv.Listener.Addr().(*net.TCPAddr).Port)
+	newClient := func(t *testing.T) *http.Client {
+		t.Helper()
+		client, err := kubeletAuthorizedClient(&ManagerCtx{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokTransport := client.Transport.(*kubeletTokenTransport)
+		base := tokTransport.base.(*http.Transport)
+		base.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, srv.Listener.Addr().String())
+		}
+		return client
+	}
+
+	for _, tc := range []struct {
+		name   string
+		host   string
+		wantOK bool
+	}{
+		{name: "matching_node_ip_san", host: "10.20.30.40", wantOK: true},
+		{name: "matching_node_ipv6_san", host: "fd00::1", wantOK: true},
+		{name: "matching_node_dns_san", host: "worker-1.cluster.local", wantOK: true},
+		{name: "loopback_not_in_san", host: "127.0.0.1", wantOK: false},
+		{name: "wrong_node_ip_same_ca", host: "10.20.30.99", wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hits.Store(0)
+			client := newClient(t)
+			podsURL := kubeletPodListAuthorizedURL(tc.host, port)
+			configzURL := kubeletConfigAuthorizedURL(tc.host, port)
+
+			_, podsErr := kubeletFetchPodList(context.Background(), client, podsURL)
+			cfg, configzErr := kubeletConfigDoRequest(client, configzURL)
+			if tc.wantOK {
+				if podsErr != nil || configzErr != nil {
+					t.Fatalf("podsErr=%v configzErr=%v, want nil", podsErr, configzErr)
+				}
+				if cfg.CgroupDriver != "systemd" {
+					t.Fatalf("cgroupDriver = %q, want systemd", cfg.CgroupDriver)
+				}
+				if got := hits.Load(); got != 2 {
+					t.Fatalf("hits = %d, want 2 (/pods and /configz)", got)
+				}
+				return
+			}
+			if podsErr == nil || configzErr == nil {
+				t.Fatalf("podsErr=%v configzErr=%v, want TLS hostname errors", podsErr, configzErr)
+			}
+			if got := hits.Load(); got != 0 {
+				t.Fatalf("mismatched host sent %d request(s) with token, want 0", got)
+			}
+		})
 	}
 }

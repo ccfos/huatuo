@@ -1317,9 +1317,10 @@ This section configures the ports and credentials used to retrieve Pod informati
 
 | Field | Description |
 | --- | --- |
+| `KubeletHost` | Hostname or IP address used for the kubelet HTTPS port (`KubeletAuthorizedPort`). Default: `""` (falls back to `KUBELET_HOST` env var, then `127.0.0.1`). Set via Kubernetes Downward API (`status.hostIP` or `spec.nodeName`) when using ServiceAccount token authentication so TLS verification matches the kubelet serving certificate SAN. |
 | `KubeletReadOnlyPort` | Kubelet read-only port for retrieving the Pod list without authentication. Default: `10255`; port range: `1–65535`. Set to `0` to disable this method. |
-| `KubeletAuthorizedPort` | Kubelet HTTPS port for retrieving Pod information using certificate authentication. Default: `10250`; port range: `1–65535`. Set to `0` to disable this method. Recommended for production. |
-| `KubeletClientCertPath` | Kubelet client certificate and private key paths. The built-in default is `""`. Accepts two comma-separated paths or one PEM file containing both. The configuration file explicitly uses the paths under `/etc/kubernetes/pki/` shown above; verify them for your deployment. In non-Kubernetes environments, set both kubelet ports to `0` to disable Pod discovery. |
+| `KubeletAuthorizedPort` | Kubelet HTTPS port for retrieving Pod information using client certificate or Pod ServiceAccount token authentication. Default: `10250`; port range: `1–65535`. Set to `0` to disable this method. Recommended for production. |
+| `KubeletClientCertPath` | Kubelet client certificate and private key paths. The built-in default is `""`. Accepts two comma-separated paths or one PEM file containing both. When left empty, `huatuo-bamai` authenticates with `/var/run/secrets/kubernetes.io/serviceaccount/token` and verifies the kubelet certificate against `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`. In non-Kubernetes environments, set both kubelet ports to `0` to disable Pod discovery. |
 
 ### 11. Command-line options
 

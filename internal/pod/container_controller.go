@@ -72,6 +72,9 @@ func InitManager(config *ManagerCtx) error {
 	if config.PodReadOnlyPort == 0 && config.PodAuthorizedPort == 0 {
 		return nil
 	}
+	if err := ValidateKubeletHost(config.PodHost); err != nil {
+		return err
+	}
 	managerConfig := *config
 	if certPath := strings.TrimSpace(config.PodClientCertPath); certPath != "" {
 		certs := strings.Split(certPath, ",")
@@ -79,6 +82,9 @@ func InitManager(config *ManagerCtx) error {
 		managerConfig.podClientCertKey = managerConfig.podClientCertPath
 		if len(certs) > 1 {
 			managerConfig.podClientCertKey = strings.TrimSpace(certs[1])
+		}
+		if len(certs) > 2 || managerConfig.podClientCertPath == "" || managerConfig.podClientCertKey == "" {
+			return fmt.Errorf("invalid kubelet client certificate path %q", config.PodClientCertPath)
 		}
 	} else if config.PodReadOnlyPort == 0 {
 		// Without a certificate the HTTPS port authenticates with the Pod's

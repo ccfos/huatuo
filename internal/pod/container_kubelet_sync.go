@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -37,6 +39,7 @@ import (
 )
 
 const (
+	defaultKubeletHost                      = "127.0.0.1"
 	kubeletReqTimeout                       = 5 * time.Second
 	kubeletOversizedResponseWarningInterval = 30 * time.Minute
 	maxKubeletResponseBodyBytes             = 128 << 20
@@ -77,6 +80,7 @@ type kubeletConfigz struct {
 }
 
 type ManagerCtx struct {
+	PodHost           string
 	PodReadOnlyPort   uint32
 	PodAuthorizedPort uint32
 	PodClientCertPath string
@@ -87,16 +91,55 @@ type ManagerCtx struct {
 	podClientCertKey  string
 }
 
+func kubeletHost(ctx *ManagerCtx) string {
+	if ctx != nil {
+		if host := strings.TrimSpace(ctx.PodHost); host != "" {
+			return host
+		}
+	}
+	return defaultKubeletHost
+}
+
+// ValidateKubeletHost verifies that host is empty, a literal IP address, or a
+// valid DNS hostname without scheme, port, or path components.
+func ValidateKubeletHost(host string) error {
+	host = strings.TrimSpace(host)
+	if host == "" || net.ParseIP(host) != nil {
+		return nil
+	}
+	trimmed := strings.TrimSuffix(host, ".")
+	if trimmed == "" || len(trimmed) > 253 {
+		return fmt.Errorf("invalid kubelet host %q", host)
+	}
+	for _, label := range strings.Split(trimmed, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return fmt.Errorf("invalid kubelet host %q", host)
+		}
+		for i := range len(label) {
+			c := label[i]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' {
+				continue
+			}
+			return fmt.Errorf("invalid kubelet host %q", host)
+		}
+	}
+	return nil
+}
+
+func kubeletEndpoint(host string, port uint32) string {
+	return net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10))
+}
+
 func kubeletPodListReadOnlyURL(port uint32) string {
 	return fmt.Sprintf("http://127.0.0.1:%d/pods", port)
 }
 
-func kubeletPodListAuthorizedURL(port uint32) string {
-	return fmt.Sprintf("https://127.0.0.1:%d/pods", port)
+func kubeletPodListAuthorizedURL(host string, port uint32) string {
+	return fmt.Sprintf("https://%s/pods", kubeletEndpoint(host, port))
 }
 
-func kubeletConfigAuthorizedURL(port uint32) string {
-	return fmt.Sprintf("https://127.0.0.1:%d/configz", port)
+func kubeletConfigAuthorizedURL(host string, port uint32) string {
+	return fmt.Sprintf("https://%s/configz", kubeletEndpoint(host, port))
 }
 
 func kubeletPodListHttpRequest(requestCtx context.Context, ctx *ManagerCtx) (*http.Client, error) {
@@ -199,11 +242,12 @@ func kubeletPodListAuthorizationRequest(requestCtx context.Context, ctx *Manager
 	if err != nil {
 		return nil, err
 	}
-	_, err = kubeletFetchPodList(requestCtx, client, kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort))
+	_, err = kubeletFetchPodList(requestCtx, client, kubeletPodListAuthorizedURL(kubeletHost(ctx), ctx.PodAuthorizedPort))
 	return client, err
 }
 
 func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) error {
+	host := kubeletHost(ctx)
 	if ctx.PodReadOnlyPort != 0 {
 		client, err := kubeletPodListHttpRequest(requestCtx, ctx)
 		if err == nil {
@@ -225,7 +269,7 @@ func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) 
 
 	// update https instance cache
 	kubeletPodListClient = client
-	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
+	kubeletPodListURL = kubeletPodListAuthorizedURL(host, ctx.PodAuthorizedPort)
 	kubeletPodListRunningEnabled.Store(true)
 	return nil
 }
@@ -543,7 +587,7 @@ func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 
 	config, err = kubeletConfigDoRequest(
 		kubeletPodListClient,
-		kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort),
+		kubeletConfigAuthorizedURL(kubeletHost(ctx), ctx.PodAuthorizedPort),
 	)
 	if err == nil {
 		return nil

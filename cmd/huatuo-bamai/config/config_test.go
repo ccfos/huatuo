@@ -452,6 +452,13 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "local file rotation size",
 		},
 		{
+			name: "invalid kubelet host",
+			mutate: func(cfg *Config) {
+				cfg.Pod.KubeletHost = "https://10.0.0.1:10250"
+			},
+			wantErr: "invalid kubelet host",
+		},
+		{
 			name: "invalid kubelet port",
 			mutate: func(cfg *Config) {
 				cfg.Pod.KubeletReadOnlyPort = 65536
