@@ -123,6 +123,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 
 	sess, err := parseSession(firstMsg)
+	firstMsg.Release()
 	if err != nil {
 		log.Warnf("connect: %v", err)
 		return
@@ -182,6 +183,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 		chunk, err := parseChunk(msg)
 		if err != nil {
+			msg.Release()
 			log.Warnf("%s: recv: %v", sess.ServiceName, err)
 			return
 		}
@@ -193,6 +195,8 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		if ownershipErr == nil {
 			s.handler(sess, chunk)
 		}
+		// Data belongs to the frame and remains valid until the handler returns.
+		msg.Release()
 		if chunk.Commit {
 			if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				return
