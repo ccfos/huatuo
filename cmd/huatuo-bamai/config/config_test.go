@@ -91,6 +91,9 @@ EnableTLP = true
 EnableDropwatch = true
 MaxEventsPerSecond = 42
 
+[AutoTracing.MemoryBurst]
+DumpProcessMaxNum = 3
+
 [AutoTracing.MemoryThresholdSnapshot]
 ThresholdPercent = 85
 IntervalTracing = 60
@@ -141,6 +144,9 @@ ExcludedOnContainer = "writeback"
 		MaxRotatedFiles: 4,
 	}) {
 		t.Errorf("Storage.LocalFile = %+v, want overrides", Get().Storage.LocalFile)
+	}
+	if got := Get().AutoTracing.MemoryBurst.SlidingWindowLength; got != 60 {
+		t.Errorf("omitted SlidingWindowLength = %d, want 60", got)
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
