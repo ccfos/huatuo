@@ -66,25 +66,36 @@ make compose-dev-up
 Fixed credentials are for development only. When changing the ES password in `build/docker/.env`,
 update both service configurations under `build/docker/devconf/` and the Grafana ES data source.
 
-The collection script requires Bash, `curl`, and `jq`. Container collection also requires `kubectl`,
-`ip`, an available Kubernetes node on the local host, and access to the `gcc:14` image.
-After startup, select a scope from another terminal at the repository root. Each task runs for 20 seconds:
+The collection script requires Bash, `curl`, and `jq`. Container modes also require `kubectl`,
+`ip`, `crictl`, an available Kubernetes node on the local host, and access to the `gcc:14` image.
+IRQ requires `python3`, `taskset`, and `timeout`, without Kubernetes. After startup,
+select modes from another terminal at the repository root. Each task runs for 20 seconds:
 
 ```bash
-# Profile existing host workloads
-./build/docker/run_test_cpu_profiling.sh --with-host
-# Create and profile a temporary container workload
-./build/docker/run_test_cpu_profiling.sh --with-container
-# Profile off-CPU waiting time on the host or in a container
-./build/docker/run_test_cpu_profiling.sh --with-host --offcpu
-./build/docker/run_test_cpu_profiling.sh --with-container --offcpu
+# Default: profile on-CPU execution in a temporary container
+./build/docker/run_test_cpu_profiling.sh
+# Profile off-CPU waiting time in a container
+./build/docker/run_test_cpu_profiling.sh --offcpu
+# Profile host softirq counts
+./build/docker/run_test_cpu_profiling.sh --irq
+# Run all six modes sequentially
+./build/docker/run_test_cpu_profiling.sh --oncpu --offcpu \
+  --virtual-alloc --physical-alloc --physical-usage --irq
 ```
 
-Select scopes with `--with-host` and `--with-container`, and modes with `--oncpu` and `--offcpu`.
-Flags can be combined in any order; repeated flags have no additional effect. The defaults are both scopes
-and on-CPU. Passing all four flags runs four combinations sequentially, for 20 seconds each.
-Use `--with-host` without Kubernetes. Off-CPU trials check for `offcpu_reason` sample labels and generate
-Grafana queries and links for the off-CPU profile type.
+IRQ profiles the host; the other five modes profile containers. The script does not accept
+`--with-host` or `--with-container`.
+Mode flags can be combined in any order; repeated flags have no additional effect. The default is on-CPU.
+`--virtual-alloc` and `--physical-alloc` observe virtual address space and physical page allocation,
+respectively. `--physical-usage` observes live physical pages tracked during capture, not total process RSS.
+Container modes use separate workload Pods. IRQ generates loopback UDP traffic on one allowed CPU
+and profiles that CPU, producing one count window with `irq_context`, `irq_type`, `irq_vector`, and
+other labels. Node-side sampling limits apply: `dropped_samples` in `raw.json` records discarded
+samples, so flame graph counts do not represent the total number of interrupts.
+Both paths validate raw results and the Grafana flame graph.
+
+Grafana lists the two allocation modes separately under **Profile type** as
+`memory:virtual_alloc:bytes:space:bytes` and `memory:physical_alloc:bytes:space:bytes`.
 
 After completion, open the Grafana URL in the output to view the flame graph. The initial login is `admin / admin`.
 Results and diagnostics are saved to the reported `output_dir` under `_output/profiling/run.XXXXXX/`.
@@ -94,13 +105,15 @@ For label filtering, see [View the Flame Graph](/docs/best-practice/continuous-p
 The script targets the default development stack. For custom collection requests, see
 [Profiling API](/docs/reference/profiling-api_en.md).
 
-To deploy and benchmark Redis or PostgreSQL and collect a CPU profile of the service container:
+To deploy and benchmark Redis or PostgreSQL and profile the service container:
 
 ```bash
 ./build/docker/run_test_redis_profiling.sh
 ./build/docker/run_test_postgres_profiling.sh
 ./build/docker/run_test_postgres_profiling.sh --offcpu
 ./build/docker/run_test_postgres_profiling.sh --oncpu --offcpu
+./build/docker/run_test_postgres_profiling.sh --virtual-alloc --physical-alloc --physical-usage
+./build/docker/run_test_postgres_profiling.sh --irq
 ```
 
 Run `make compose-dev-up` before these scripts. They require `curl`, `jq`, `kubectl`,
@@ -109,15 +122,19 @@ They preload missing workload images with `crictl`. The runtime endpoint default
 `unix:///run/containerd/containerd.sock`; override it with `CONTAINER_RUNTIME_ENDPOINT`.
 They use `redis` with
 `redislabs/memtier_benchmark`, or `postgres`; no benchmark tools need installing on the host.
-Redis runs mixed reads and writes with a 30-second profile. PostgreSQL initializes temporary data
-and runs read-only queries with a 60-second profile. Tasks are created through the apiserver;
+Redis runs mixed reads and writes with a 30-second profile. Each PostgreSQL mode profiles for
+60 seconds. CPU modes initialize temporary data and run read-only queries; memory modes reconnect
+and materialize queries to allocate, touch, and briefly retain memory. Tasks are created through the apiserver;
 the scripts stop the benchmark after task completion, then generate the flame graph link.
 Success exits with code 0; the JSON output contains the flame graph link in `grafana_url` and the
 results and benchmark log directory in `output_dir`. Failure exits with a nonzero code and
 `grafana_url: null`. Temporary services, data, and benchmark containers are removed on exit;
 the development stack and collected results remain available.
-Selecting both PostgreSQL modes returns a `results` array with a separate `output_dir` and
-`grafana_url` for each trial; either mode failing produces a nonzero exit code.
+Selecting multiple PostgreSQL modes returns a `results` array with a separate `output_dir` and
+`grafana_url` for each trial; any mode failing produces a nonzero exit code.
+PostgreSQL `--irq` keeps pgbench running and generates loopback UDP traffic while profiling host
+softirq activity. It requires `python3`, `taskset`, and `timeout`; results include host activity
+beyond PostgreSQL on the selected CPU.
 Off-CPU uses the same read-only pgbench workload and does not guarantee a particular wait reason.
 
 After the trial, run `make compose-dev-down` to stop and remove the development stack.

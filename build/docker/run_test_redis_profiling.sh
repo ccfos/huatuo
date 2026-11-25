@@ -60,21 +60,6 @@ write_config_memtier_pod() {
  '
 }
 
-redis_start() {
-	local output_dir=$1 namespace=$2 node=$3 pod_file
-	write_config_redis_pod "$node" > "${output_dir}/service.request.json"
-	kubernetes_pod_create "$output_dir" "$namespace" "${output_dir}/service.request.json"
-	pod_file=$(kubernetes_pod_wait_ready "$output_dir" "$namespace" redis)
-	kubernetes_pod_container_get "$pod_file" redis > "${output_dir}/target.json"
-}
-
-memtier_start() {
-	local output_dir=$1 namespace=$2 node=$3 address=$4
-	write_config_memtier_pod "$node" "$address" > "${output_dir}/benchmark.request.json"
-	kubernetes_pod_create "$output_dir" "$namespace" "${output_dir}/benchmark.request.json"
-	kubernetes_pod_wait_ready "$output_dir" "$namespace" memtier > /dev/null
-}
-
 memtier_progress_read() {
 	local output_dir=$1 namespace=$2
 	kubectl --request-timeout=10s -n "$namespace" get pod memtier -o json > "${output_dir}/benchmark.response.json" \
@@ -96,113 +81,86 @@ assert_memtier_progress() {
 	return 0
 }
 
-memtier_stop() {
-	local output_dir=$1 namespace=$2
-	kubectl --request-timeout=10s -n "$namespace" get pod memtier -o json > "${output_dir}/benchmark-at-exit.json"
-	redis_benchmark_saved=true
-	kubernetes_pod_delete "$output_dir" "$namespace" memtier
-}
-
 redis_result_write() {
-	local output_dir=$1 status=$2 job_id=$3 elapsed=$4 url='' profile=/dev/null raw=/dev/null graph=/dev/null stage=$5
+	local output_dir=$1 status=$2 job_id=$3 elapsed=$4 result='{}'
 	if ((status == 0)); then
-		profile="${output_dir}/profile.json"
-		raw="${output_dir}/raw.json"
-		graph="${output_dir}/flamegraph.json"
-		url=$(grafana_profiling_url_build "$REDIS_GRAFANA_BASE" "$REDIS_REGION" "$profile") || return 1
+		result=$(profiling_result_write "$output_dir" "$REDIS_GRAFANA_BASE" "$REDIS_REGION") || return 1
 	fi
-	jq -n --argjson status "$status" --arg url "$url" --arg id "$job_id" --arg stage "$stage" \
+	jq -n --argjson status "$status" --argjson result "$result" --arg id "$job_id" \
 		--arg image "$REDIS_IMAGE" --arg tool "$REDIS_MEMTIER_IMAGE" --argjson duration "$REDIS_DURATION" \
 		--argjson elapsed "$elapsed" --arg output "$output_dir" \
-		--rawfile error "${output_dir}/stderr.log" --slurpfile profile "$profile" --slurpfile raw "$raw" --slurpfile graph "$graph" '
+		--rawfile error "${output_dir}/stderr.log" '
  {scope:"container",service:"redis",service_image:$image,benchmark_image:$tool,duration_seconds:$duration,
  elapsed_seconds:$elapsed,output_dir:$output,benchmark_log:($output+"/benchmark.log"),request_id:$id,grafana_url:null}
- + (if $status==0 then $profile[0] + {status:"passed",grafana_url:$url,raw_windows:($raw[0].items|length),
-     flamegraph_nodes:([$graph[0].frames[]?.data.values[0]|length]|add // 0)}
-    else {status:"failed",error:($stage+" failed; inspect "+$output+"/*.log. "+($error|rtrimstr("\n")))} end)'
+ + (if $status==0 then $result
+    else {status:"failed",error:("Profiling failed; inspect "+$output+"/*.log. "+($error|rtrimstr("\n")))} end)'
 }
 
 cleanup() {
-	local status=$? pod log_name
+	local status=$?
+	local pods=(redis)
 	trap - EXIT INT TERM
 	set +e
-	if [[ -n $redis_job_id && $status != 0 ]] && ! jq -e '.data.status == "terminal"' \
-		"${redis_run_dir}/status.response.json" > /dev/null 2>&1; then
-		profiling_task_stop "$redis_run_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "$redis_job_id" >> "${redis_run_dir}/cleanup.log" 2>&1
-	fi
-	if [[ -n $redis_namespace ]]; then
-		for pod in redis memtier; do
-			[[ $pod != memtier || $redis_benchmark_saved != true ]] || continue
-			log_name=$pod
-			[[ $pod != memtier ]] || log_name=benchmark
-			kubectl --request-timeout=10s -n "$redis_namespace" logs "$pod" > "${redis_run_dir}/${log_name}.log" 2>&1
-			kubectl --request-timeout=10s -n "$redis_namespace" get pod "$pod" -o json > "${redis_run_dir}/${pod}-at-exit.json" 2> /dev/null
-		done
-		if ! kubectl --request-timeout=10s delete namespace "$redis_namespace" --wait=false >> "${redis_run_dir}/cleanup.log" 2>&1; then
-			status=1
-			printf 'Failed to remove namespace %s; inspect cleanup.log.\n' "$redis_namespace" >> "${redis_run_dir}/stderr.log"
-		fi
-	fi
-	if ! redis_result_write "$redis_run_dir" "$status" "$redis_job_id" "$((SECONDS - redis_started))" "$redis_stage" > "${redis_run_dir}/result.json"; then
+	if ! profiling_task_stop_if_active "$redis_run_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "$redis_job_id" >> "${redis_run_dir}/cleanup.log" 2>&1; then status=1; fi
+	[[ $redis_benchmark_saved == true ]] || pods+=(memtier:benchmark)
+	if ! kubernetes_namespace_cleanup "$redis_run_dir" "$redis_namespace" "${pods[@]}"; then status=1; fi
+	if ! redis_result_write "$redis_run_dir" "$status" "$redis_job_id" "$((SECONDS - redis_started))" > "${redis_run_dir}/result.json"; then
 		status=1
-		printf 'Failed to write result to %s/result.json.\n' "$redis_run_dir" >&2
-	elif ! cat "${redis_run_dir}/result.json"; then
+		printf 'Failed to write result to %s/result.json.\n' "$redis_run_dir" >&4
+	elif ! cat "${redis_run_dir}/result.json" >&3; then
 		status=1
-		printf 'Failed to print result from %s/result.json.\n' "$redis_run_dir" >&2
+		printf 'Failed to print result from %s/result.json.\n' "$redis_run_dir" >&4
 	fi
-	((status == 0)) || tail -n 20 "${redis_run_dir}/stderr.log" >&2
+	((status == 0)) || tail -n 20 "${redis_run_dir}/stderr.log" >&4
 	exit "$status"
 }
 
 main() {
-	local output_dir=$1 node address batches current_batches namespace container_id
+	local output_dir=$1 node address batches current_batches namespace container_id pod_file
 	require_commands kubectl ip curl crictl
-	redis_stage=development-stack
 	require_endpoints_ready "$output_dir" "${REDIS_NODE_BASE}/readyz" "${REDIS_API_BASE}/readyz"
 	node=$(require_local_kubernetes_node "$output_dir")
-	redis_stage=image-pull
 	cri_images_ensure_present "$output_dir" "$REDIS_CRI_ENDPOINT" "$REDIS_IMAGE" "$REDIS_MEMTIER_IMAGE"
-	redis_stage=service-start
 	namespace="huatuo-redis-${output_dir##*.}"
 	namespace=${namespace,,}
 	kubectl --request-timeout=10s create namespace "$namespace" > "${output_dir}/namespace.log"
 	# Register ownership only after creation succeeds so EXIT never removes an unrelated namespace.
 	redis_namespace=$namespace
-	redis_start "$output_dir" "$namespace" "$node"
+	write_config_redis_pod "$node" > "${output_dir}/service.request.json"
+	kubernetes_pod_create "$output_dir" "$namespace" "${output_dir}/service.request.json"
+	pod_file=$(kubernetes_pod_wait_ready "$output_dir" "$namespace" redis)
+	kubernetes_pod_container_get "$pod_file" redis > "${output_dir}/target.json"
 	container_id=$(jq -er .container_id "${output_dir}/target.json")
 	address=$(jq -er .pod_ip "${output_dir}/target.json")
 	node_container_wait_discovered "$output_dir" "$REDIS_NODE_BASE" "$REDIS_NODE_TOKEN" "$container_id"
-	redis_stage=benchmark
-	memtier_start "$output_dir" "$namespace" "$node" "$address"
+	write_config_memtier_pod "$node" "$address" > "${output_dir}/benchmark.request.json"
+	kubernetes_pod_create "$output_dir" "$namespace" "${output_dir}/benchmark.request.json"
+	kubernetes_pod_wait_ready "$output_dir" "$namespace" memtier > /dev/null
 	batches=$(memtier_progress_read "$output_dir" "$namespace") || return 1
 	assert_memtier_progress "$output_dir" 0 "$batches" || return 1
-	redis_stage=collection
-	jq -n --arg host "$REDIS_TARGET_HOST" --arg container "$container_id" --argjson duration "$REDIS_DURATION" \
-		'{type:"cpu",language:"c",mode:"oncpu",scope:"container",hostname:$host,container_id:$container,duration_seconds:$duration}' \
-		> "${output_dir}/create.request.json"
+	write_config_profiling_request "$REDIS_TARGET_HOST" "$container_id" "$REDIS_DURATION" oncpu > "${output_dir}/create.request.json"
 	redis_job_id=$(profiling_task_create "$output_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id)
 	profiling_task_wait_completed "$output_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "$redis_job_id" "$((REDIS_DURATION + 120))" > "${output_dir}/task.json"
 	current_batches=$(memtier_progress_read "$output_dir" "$namespace") || return 1
 	assert_memtier_progress "$output_dir" "$batches" "$current_batches" || return 1
-	redis_stage=benchmark-stop
-	memtier_stop "$output_dir" "$namespace"
-	redis_stage=flamegraph
+	kubectl --request-timeout=10s -n "$namespace" get pod memtier -o json > "${output_dir}/benchmark-at-exit.json"
+	redis_benchmark_saved=true
+	kubernetes_pod_delete "$output_dir" "$namespace" memtier
 	profiling_raw_query "$output_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "$redis_job_id" > "${output_dir}/raw.json"
-	jq '{request_id,hostname,scope,container_id,profile_type:"process_cpu:cpu:nanoseconds:cpu:nanoseconds",time_range:{
-   from_ms:(.created_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601*1000),
-   to_ms:(.ended_at|sub("\\.[0-9]+Z$";"Z")|(fromdateiso8601+1)*1000)}}' \
-		"${output_dir}/task.json" > "${output_dir}/profile.json"
+	write_config_profile_query "${output_dir}/task.json" oncpu | jq 'del(.type,.mode)' > "${output_dir}/profile.json"
 	grafana_flamegraph_query "$output_dir" "$REDIS_GRAFANA_BASE" "$REDIS_GRAFANA_AUTH" "$REDIS_REGION" "${output_dir}/profile.json" > "${output_dir}/flamegraph.json"
-	assert_profile_windows "${output_dir}/raw.json" 1 "" "$container_id" \
-		&& assert_grafana_flamegraph "${output_dir}/flamegraph.json" || {
+	if ! assert_profile_windows "${output_dir}/raw.json" 1 "" "$container_id" || ! assert_grafana_flamegraph "${output_dir}/flamegraph.json"; then
 		printf 'Invalid Redis profiling results; inspect %s/raw.json and flamegraph.json.\n' "$output_dir" >&2
 		return 1
-	}
+	fi
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
 	if [[ ${1:-} == --help && $# == 1 ]]; then
-		printf 'Usage: run_test_redis_profiling.sh\nRun make compose-dev-up first. Preload images with crictl, benchmark redis, profile its container for 30 seconds, and print JSON with grafana_url.\n'
+		printf '%s\n' \
+			'Usage: run_test_redis_profiling.sh [--help]' \
+			'Profile: oncpu, 30s, container scope.' \
+			'Setup: make compose-dev-up'
 		exit 0
 	fi
 	if (($# != 0)); then
@@ -215,11 +173,12 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
 	fi
 	mkdir -p "${ROOT_DIR}/_output/profiling"
 	redis_run_dir=$(mktemp -d "${ROOT_DIR}/_output/profiling/redis.XXXXXX")
-	redis_started=$SECONDS redis_stage=dependencies redis_namespace='' redis_job_id='' redis_benchmark_saved=false
+	redis_started=$SECONDS redis_namespace='' redis_job_id='' redis_benchmark_saved=false
 	: > "${redis_run_dir}/stderr.log"
+	exec 3>&1 4>&2
 	trap cleanup EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
-	printf 'Profiling redis; logs: %s\n' "$redis_run_dir" >&2
+	printf 'Profiling redis; logs: %s\n' "$redis_run_dir" >&4
 	main "$redis_run_dir" > "${redis_run_dir}/execution.log" 2> "${redis_run_dir}/stderr.log"
 fi
