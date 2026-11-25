@@ -18,6 +18,23 @@
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib_memburst.sh"
 require_commands go jq mount umount awk timeout python3 readelf readlink
+# Each detector replaces /proc/meminfo and ranks processes by RSS. Keep both
+# views private to its runtime group, and reserve ports through the parent worker.
+if (($# == 0)); then
+	declare -A burst_group_names=()
+	for group in go python java; do
+		workspace="${HUATUO_BAMAI_TEST_TMPDIR}/${group}"
+		mkdir -p "${workspace}"
+		HUATUO_BAMAI_TEST_TMPDIR="${workspace}" unshare --mount --propagation private \
+			--pid --fork --kill-child=KILL --mount-proc bash "$0" "${group}" &
+		burst_group_names[$!]=${group}
+	done
+	burst_wait_groups
+	exit 0
+fi
+mount -t tmpfs tmpfs /var/run
+unset HUATUO_BAMAI_DEFAULT_ADDR
+huatuo_bamai_initialize_address
 burst_setup
 readonly MEMBURST_PIE_FIXTURE="${MEMSNAP_ACCEPTANCE_ARTIFACTS}/go-snapshot-pie"
 trap burst_cleanup EXIT
@@ -149,57 +166,69 @@ assert_burst_pie_fixture() {
 }
 
 mkdir -p "${MEMBURST_RUNTIME_DIR}"
-HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_RUNTIME_DIR}" snapshot_build_managed_runtime_fixtures
-go build -mod=vendor -buildmode=pie -o "${MEMBURST_PIE_FIXTURE}" ./integration/testdata/test_memory_threshold_snapshot_golang.go
-LC_ALL=C readelf -h "${MEMBURST_PIE_FIXTURE}" > "${MEMSNAP_ACCEPTANCE_ARTIFACTS}/pie-header.txt"
-assert_burst_pie_fixture
-for memburst_path_case in ordinary consecutive_spaces tab unicode_space trailing_space trailing_cr; do
-	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/mapped-go-${memburst_path_case}"
-	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
-	case ${memburst_path_case} in
-	ordinary) memburst_path_name=heap ;;
-	consecutive_spaces) memburst_path_name='heap  fixture' ;;
-	tab) memburst_path_name=$'heap\tfixture' ;;
-	unicode_space) memburst_path_name=$'heap\xc2\xa0fixture' ;;
-	trailing_space) memburst_path_name='heap ' ;;
-	trailing_cr) memburst_path_name=$'heap\r' ;;
-	esac
-	memburst_path_executable="${HUATUO_BAMAI_TEST_TMPDIR}/${memburst_path_name}"
-	cp "${MEMBURST_PIE_FIXTURE}" "${memburst_path_executable}"
-	burst_start_runtime go "${memburst_path_executable}"
-	assert_burst_executable_path "${memburst_path_executable}"
-	burst_capture_mapped_path go
-	log_info "PASS: Go PIE mapped pathname ${memburst_path_case}"
-done
-
-burst_inspect_python python3 > "${MEMBURST_RUNTIME_DIR}/python-runtime.json"
-memburst_python_venv_metadata=""
-if burst_python_supported "${MEMBURST_RUNTIME_DIR}/python-runtime.json"; then
-	if python3 -c 'import venv' > /dev/null 2>&1; then
-		python3 -m venv --without-pip "${MEMBURST_RUNTIME_DIR}/python-venv"
-		memburst_python_venv_metadata="${MEMBURST_RUNTIME_DIR}/python-venv.json"
-		burst_inspect_python "${MEMBURST_RUNTIME_DIR}/python-venv/bin/python3" > "${memburst_python_venv_metadata}"
+case $1 in
+go)
+	go build -mod=vendor -buildmode=pie -o "${MEMBURST_PIE_FIXTURE}" ./integration/testdata/test_memory_threshold_snapshot_golang.go
+	LC_ALL=C readelf -h "${MEMBURST_PIE_FIXTURE}" > "${MEMSNAP_ACCEPTANCE_ARTIFACTS}/pie-header.txt"
+	assert_burst_pie_fixture
+	for memburst_path_case in ordinary consecutive_spaces tab unicode_space trailing_space trailing_cr; do
+		HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/mapped-go-${memburst_path_case}"
+		mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
+		case ${memburst_path_case} in
+		ordinary) memburst_path_name=heap ;;
+		consecutive_spaces) memburst_path_name='heap  fixture' ;;
+		tab) memburst_path_name=$'heap\tfixture' ;;
+		unicode_space) memburst_path_name=$'heap\xc2\xa0fixture' ;;
+		trailing_space) memburst_path_name='heap ' ;;
+		trailing_cr) memburst_path_name=$'heap\r' ;;
+		esac
+		memburst_path_executable="${HUATUO_BAMAI_TEST_TMPDIR}/${memburst_path_name}"
+		cp "${MEMBURST_PIE_FIXTURE}" "${memburst_path_executable}"
+		burst_start_runtime go "${memburst_path_executable}"
+		assert_burst_executable_path "${memburst_path_executable}"
+		burst_capture_mapped_path go
+		log_info "PASS: Go PIE mapped pathname ${memburst_path_case}"
+	done
+	exit 0
+	;;
+python)
+	cp "${ROOT_DIR}/integration/testdata/test_memsnapshot.py" "${MEMBURST_RUNTIME_DIR}/snapshot.py"
+	burst_inspect_python python3 > "${MEMBURST_RUNTIME_DIR}/python-runtime.json"
+	memburst_python_venv_metadata=""
+	if burst_python_supported "${MEMBURST_RUNTIME_DIR}/python-runtime.json"; then
+		if python3 -c 'import venv' > /dev/null 2>&1; then
+			python3 -m venv --without-pip "${MEMBURST_RUNTIME_DIR}/python-venv"
+			memburst_python_venv_metadata="${MEMBURST_RUNTIME_DIR}/python-venv.json"
+			burst_inspect_python "${MEMBURST_RUNTIME_DIR}/python-venv/bin/python3" > "${memburst_python_venv_metadata}"
+		else
+			log_info 'SKIP: Python venv mapped-path cases require the venv module'
+		fi
 	else
-		log_info 'SKIP: Python venv mapped-path cases require the venv module'
+		log_info "SKIP: Python mapped-path cases require GIL-enabled CPython 3.8-3.14 with _PyRuntime and version metadata: $(< "${MEMBURST_RUNTIME_DIR}/python-runtime.json")"
 	fi
-else
-	log_info "SKIP: Python mapped-path cases require GIL-enabled CPython 3.8-3.14 with _PyRuntime and version metadata: $(< "${MEMBURST_RUNTIME_DIR}/python-runtime.json")"
-fi
-memburst_java_home=""
-if [[ -f ${MEMBURST_RUNTIME_DIR}/HeapFixture.class ]]; then
-	memburst_java_executable=$(readlink -f "$(command -v java)")
-	memburst_java_home="${MEMBURST_RUNTIME_DIR}/mapped-jdk"
-	cp -a "${memburst_java_executable%/bin/java}" "${memburst_java_home}"
-else
-	log_info 'SKIP: Java mapped-path cases require java and javac'
-fi
+	modes=(python python_venv)
+	;;
+java)
+	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_RUNTIME_DIR}" snapshot_build_managed_runtime_fixtures
+	memburst_java_home=""
+	if [[ -f ${MEMBURST_RUNTIME_DIR}/HeapFixture.class ]]; then
+		memburst_java_executable=$(readlink -f "$(command -v java)")
+		memburst_java_home="${MEMBURST_RUNTIME_DIR}/mapped-jdk"
+		cp -a "${memburst_java_executable%/bin/java}" "${memburst_java_home}"
+	else
+		log_info 'SKIP: Java mapped-path cases require java and javac'
+	fi
+	modes=(java)
+	;;
+*) fatal "unknown mapped-path group: $1" ;;
+esac
 for memburst_path_case in ordinary consecutive_spaces tab; do
 	case ${memburst_path_case} in
 	ordinary) memburst_path_name=runtime ;;
 	consecutive_spaces) memburst_path_name='runtime  name' ;;
 	tab) memburst_path_name=$'runtime\tname' ;;
 	esac
-	for memburst_path_mode in python python_venv java; do
+	for memburst_path_mode in "${modes[@]}"; do
 		memburst_path_language=${memburst_path_mode%_venv}
 		if [[ ${memburst_path_language} == java && -z ${memburst_java_home} ]]; then continue; fi
 		if [[ ${memburst_path_language} == python ]]; then
