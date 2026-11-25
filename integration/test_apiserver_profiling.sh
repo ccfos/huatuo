@@ -87,6 +87,17 @@ assert_no_runtime_panics() {
 	esac
 }
 
+check_oncpu_result() {
+	local job_id=$1 profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds
+	wait_job "$job_id" completed
+	profiling_results_fetch "$job_id" "$HUATUO_BAMAI_TEST_TMPDIR" "$profile_type" \
+		|| fatal "failed to fetch profiling results"
+	jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$job_id.json" | assert_profile_windows - 2 "$profile_type" \
+		|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$job_id.json"
+	assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$job_id.json" \
+		|| fatal "profiling flamegraph validation failed"
+}
+
 functional_cases() {
 	local quota first
 	for quota in host global; do
@@ -125,13 +136,7 @@ functional_cases() {
 	# Pagination validation needs a completed task after lifecycle cases moved to e2e.
 	create
 	local completed=$JOB_ID
-	wait_job "$completed" completed
-	profiling_results_fetch "$completed" "$HUATUO_BAMAI_TEST_TMPDIR" 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
-		|| fatal "failed to fetch profiling results"
-	jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json" | assert_profile_windows - 2 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
-		|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json"
-	assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$completed.json" \
-		|| fatal "profiling flamegraph validation failed"
+	check_oncpu_result "$completed"
 	CURRENT_CASE=sample-label-filters
 	assert_sample_label_filters "$completed"
 	pass
@@ -158,7 +163,7 @@ functional_cases() {
 	cpu_list=$(cat /sys/devices/system/cpu/online)
 	create 12 "$(jq -nc --arg cpus "${cpu_list}" '{host_cpu_list:$cpus}')"
 	local cpu_job=$JOB_ID
-	verify_result "$cpu_job"
+	check_oncpu_result "$cpu_job"
 	request GET "/v1/profiling/${cpu_job}" 200
 	jq -e --arg cpus "${cpu_list}" '.data.host_cpu_list == $cpus' "$RESPONSE" > /dev/null || fatal "CPU range was not preserved"
 	pass
@@ -175,7 +180,7 @@ functional_cases() {
 		'{"type":"memory","language":"c","mode":"virtual_alloc"}'; do
 		create 12 "$(jq -nc --argjson spec "$spec" '$spec + {scope:"container",container_id:("a" * 64),host_cpu_list:"1"}')"
 		wait_job "$JOB_ID" failed
-		assert_reason "$JOB_ID" execution_start_failed
+		assert_terminal_reason "$JOB_ID" execution_start_failed
 		jq -e '.data.terminal.message | contains("CPU targeting is not supported")' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/status-${JOB_ID}.json" > /dev/null || fatal "unsupported CPU target was ignored"
 	done
