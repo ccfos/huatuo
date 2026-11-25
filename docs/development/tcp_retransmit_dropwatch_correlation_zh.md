@@ -235,12 +235,16 @@ software drop 会先消费可能存在的 hardware dedup marker，避免被拒�
 
 `retransmit.Tracer` 和 `internal/dropwatch.Tracer` 分别拥有各自的 BPF 对象、reader 和限流告警 worker。`Open` 失败会回滚已获取资源；会话 context 取消后，调用方仍需调用 `Close`。限流告警 worker 失败会取消对应采集，原始错误由 `Close` 返回。
 
+`internal/dropwatch.Open` 在启动检查发现取消且资源回滚成功后，直接返回 `dropwatch.ErrOpenCanceled`。调用方直接比较该标记，识别预期停止。操作失败及回滚失败保留具体原因，不包装该标记。
+
 ### 读取与关闭契约
 
-`ReadInto` 在开始读取前检查关闭或取消状态，进入底层读取后保留底层结果，不以随后发生的关闭或取消覆盖结果。`Close` 可打断读取，调用方必须串行调用同一实例的 `Close`。
+`retransmit.Tracer.ReadInto` 在开始读取前检查关闭或取消状态，进入底层读取后保留底层结果，不以随后发生的关闭或取消覆盖结果。`Close` 可打断两类 tracer 的读取，调用方必须串行调用同一实例的 `Close`。
 
-`internal/dropwatch.Tracer` 还具有以下约束：
+`internal/dropwatch.Tracer` 具有以下读取与生命周期契约：
 
+- 调用方取消、截止时间到期、信号终止及正常关闭时，`ReadInto` 直接返回 `types.ErrExitByCancelCtx`，调用方直接比较该标记。成功读取和独立读取错误均保持原样，不被同时发生的取消覆盖。
+- 限流告警 worker 失败时，读取被打断并返回 worker 错误，替代正常停止标记。
 - 实例 context 派生自 `groupCtx`；每个实例只允许一个 `ReadInto` 调用者，状态读取和关闭可并发。
 - `ReadStatus` 在 context 取消后仍可读取最终计数。状态类型为 `types.DropwatchStatus`，输出字段为 `drop_perf_status`，包含 map 计数可用性标记。
 - `Close` 依次取消实例、detach 并关闭事件与告警 reader、等待告警 worker 退出，最后释放 BPF 对象。关闭告警 reader 会唤醒空闲读取，无需等待轮询期限。

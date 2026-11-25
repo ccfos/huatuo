@@ -23,7 +23,8 @@ struct {
 SEC("kprobe/try_to_free_pages")
 int kprobe_try_to_free_pages(struct pt_regs *ctx)
 {
-	func_trace_begin(bpf_get_current_pid_tgid());
+	u64 id = bpf_get_current_pid_tgid();
+	func_trace_begin(id, id);
 	return 0;
 }
 
@@ -32,7 +33,8 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 {
 	struct trace_entry_ctx *entry;
 
-	entry = func_trace_end(bpf_get_current_pid_tgid());
+	u64 id = bpf_get_current_pid_tgid();
+	entry = func_trace_end(id);
 	if (!entry)
 		return 0;
 
@@ -51,6 +53,6 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 				      sizeof(struct memory_reclaim_event));
 	}
 
-	func_trace_destroy(entry->id);
+	func_trace_destroy(id);
 	return 0;
 }

@@ -34,8 +34,6 @@ func validateConfig(config *Config) error {
 		return errors.New("create node profiling service: profiler path is required")
 	case config.ToolstreamSocketPath == "":
 		return errors.New("create node profiling service: toolstream socket path is required")
-	case config.NodeAPIAddress == "":
-		return errors.New("create node profiling service: node API address is required")
 	case config.AggregationInterval <= 0:
 		return errors.New("create node profiling service: aggregation interval must be positive")
 	case config.MaxConcurrentProcesses < 0:

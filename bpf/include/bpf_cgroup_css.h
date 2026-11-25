@@ -7,6 +7,7 @@
 #include <bpf/bpf_helpers.h>
 
 #include "bpf_common.h"
+#include "bpf_cgroup.h"
 #include "abi/cgroup_types.h"
 
 struct {
@@ -30,6 +31,7 @@ submit_cgroup_css_event(void *ctx, struct cgroup *cgrp,
 		return 0;
 
 	data.cgroup	  = (u64)cgrp;
+	data.cgroup_id = cgroup_id(cgrp);
 	data.operation   = operation;
 	data.cgroup_root  = BPF_CORE_READ(cgrp, root, hierarchy_id);
 	data.cgroup_level = BPF_CORE_READ(cgrp, level);

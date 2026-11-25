@@ -31,12 +31,14 @@ weight: 4
 # Global blacklist for tracing and metrics.
 # Default: [] (empty). The list below explicitly disables these modules.
 #
-BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
+BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_npu", "blk_iostat", "tcp_retransmit", "mthreads_gpu", "mthreads_xid"]
 ```
 
 | 字段 | 说明 |
 | --- | --- |
 | `BlackList` | 禁用的追踪器和指标采集器名称数组，内置默认值为 `[]`。启用模块需从黑名单移除对应名称，满足其依赖和开关条件，并重启以完成注册。 |
+
+`BlackList` 和 `--disable-tracing` 兼容旧名称 `io_health`、`iolatency`、`iocost`、`diskio`，分别转换为 `blk_device_health`、`blk_iotrace`、`blk_iocost`、`blk_iostat`。旧配置仍禁用相同的采集器，新配置请使用新名称。
 
 配置文件显式禁用以下模块：
 
@@ -47,7 +49,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "net_conntrack", "metax_gpu", "ascend_
 | `net_conntrack` | 连接跟踪统计 |
 | `metax_gpu` | Metax GPU 指标 |
 | `ascend_npu` | Ascend NPU 指标 |
-| `diskio` | 磁盘 I/O 指标 |
+| `blk_iostat` | 磁盘 I/O 指标 |
 | `tcp_retransmit` | TCP 重传追踪 |
 | `mthreads_gpu` | 摩尔线程 GPU 指标 |
 | `mthreads_xid` | 摩尔线程 GPU XID 事件 |
@@ -406,7 +408,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 # Use [[double-bracket]] syntax to define each rule entry.
 #
 # Supported fields:
-# - container_host_namespace: namespace label of the container
+# - container_namespace: namespace label of the container
 # - container_hostname: hostname of the container
 # - container_qos: qos level (guaranteed, burstable, besteffort)
 #
@@ -426,15 +428,15 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 #
 # # Whitelist: only monitor application namespaces
 # [[AutoTracing.CPUIdle.Filter.Included]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = "^application-"
 #
 # # Combine: monitor application namespaces except kube-system
 # [[AutoTracing.CPUIdle.Filter.Included]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = ".*"
 # [[AutoTracing.CPUIdle.Filter.Excluded]]
-#     Field = "container_host_namespace"
+#     Field = "container_namespace"
 #     Pattern = "^kube-system$"
 ```
 
@@ -446,7 +448,7 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 - 仅配置 `Included`：仅监控匹配的容器。
 - 同时配置两者：监控匹配 `Included` 且不匹配 `Excluded` 的容器。
 
-#### 7.2 宿主机系统态 CPU 突增
+#### 7.2 宿主机 CPU 突增
 
 ```toml
 # cpusys
@@ -481,6 +483,10 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 [AutoTracing.CPUSys]
     # Tool: perf (default) or profiler. Both use RunTracingToolTimeout.
     # Tool = "perf"
+    # UserThreshold = 75
+    # DeltaUserThreshold = 45
+    # UsageThreshold = 90
+    # DeltaUsageThreshold = 55
     # SysThreshold = 45
     # DeltaSysThreshold = 20
     # Interval = 10
@@ -490,13 +496,20 @@ Java 使用 `ToolDir` 下的 `bin/asprof` 和 `lib/libasyncProfiler.so`，Python
 
 | 字段 | 说明 |
 | --- | --- |
+| `UserThreshold` / `DeltaUserThreshold` | 宿主机用户态使用率 / 增量阈值，默认 `75%` / `45` 个百分点。 |
+| `UsageThreshold` / `DeltaUsageThreshold` | 宿主机总执行 CPU 使用率 / 增量阈值，默认 `90%` / `55` 个百分点。 |
 | `SysThreshold` | 宿主机系统态 CPU 使用率阈值，默认 `45%`。 |
 | `DeltaSysThreshold` | 系统态 CPU 使用率相对上次采样的增量阈值，默认 `20` 个百分点。 |
 | `Interval` | 宿主机 CPU 使用率采样间隔，单位秒，默认 `10`。 |
 | `IntervalTracing` | 两次追踪之间的最小间隔，单位秒，默认 `1800`。 |
 | `RunTracingToolTimeout` | 采集时长，单位秒，默认 `10`。 |
 
-**触发条件**：满足追踪间隔后，系统态 CPU 使用率严格大于 `SysThreshold`，且其增量严格大于 `DeltaSysThreshold` 时触发。
+**触发条件**：共用冷却结束后，system/user/total 任一组的使用率及增幅同时严格超过阈值即可触发。
+system 使用上表中的 CPUSys 阈值；user 和 total 分别使用 CPUSys 的
+UserThreshold/DeltaUserThreshold（默认 75/45）和
+UsageThreshold/DeltaUsageThreshold（默认 90/55），与 CPUIdle 独立配置。
+使用率单位为百分比，增幅单位为百分点。三组条件均按阈值严格比较，0 为普通阈值，不表示关闭。
+主机三组条件共用 CPUSys 的采集和冷却，不与容器触发状态共享。
 
 #### 7.3 容器 D 状态负载
 
@@ -748,7 +761,51 @@ LocalFile 不足以保存该结果。
 | `MinCPUs`、`DeltaUsageThreshold` 和 `RelativeIncreaseThreshold` | 控制多 CPU irq+softirq 利用率突增规则；两个阈值分别表示利用率增加的百分点和相对上一采样值的增长百分比。 |
 | `SustainedIntervals` 和 `UsageThreshold` | 控制单 CPU irq+softirq 持续高利用率规则的连续采样次数和利用率阈值。 |
 
-#### 7.8 已知问题标记
+#### 7.8 SchedBlame CPU 竞争归因
+
+SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒的竞争比例
+超过该目标基于历史数据计算的自适应阈值时，生成
+`sched-blame-external` 事件。
+
+```toml
+[AutoTracing.SchedBlame]
+    # TargetContainerScope = "normal"
+    # TargetQos = []
+    # HighlightContainer = ""
+    # SliceDropPercent = 0
+    # ExternalAnomalyK = 1.0
+    # SliceBatchSize = 128
+    # PerfEventPerCPUBufferBytes = 524288
+    # PerfEventWatermarkBytes = 8192
+    # PerfEventQueueRecords = 8192
+    # PollIntervalMs = 100
+    # ExternalRatioDebugFile = ""
+```
+
+- **TargetContainerScope**：`normal` 仅选择普通业务容器，`all` 选择所有已发现
+  的容器。默认 `normal`。
+- **TargetQos**：可选的候选容器 QoS 过滤器。值不区分大小写，可使用
+  `guaranteed`、`burstable` 或 `besteffort`；空列表接受全部 QoS。默认 `[]`。
+- **HighlightContainer**：可选的容器 hostname、完整容器 ID 或唯一 ID 前缀，
+  用于输出该目标的调试日志、比例 CSV 和 SuperMonitor 对比。默认为空。
+- **SliceDropPercent**：传输前随机丢弃的已完成调度时间片百分比。有效范围
+  `0..99`，默认 `0`。
+- **ExternalAnomalyK**：应用于目标历史 P99 外部竞争比例的非负倍数。默认
+  `1.0`。
+- **SliceBatchSize**：每个 perf 记录最多包含的时间片数。有效范围 `1..128`，
+  默认 `128`。
+- **PerfEventPerCPUBufferBytes**：每个 CPU 请求的 perf ring 数据容量。默认
+  `524288`。
+- **PerfEventWatermarkBytes**：reader 唤醒水位，必须为正数且小于实际每 CPU
+  ring 容量。默认 `8192`。
+- **PerfEventQueueRecords**：共享的已解码记录队列容量。默认 `8192`。
+- **PollIntervalMs**：执行有界队列排空和评估检查的间隔。有效范围
+  `1..1000`，默认 `100`。
+- **ExternalRatioDebugFile**：可选的 CSV 路径，用于记录每个目标每秒的比例
+  诊断数据。默认为空。交互式图表和 SuperMonitor 对比方法见
+  [SchedBlame Analysis](../best-practice/sched-blame-analysis_en.md)。
+
+#### 7.9 已知问题标记
 
 ```toml
 # Autotracing configuration.

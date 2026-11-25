@@ -35,6 +35,7 @@ const (
 	cliFlagMaxFilesPerPid = "max-files-per-process"
 	cliFlagSchedThreshold = "schedule-threshold"
 	cliFlagDuration       = "duration"
+	cliFlagEnablePProf    = "enable-pprof"
 )
 
 const (
@@ -95,6 +96,10 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
 			Usage: "task ID to associate with this session (requires --output-storage)",
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagEnablePProf,
+			Usage: "serve this process's Go runtime profiles on 127.0.0.1:6000",
 		},
 	}
 }

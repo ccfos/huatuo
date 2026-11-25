@@ -20,6 +20,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/profiling/profile"
 
 	"github.com/ccfos/huatuo/internal/profiling/pipeline"
@@ -92,10 +93,38 @@ func TestSoftIRQNormalStopPreservesDetachFailure(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(t.Context())
 			cancel(cause)
 			c := &collector{bpfObj: &orderMockBPF{detachErr: failure}}
-			err := c.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error { t.Fatal("delivered after detach failure"); return nil })
+			if err := c.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error { t.Fatal("delivered before finalization"); return nil }); err != nil {
+				t.Fatal(err)
+			}
+
+			err := c.Finalize(t.Context(), func(*pipeline.SampleBatch) error { t.Fatal("delivered after detach failure"); return nil })
 			if !errors.Is(err, failure) {
 				t.Fatalf("error=%v", err)
 			}
 		})
+	}
+}
+
+type closeIRQBPFStub struct {
+	bpf.BPF
+	err   error
+	calls int
+}
+
+func (b *closeIRQBPFStub) Close() error {
+	b.calls++
+	return b.err
+}
+
+func TestSoftIRQStopPreservesCloseFailure(t *testing.T) {
+	failure := errors.New("IRQ BPF close failed")
+	obj := &closeIRQBPFStub{err: failure}
+	c := &collector{bpfObj: obj}
+	if err := c.Stop(); !errors.Is(err, failure) {
+		t.Fatalf("Stop() error=%v, want %v", err, failure)
+	}
+
+	if err := c.Stop(); err != nil || obj.calls != 1 {
+		t.Fatalf("repeated Stop() error=%v close calls=%d", err, obj.calls)
 	}
 }

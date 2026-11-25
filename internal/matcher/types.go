@@ -15,7 +15,7 @@
 package matcher
 
 // Rule holds a field selector and a regex pattern for use in ContainerMatcher.
-// Field is the container field name (e.g. FieldTypeContainerHostname);
+// Field is the container field name (e.g. observation.FieldContainerHostname);
 // Pattern is the regular expression to match against that field's value.
 type Rule struct {
 	Field   string

@@ -30,7 +30,7 @@ func TestCapabilityDefinitions(t *testing.T) {
 	for i, definition := range capabilityDefinitions {
 		require.Equal(t, wantTypes[i], definition.Type)
 		require.NotEqual(t, TypeUnknown, definition.Type)
-		require.Equal(t, []observation.Scope{observation.ScopeHost}, definition.SupportedScopes)
+		require.Equal(t, []observation.Scope{observation.ScopeTypeHost}, definition.SupportedScopes)
 		require.False(t, definition.available)
 		_, duplicate := seen[definition.Type]
 		require.False(t, duplicate, "duplicate tracing type %q", definition.Type)
@@ -56,8 +56,8 @@ func TestCapabilitiesRemainStaticWithoutExecutors(t *testing.T) {
 	t.Parallel()
 	capabilities := Capabilities()
 	require.Len(t, capabilities, 3)
-	capabilities[0].SupportedScopes[0] = observation.ScopeContainer
-	require.Equal(t, observation.ScopeHost, Capabilities()[0].SupportedScopes[0])
+	capabilities[0].SupportedScopes[0] = observation.ScopeTypeContainer
+	require.Equal(t, observation.ScopeTypeHost, Capabilities()[0].SupportedScopes[0])
 	for _, typ := range []Type{TypeNetworkingDrop, TypeIO, TypeTCPRetransmit} {
 		require.False(t, IsAvailable(typ))
 	}
@@ -67,11 +67,11 @@ func TestCloneCapabilityReturnsDeepCopy(t *testing.T) {
 	t.Parallel()
 	got := cloneCapability(&capabilityDefinitions[0].Capability)
 	got.Type = TypeIO
-	got.SupportedScopes[0] = observation.ScopeContainer
+	got.SupportedScopes[0] = observation.ScopeTypeContainer
 	require.Equal(t, TypeNetworkingDrop, capabilityDefinitions[0].Type)
 	require.Equal(
 		t,
-		[]observation.Scope{observation.ScopeHost},
+		[]observation.Scope{observation.ScopeTypeHost},
 		capabilityDefinitions[0].SupportedScopes,
 	)
 }

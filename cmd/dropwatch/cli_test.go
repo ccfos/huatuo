@@ -16,13 +16,17 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // CLI tests must run serially: urfave/cli adds the shared HelpFlag to each app
@@ -60,6 +64,51 @@ func TestAppSourceTypes(t *testing.T) {
 			}
 			if sourceTypes != tt.want {
 				t.Fatalf("source types = %q, want %q", sourceTypes, tt.want)
+			}
+		})
+	}
+}
+
+func TestMainActionCanceledBeforeStartup(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := mainAction(ctx, &dropwatchOptions{}); err != nil {
+		t.Fatalf("mainAction() = %v, want successful cancellation", err)
+	}
+}
+
+func TestStreamDropwatchEventsCancellation(t *testing.T) {
+	readErr := errors.New("read failed")
+	tests := []struct {
+		name    string
+		cancel  bool
+		readErr error
+		wantErr error
+	}{
+		{name: "reader stopped", readErr: types.ErrExitByCancelCtx},
+		{name: "caller canceled", cancel: true, readErr: types.ErrExitByCancelCtx},
+		{name: "worker failed", readErr: readErr, wantErr: readErr},
+		{name: "read failed during cancellation", cancel: true, readErr: readErr, wantErr: readErr},
+		{
+			name:    "joined failure during cancellation",
+			cancel:  true,
+			readErr: errors.Join(types.ErrExitByCancelCtx, readErr),
+			wantErr: readErr,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			readInto := func(*abi.DropwatchPacketEvent) error {
+				if tt.cancel {
+					cancel()
+				}
+				return tt.readErr
+			}
+			err := streamDropwatchEvents(ctx, readInto, nil, nil, "tools")
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("stream = %v, want %v", err, tt.wantErr)
 			}
 		})
 	}

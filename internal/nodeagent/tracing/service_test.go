@@ -55,7 +55,7 @@ func TestStartValidatesThenReportsExecutorUnavailable(t *testing.T) {
 	request := StartRequest{
 		RequestID: "job-1",
 		Duration:  time.Minute,
-		Scope:     observation.ScopeHost,
+		Scope:     observation.ScopeTypeHost,
 		Spec: tracingdomain.Spec{
 			Type: tracingdomain.TypeNetworkingDrop,
 		},
@@ -74,7 +74,7 @@ func TestStartRejectsUnsupportedScopeBeforeAvailability(t *testing.T) {
 	_, _, err = service.Start(t.Context(), &StartRequest{
 		RequestID:   "job-1",
 		Duration:    time.Minute,
-		Scope:       observation.ScopeContainer,
+		Scope:       observation.ScopeTypeContainer,
 		ContainerID: "container-1",
 		Spec: tracingdomain.Spec{
 			Type: tracingdomain.TypeNetworkingDrop,

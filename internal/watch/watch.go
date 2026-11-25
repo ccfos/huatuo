@@ -25,7 +25,8 @@ type subscriber[T any] struct {
 
 // Hub is a thread-safe fan-out pub/sub hub for values of type T.
 // Each call to Subscribe returns a buffered channel; Notify fans out to all
-// active subscribers. Full subscriber channels are silently dropped.
+// active subscribers. The zero value is ready for use and lazily adopts the
+// default per-subscriber buffer size. Full subscriber channels are silently dropped.
 type Hub[T any] struct {
 	mu      sync.RWMutex
 	subs    map[uint64]*subscriber[T]
@@ -45,10 +46,18 @@ func NewHub[T any]() *Hub[T] {
 // cancel function. Calling cancel unregisters the subscriber.
 func (h *Hub[T]) Subscribe() (<-chan T, func()) {
 	h.mu.Lock()
+	if h.subs == nil {
+		h.subs = make(map[uint64]*subscriber[T])
+	}
+	if h.bufSize <= 0 {
+		h.bufSize = defaultBufSize
+	}
+
 	id := h.nextID
 	h.nextID++
 	sub := &subscriber[T]{ch: make(chan T, h.bufSize)}
 	h.subs[id] = sub
+
 	h.mu.Unlock()
 
 	return sub.ch, func() {

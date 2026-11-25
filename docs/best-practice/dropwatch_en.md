@@ -142,10 +142,13 @@ dropwatch [flags]
 | `--output-storage <path>` | None | Send events to huatuo-bamai through a Unix socket |
 | `--task-id <id>` | None | Task ID associated with this session, usually used with `--output-storage` |
 | `--max-events-per-second <n>` | 0 | Global reporting rate limit; 0 is unlimited. Applied after `--device` / `--filter` |
+| `--enable-pprof` | `false` | Expose the tool process's Go runtime profiles on `127.0.0.1:6000`. |
 
 `--filter` and device filters are independent and both apply when specified (AND semantics). Without `--device` or `--device-excluded`, all devices are collected. These two flags are mutually exclusive. Allowlists reject SKBs without a `net_device`; denylists allow them.
 
 At startup, dropwatch detects `devlink:devlink_trap_report`. If available, it loads both software and hardware drop probes; otherwise it logs a warning and loads only the software probe. Hardware collection also requires the NIC driver to register devlink drop traps and the target trap action to be `trap`. With action `drop`, hardware does not provide a packet copy to the CPU, so dropwatch cannot capture it.
+
+pprof is disabled by default. Passing `--enable-pprof` enables it on `127.0.0.1:6000`; an occupied port fails startup. It profiles this tool process, not huatuo-bamai or the traced target.
 
 ### Hardware Drops
 

@@ -35,11 +35,12 @@ type WatchEventData struct {
 	Region                  string `json:"region"`
 	ObservedTimestamp       string `json:"observed_timestamp"`
 	KernelObservedTimestamp string `json:"kernel_observed_timestamp,omitempty"`
+	ContainerName           string `json:"container_name,omitempty"`
 	ContainerID             string `json:"container_id,omitempty"`
 	ContainerHostname       string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace  string `json:"container_host_namespace,omitempty"`
+	ContainerNamespace      string `json:"container_namespace,omitempty"`
 	ContainerType           string `json:"container_type,omitempty"`
-	ContainerQos            string `json:"container_qos,omitempty"`
+	ContainerQoS            string `json:"container_qos,omitempty"`
 	TracerName              string `json:"tracer_name,omitempty"`
 	TracerID                string `json:"tracer_id,omitempty"`
 	TracerRunType           string `json:"tracer_run_type,omitempty"`

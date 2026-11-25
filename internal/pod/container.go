@@ -18,10 +18,18 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 // containerIDRegexp matches a 12-64 character hex container ID.
 var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
+
+// CgroupCSSRef identifies one cgroup subsystem state instance.
+type CgroupCSSRef struct {
+	CSSAddr  uint64
+	CgroupID uint64
+}
 
 // Container object
 type Container struct {
@@ -51,9 +59,9 @@ func (c *Container) LifeResources(key string) any {
 	return c.lifeResources[key]
 }
 
-// LabelHostNamespace returns namespace label
-func (c *Container) LabelHostNamespace() string {
-	return c.Labels[labelHostNamespace].(string)
+// LabelNamespace returns namespace label
+func (c *Container) LabelNamespace() string {
+	return c.Labels[observation.FieldContainerNamespace].(string)
 }
 
 func (c *Container) InitPidOrInitnsPid() int {
@@ -152,20 +160,11 @@ func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
 	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
 }
 
-// GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
-func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
-	containers, err := Containers()
-	if err != nil {
-		return nil, err
-	}
-	return BuildCssContainersID(containers, subsys), nil
-}
-
 // BuildCssContainersID builds a css-address map from the provided containers.
 func BuildCssContainersID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr, ok := container.CgroupCss[subsys]; ok && addr != 0 {
 			cssToContainerMap[addr] = container.ID
 		}
 	}
@@ -176,7 +175,7 @@ func BuildCssContainersID(containers map[string]*Container, subsys string) map[u
 func BuildCssContainers(containers map[string]*Container, subsys string) map[uint64]*Container {
 	cssToContainerMap := make(map[uint64]*Container, len(containers))
 	for _, container := range containers {
-		if addr, ok := container.CgroupCss[subsys]; ok {
+		if addr, ok := container.CgroupCss[subsys]; ok && addr != 0 {
 			cssToContainerMap[addr] = container
 		}
 	}
@@ -198,4 +197,16 @@ func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 		return nil, nil
 	}
 	return containerBy(func(c *Container) uint64 { return c.NetNamespaceCookie }, cookie)
+}
+
+// ObservationMetadata returns container attributes without node identity or clocks.
+func (c *Container) ObservationMetadata() observation.Metadata {
+	return observation.Metadata{
+		ContainerID:        c.ID,
+		ContainerName:      c.Name,
+		ContainerHostname:  c.Hostname,
+		ContainerNamespace: c.LabelNamespace(),
+		ContainerType:      c.Type.String(),
+		ContainerQoS:       c.Qos.String(),
+	}
 }

@@ -207,10 +207,20 @@ func (e WatchEventSpecVersion) Valid() bool {
 	}
 }
 
+// CgroupCSSRef A reference to one cgroup subsystem state observed in a single cgroup lifecycle event. The address may be reused after the cgroup is removed; consumers must compare both fields with the current kernel state before attributing samples.
+type CgroupCSSRef struct {
+	// CgroupID Full kernel cgroup ID of the cgroup owning this subsystem state, including the kernfs generation, encoded as a fixed-width hexadecimal string.
+	CgroupID string `json:"cgroup_id"`
+
+	// CSSAddr Kernel virtual address of the cgroup subsystem state, encoded as a fixed-width hexadecimal string.
+	CSSAddr string `json:"css_addr"`
+}
+
 // ContainerMetadata defines model for ContainerMetadata.
 type ContainerMetadata struct {
-	CgroupCSS map[string]string `json:"cgroup_css"`
-	ID        string            `json:"id"`
+	// CgroupCSSRefs Subsystem-to-CSS-reference snapshot from this node. Entries are omitted when a complete reference is unavailable; cgroup v1 subsystems may have different cgroup IDs. Kernel addresses are meaningful only on this node; consumers must verify each pair against current kernel state before use.
+	CgroupCSSRefs map[string]CgroupCSSRef `json:"cgroup_css_refs"`
+	ID            string                  `json:"id"`
 }
 
 // ContainerResponse defines model for ContainerResponse.
@@ -310,12 +320,13 @@ type WatchEvent struct {
 
 // WatchEventData defines model for WatchEventData.
 type WatchEventData struct {
-	ContainerHostNamespace *string `json:"container_host_namespace,omitempty"`
-	ContainerHostname      *string `json:"container_hostname,omitempty"`
-	ContainerID            *string `json:"container_id,omitempty"`
-	ContainerQos           *string `json:"container_qos,omitempty"`
-	ContainerType          *string `json:"container_type,omitempty"`
-	Hostname               string  `json:"hostname"`
+	ContainerHostname  *string `json:"container_hostname,omitempty"`
+	ContainerID        *string `json:"container_id,omitempty"`
+	ContainerName      *string `json:"container_name,omitempty"`
+	ContainerNamespace *string `json:"container_namespace,omitempty"`
+	ContainerQoS       *string `json:"container_qos,omitempty"`
+	ContainerType      *string `json:"container_type,omitempty"`
+	Hostname           string  `json:"hostname"`
 
 	// KernelObservedTimestamp UTC time when the kernel observed the event, when available, emitted with nine fractional digits.
 	KernelObservedTimestamp *time.Time `json:"kernel_observed_timestamp,omitempty"`
@@ -330,12 +341,15 @@ type WatchEventData struct {
 
 // WatchEventFilters defines model for WatchEventFilters.
 type WatchEventFilters struct {
-	ContainerHostNamespace *string `json:"container_host_namespace,omitempty"`
-	ContainerHostname      *string `json:"container_hostname,omitempty"`
-	ContainerQos           *string `json:"container_qos,omitempty"`
-	Hostname               *string `json:"hostname,omitempty"`
-	Region                 *string `json:"region,omitempty"`
-	TracerName             *string `json:"tracer_name,omitempty"`
+	ContainerHostname  *string `json:"container_hostname,omitempty"`
+	ContainerID        *string `json:"container_id,omitempty"`
+	ContainerName      *string `json:"container_name,omitempty"`
+	ContainerNamespace *string `json:"container_namespace,omitempty"`
+	ContainerQoS       *string `json:"container_qos,omitempty"`
+	ContainerType      *string `json:"container_type,omitempty"`
+	Hostname           *string `json:"hostname,omitempty"`
+	Region             *string `json:"region,omitempty"`
+	TracerName         *string `json:"tracer_name,omitempty"`
 }
 
 // WatchEventSpecVersion defines model for WatchEventSpecVersion.

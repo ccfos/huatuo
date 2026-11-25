@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/observation"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +27,7 @@ import (
 // testContainer is shared across container-related tests.
 var testContainer = &pod.Container{
 	Hostname: "test-host",
-	Labels:   map[string]any{"HostNamespace": "application-ns"},
+	Labels:   map[string]any{observation.FieldContainerNamespace: "application-ns"},
 	Qos:      pod.ContainerQos(1),
 }
 
@@ -53,7 +54,7 @@ func TestNewContainerMatcher_NoSpecs(t *testing.T) {
 
 func TestNewContainerMatcher_InvalidIncludePattern(t *testing.T) {
 	_, err := NewContainerMatcher(
-		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostname, "[invalid")},
+		[]FieldSpec[*pod.Container]{containerSpec(observation.FieldContainerHostname, "[invalid")},
 		nil,
 	)
 	require.Error(t, err)
@@ -62,7 +63,7 @@ func TestNewContainerMatcher_InvalidIncludePattern(t *testing.T) {
 func TestNewContainerMatcher_InvalidExcludePattern(t *testing.T) {
 	_, err := NewContainerMatcher(
 		nil,
-		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerQos, "[invalid")},
+		[]FieldSpec[*pod.Container]{containerSpec(observation.FieldContainerQoS, "[invalid")},
 	)
 	require.Error(t, err)
 }
@@ -76,12 +77,12 @@ func TestContainerMatcher_Include(t *testing.T) {
 		pattern   string
 		wantMatch bool
 	}{
-		{"namespace matched", FieldTypeContainerHostNamespace, "^application-", true},
-		{"namespace unmatched", FieldTypeContainerHostNamespace, "^kube-system", false},
-		{"hostname matched", FieldTypeContainerHostname, "test-.*", true},
-		{"hostname unmatched", FieldTypeContainerHostname, "prod-.*", false},
-		{"qos matched", FieldTypeContainerQos, "guaranteed", true},
-		{"qos unmatched", FieldTypeContainerQos, "besteffort", false},
+		{"namespace matched", observation.FieldContainerNamespace, "^application-", true},
+		{"namespace unmatched", observation.FieldContainerNamespace, "^kube-system", false},
+		{"hostname matched", observation.FieldContainerHostname, "test-.*", true},
+		{"hostname unmatched", observation.FieldContainerHostname, "prod-.*", false},
+		{"qos matched", observation.FieldContainerQoS, "guaranteed", true},
+		{"qos unmatched", observation.FieldContainerQoS, "besteffort", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,10 +102,10 @@ func TestContainerMatcher_Exclude(t *testing.T) {
 		pattern   string
 		wantMatch bool
 	}{
-		{"namespace matched → excluded", FieldTypeContainerHostNamespace, "^application-", false},
-		{"namespace unmatched → kept", FieldTypeContainerHostNamespace, "^kube-system", true},
-		{"qos matched → excluded", FieldTypeContainerQos, "guaranteed", false},
-		{"qos unmatched → kept", FieldTypeContainerQos, "besteffort", true},
+		{"namespace matched → excluded", observation.FieldContainerNamespace, "^application-", false},
+		{"namespace unmatched → kept", observation.FieldContainerNamespace, "^kube-system", true},
+		{"qos matched → excluded", observation.FieldContainerQoS, "guaranteed", false},
+		{"qos unmatched → kept", observation.FieldContainerQoS, "besteffort", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,16 +121,16 @@ func TestContainerMatcher_Exclude(t *testing.T) {
 func TestContainerMatcher_IncludeAndExclude(t *testing.T) {
 	// in include, not in exclude → passes
 	cm, err := NewContainerMatcher(
-		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostNamespace, "^application-")},
-		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostname, "prod-")},
+		[]FieldSpec[*pod.Container]{containerSpec(observation.FieldContainerNamespace, "^application-")},
+		[]FieldSpec[*pod.Container]{containerSpec(observation.FieldContainerHostname, "prod-")},
 	)
 	require.NoError(t, err)
 	assert.True(t, cm.Match(testContainer))
 
 	// in include AND in exclude → exclude wins
 	cmBoth, err := NewContainerMatcher(
-		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostNamespace, "^application-")},
-		[]FieldSpec[*pod.Container]{containerSpec(FieldTypeContainerHostname, "test-")},
+		[]FieldSpec[*pod.Container]{containerSpec(observation.FieldContainerNamespace, "^application-")},
+		[]FieldSpec[*pod.Container]{containerSpec(observation.FieldContainerHostname, "test-")},
 	)
 	require.NoError(t, err)
 	assert.False(t, cmBoth.Match(testContainer))
@@ -141,8 +142,8 @@ func TestContainerMatcher_MultipleIncludeSpecsAND(t *testing.T) {
 	// all specs match → passes
 	cmAll, err := NewContainerMatcher(
 		[]FieldSpec[*pod.Container]{
-			containerSpec(FieldTypeContainerHostNamespace, "^application-"),
-			containerSpec(FieldTypeContainerHostname, "test-"),
+			containerSpec(observation.FieldContainerNamespace, "^application-"),
+			containerSpec(observation.FieldContainerHostname, "test-"),
 		}, nil,
 	)
 	require.NoError(t, err)
@@ -151,8 +152,8 @@ func TestContainerMatcher_MultipleIncludeSpecsAND(t *testing.T) {
 	// one spec fails → filtered out
 	cmPartial, err := NewContainerMatcher(
 		[]FieldSpec[*pod.Container]{
-			containerSpec(FieldTypeContainerHostNamespace, "^application-"),
-			containerSpec(FieldTypeContainerHostname, "prod-"),
+			containerSpec(observation.FieldContainerNamespace, "^application-"),
+			containerSpec(observation.FieldContainerHostname, "prod-"),
 		}, nil,
 	)
 	require.NoError(t, err)
@@ -163,7 +164,7 @@ func TestContainerMatcher_MultipleIncludeSpecsAND(t *testing.T) {
 
 func TestNewContainerMatcherFromRules_Include(t *testing.T) {
 	cm, err := NewContainerMatcherFromRules(
-		[]*Rule{{Field: FieldTypeContainerHostNamespace, Pattern: "^application-"}},
+		[]*Rule{{Field: observation.FieldContainerNamespace, Pattern: "^application-"}},
 		nil,
 	)
 	require.NoError(t, err)
@@ -182,7 +183,7 @@ func TestNewContainerMatcherFromRules_SkipsEmptyField(t *testing.T) {
 
 func TestNewContainerMatcherFromRules_InvalidPattern(t *testing.T) {
 	_, err := NewContainerMatcherFromRules(
-		[]*Rule{{Field: FieldTypeContainerHostname, Pattern: "[invalid"}},
+		[]*Rule{{Field: observation.FieldContainerHostname, Pattern: "[invalid"}},
 		nil,
 	)
 	require.Error(t, err)

@@ -38,7 +38,6 @@ var (
 type Config struct {
 	ProfilerPath         string
 	ToolstreamSocketPath string
-	NodeAPIAddress       string
 	// ToolDir is the shared root of external profiling tools.
 	ToolDir                 string
 	AggregationInterval     time.Duration

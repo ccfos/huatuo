@@ -103,7 +103,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format: collapsed|flamegraph|svg|json|remote-store",
+		Usage: "Output format: collapsed|flamegraph|svg|json|speedscope|chrometrace|remote-store",
 		Value: "collapsed",
 	},
 	&cli.StringFlag{
@@ -140,11 +140,6 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:  "binary-match-path",
 		Usage: "Binary path used to match target processes",
-	},
-	&cli.StringFlag{
-		Name:  "huatuo-api-address",
-		Usage: "HuaTuo API address used to resolve container metadata",
-		Value: "127.0.0.1:19704",
 	},
 	&cli.StringFlag{
 		Name:  "task-id",

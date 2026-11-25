@@ -15,8 +15,24 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"net"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 	"unsafe"
+
+	"capnproto.org/go/capnp/v3"
+
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -53,4 +69,249 @@ func TestBPFFilesystemIOPathName(t *testing.T) {
 
 		assert.Equal(t, "/huatuo-iotracing.test/io", record.PathName())
 	})
+}
+
+func TestReportAfterCollectionCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: "iotracing",
+		Version:     "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	traceErr := errors.New("collection failed after snapshot")
+	if err := writeToolstreamReport(ctx, client, &types.IOTracingSnapshot{}, traceErr); !errors.Is(err, traceErr) || errors.Is(err, toolstream.ErrOutputCanceled) {
+		t.Fatalf("report = %v, want collection error only", err)
+	}
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	decoder := capnp.NewDecoder(peer)
+	message, err := decoder.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.Release()
+	for _, wantEnd := range []bool{false, true} {
+		message, err := decoder.Decode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err := transport.ReadRootMessage(message)
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+		chunk, err := root.Chunk()
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+		gotEnd := chunk.End()
+		message.Release()
+		if gotEnd != wantEnd {
+			t.Fatalf("End = %v, want %v", gotEnd, wantEnd)
+		}
+	}
+}
+
+func TestReportDeadlineUnblocksWrite(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	client, err := toolstream.NewClient(&toolstream.ClientOptions{
+		SockPath:    path,
+		ServiceName: "iotracing",
+		Version:     "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- writeToolstreamReport(t.Context(), client, &types.IOTracingSnapshot{
+			StallStacks: []types.IOScheduleEvent{{Comm: strings.Repeat("x", 1<<20)}},
+		}, nil)
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, toolstream.ErrOutputTimeout) || errors.Is(err, toolstream.ErrOutputCanceled) {
+			t.Fatalf("report = %v, want timeout", err)
+		}
+	case <-time.After(toolstream.DefaultSendTimeout + time.Second):
+		_ = client.Close()
+		<-done
+		t.Fatal("report finalization did not return after the send timeout")
+	}
+}
+
+var _ bpf.PerfEventReader = (*reportTestReader)(nil)
+
+type reportTestReader struct {
+	bpf.PerfEventReader
+	readErr       error
+	hasRead       bool
+	hasSampleLoss bool
+}
+
+func (r *reportTestReader) ReadInto(data any) error {
+	if r.hasSampleLoss {
+		r.hasSampleLoss = false
+		return bpf.ErrPerfEventSamplesLost
+	}
+	if r.hasRead {
+		return r.readErr
+	}
+
+	r.hasRead = true
+	event := data.(*bpfScheduleDelay)
+	event.TGID = 1
+	event.TID = 2
+	event.CPU = 3
+	event.DurationNS = 2500
+	copy(event.Comm[:], "init")
+	return nil
+}
+
+type reportTestBPF struct {
+	bpf.BPF
+	t        *testing.T
+	rows     []bpf.MapItem
+	detached bool
+}
+
+func (b *reportTestBPF) Detach() error {
+	b.detached = true
+	return nil
+}
+
+func (b *reportTestBPF) DumpMapByName(name string) ([]bpf.MapItem, error) {
+	b.t.Helper()
+	if !b.detached || name != bpfSourceMapName {
+		b.t.Fatalf("map dump before detach or unexpected map: %s", name)
+	}
+	return b.rows, nil
+}
+
+type failingReportOutput struct{ err error }
+
+func (w failingReportOutput) Write([]byte) (int, error) { return 0, w.err }
+
+func TestCollectReportWritesPartialOutput(t *testing.T) {
+	readerErr := errors.New("reader failed")
+	outputErr := errors.New("output failed")
+	for _, test := range []struct {
+		name          string
+		beforeRead    bool
+		hasSampleLoss bool
+		readErr       error
+		wantStalls    int
+		wantReason    string
+	}{
+		{name: "error before first event", beforeRead: true, readErr: readerErr, wantReason: types.IOTracingFailureReader},
+		{name: "error after event", readErr: readerErr, wantStalls: 1, wantReason: types.IOTracingFailureReader},
+		{name: "normal cancellation", readErr: types.ErrExitByCancelCtx, wantStalls: 1},
+		{name: "sample loss", hasSampleLoss: true, readErr: types.ErrExitByCancelCtx, wantStalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var row bytes.Buffer
+			record := bpfFilesystemIO{
+				TGID: 1, FsReadBytes: 8192, FsWriteBytes: 16384,
+				BlockReadBytes: 2048, BlockWriteBytes: 4096,
+			}
+			if err := binary.Write(&row, binary.LittleEndian, &record); err != nil {
+				t.Fatal(err)
+			}
+			object := &reportTestBPF{t: t, rows: []bpf.MapItem{{Value: row.Bytes()}}}
+			const sampled = 250 * time.Millisecond
+			started := time.Now().Add(-sampled)
+			report, traceErr := collectReport(
+				object,
+				&reportTestReader{
+					hasRead: test.beforeRead, hasSampleLoss: test.hasSampleLoss, readErr: test.readErr,
+				},
+				ioConfig{durationSecond: 10, maxProcess: 1, maxFilesPerProcess: 1, maxStack: 2},
+				started,
+			)
+			elapsed := time.Since(started)
+			var output bytes.Buffer
+			err := writeReport(&jsonWriter{w: &output}, report, traceErr)
+			if test.wantReason != "" {
+				if !errors.Is(err, readerErr) {
+					t.Fatalf("output error = %v, want reader failure", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(output.Bytes(), &fields); err != nil {
+				t.Fatalf("decode actual output fields: %v", err)
+			}
+			if _, hasReason := fields["failure_reason"]; hasReason != (test.wantReason != "") {
+				t.Fatalf("optional failure marker: %s", output.Bytes())
+			}
+			var got types.IOTracingSnapshot
+			if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+				t.Fatalf("decode actual output: %v", err)
+			}
+			if got.FailureReason != test.wantReason || len(got.StallStacks) != test.wantStalls {
+				t.Fatalf("partial report = %+v", got)
+			}
+			if test.wantStalls != 0 {
+				stall := got.StallStacks[0]
+				if stall.PID != 1 || stall.Comm != "init" || stall.ScheduleLatencyUS != 2 ||
+					stall.TID != 2 || stall.CPU != 3 {
+					t.Fatalf("reported stall = %+v", stall)
+				}
+			}
+			if len(got.Processes) != 1 || len(got.Processes[0].TotalFiles) != 1 {
+				t.Fatalf("completed process IO lost: %+v", got.Processes)
+			}
+			process := got.Processes[0]
+			file := process.TotalFiles[0]
+			for _, rate := range []struct {
+				bytes, process, file uint64
+			}{
+				{bytes: record.FsReadBytes, process: process.TotalFsReadBps, file: file.FsReadBps},
+				{bytes: record.FsWriteBytes, process: process.TotalFsWriteBps, file: file.FsWriteBps},
+				{bytes: record.BlockReadBytes, process: process.TotalDiskReadBps, file: file.DiskReadBps},
+				{bytes: record.BlockWriteBytes, process: process.TotalDiskWriteBps, file: file.DiskWriteBps},
+			} {
+				minimum := uint64(float64(rate.bytes) / elapsed.Seconds())
+				maximum := uint64(float64(rate.bytes) / sampled.Seconds())
+				if rate.process != rate.file || rate.process < minimum || rate.process > maximum {
+					t.Fatalf("partial rate = %+v, want [%d, %d] B/s", rate, minimum, maximum)
+				}
+			}
+			err = writeReport(&jsonWriter{w: failingReportOutput{outputErr}}, report, traceErr)
+			if !errors.Is(err, outputErr) || (traceErr != nil && !errors.Is(err, readerErr)) {
+				t.Fatalf("combined output/reader error = %v", err)
+			}
+		})
+	}
 }

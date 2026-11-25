@@ -26,7 +26,7 @@ import (
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/executil"
-	"github.com/ccfos/huatuo/internal/flamegraph"
+	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
 	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )

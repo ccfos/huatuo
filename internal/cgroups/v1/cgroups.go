@@ -15,9 +15,14 @@
 package v1
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math"
+	"os"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -113,7 +118,40 @@ func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
 }
 
 func (c *CgroupV1) CpuStatRaw(path string) (map[string]uint64, error) {
-	return parseutil.RawKV(paths.Path(subsystem.SubsystemCPU, path, "cpu.stat"))
+	f, err := os.Open(paths.Path(subsystem.SubsystemCPU, path, "cpu.stat"))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	raw := make(map[string]uint64)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		parts := strings.Fields(scanner.Text())
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid cpu.stat line: %q", scanner.Text())
+		}
+
+		value, err := strconv.ParseUint(parts[1], 10, 64)
+		if err != nil {
+			// Vendor kernels may expose negative values that are not usable counters.
+			signed, signedErr := strconv.ParseInt(parts[1], 10, 64)
+			if signedErr == nil && signed < 0 {
+				delete(raw, parts[0])
+				continue
+			}
+
+			return nil, fmt.Errorf("parse cpu.stat field %q: %w", parts[0], err)
+		}
+
+		raw[parts[0]] = value
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return raw, nil
 }
 
 func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {

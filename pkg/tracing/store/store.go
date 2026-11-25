@@ -135,20 +135,28 @@ func closeBackends(ctx context.Context, backends []*storage.Store[*Document]) er
 
 // Save publishes and asynchronously persists one tracing document.
 func (s *Store) Save(document *Document) error {
+	return s.SaveContext(context.Background(), document)
+}
+
+// SaveContext publishes and asynchronously persists one tracing document.
+func (s *Store) SaveContext(ctx context.Context, document *Document) error {
 	if s == nil {
 		return errors.New("tracing store is required")
 	}
 	if document == nil {
 		return errors.New("tracing document is required")
 	}
-	document.UploadedTimestamp = timeutil.Now()
-	if err := document.validate(); err != nil {
+	// Validate the timestamped copy so a rejected document is left untouched.
+	candidate := *document
+	candidate.UploadedTimestamp = timeutil.Now()
+	if err := candidate.validate(); err != nil {
 		return err
 	}
+	document.UploadedTimestamp = candidate.UploadedTimestamp
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
-		err := backend.Save(context.Background(), document, driver.SaveOptions{})
+		err := backend.Save(ctx, document, driver.SaveOptions{})
 		log.Debugf("save tracing document backend=%s tracer_id=%s tracer_name=%s hostname=%s "+
 			"uploaded_timestamp=%v tracer_data=%+v error=%v",
 			backend.Name, document.TracerID, document.TracerName, document.Hostname,

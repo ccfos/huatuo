@@ -47,6 +47,68 @@ func TestProcessInstanceID(t *testing.T) {
 	}
 }
 
+func TestReadProcMapsPreservesPath(t *testing.T) {
+	for name, path := range map[string]string{
+		"anonymous":                "",
+		"ordinary":                 "/opt/runtime/libjvm.so",
+		"single spaces":            "/opt/runtime with spaces/libjvm.so",
+		"consecutive spaces":       "/opt/runtime  with  spaces/libjvm.so",
+		"tabs":                     "/opt/runtime\twith\ttabs/libjvm.so",
+		"unicode whitespace":       "/opt/runtime\u00a0name/libjvm.so",
+		"trailing space":           "/opt/library.so ",
+		"trailing tab":             "/opt/library.so\t",
+		"carriage return":          "/opt/runtime\rname/libjvm.so",
+		"trailing carriage return": "/opt/library.so\r",
+		"deleted":                  "/opt/runtime  name/libjvm.so (deleted)",
+		"heap":                     "[heap]",
+	} {
+		for ending, suffix := range map[string]string{"newline": "\n", "eof": ""} {
+			t.Run(name+"/"+ending, func(t *testing.T) {
+				mapsPath := filepath.Join(t.TempDir(), "maps")
+				line := "1000-2000 r-xp 00001000 08:01 42    " + path + suffix
+				if err := os.WriteFile(mapsPath, []byte(line), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				mappings, err := ReadProcMaps(mapsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := ProcMap{
+					Start:    0x1000,
+					End:      0x2000,
+					Offset:   0x1000,
+					DevMajor: 8,
+					DevMinor: 1,
+					Inode:    42,
+					Perms:    "r-xp",
+					Path:     path,
+				}
+				if len(mappings) != 1 || mappings[0] != want {
+					t.Fatalf("mappings = %#v, want %#v", mappings, want)
+				}
+			})
+		}
+	}
+}
+
+func TestReadProcMapsSkipsMalformedLines(t *testing.T) {
+	mapsPath := filepath.Join(t.TempDir(), "maps")
+	data := "1000-2000 r-xp 00000000 08:01\n" +
+		"2000-1000 r-xp 00000000 08:01 42 /invalid\n" +
+		"1000-2000 r-xp 00000000 08:01 invalid /invalid\n" +
+		"1000-2000 r-xp 00000000 08:01 42"
+	if err := os.WriteFile(mapsPath, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := ReadProcMaps(mapsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 1 || mappings[0].Inode != 42 || mappings[0].Path != "" {
+		t.Fatalf("mappings = %#v, want one anonymous mapping", mappings)
+	}
+}
+
 func TestFindLoadBiasMappingIdentity(t *testing.T) {
 	target := ProcMap{Inode: 42, DevMajor: 8, DevMinor: 3}
 	maps := []ProcMap{

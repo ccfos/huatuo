@@ -111,3 +111,10 @@ func TestAttachAndEventPipeReaderOwnership(t *testing.T) {
 		})
 	}
 }
+
+func TestFileIterReturnOption(t *testing.T) {
+	option := fileIterReturnOption("read_return", "ext4_file_read_iter")
+	require.Equal(t, "read_return", option.ProgramName)
+	require.Equal(t, "ext4_file_read_iter", option.Symbol)
+	require.Equal(t, 4096, option.Kprobe.RetprobeMaxActive)
+}

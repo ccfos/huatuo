@@ -23,33 +23,33 @@ import (
 type Scope string
 
 const (
-	// ScopeUnknown represents an unset or unsupported observation scope.
-	ScopeUnknown Scope = ""
-	// ScopeHost observes the entire node.
-	ScopeHost Scope = "host"
-	// ScopeContainer observes one container on the node.
-	ScopeContainer Scope = "container"
+	// ScopeTypeUnknown represents an unset or unsupported observation scope.
+	ScopeTypeUnknown Scope = ""
+	// ScopeTypeHost observes the entire node.
+	ScopeTypeHost Scope = "host"
+	// ScopeTypeContainer observes one container on the node.
+	ScopeTypeContainer Scope = "container"
 )
 
 // ParseScope parses a public observation scope value.
 func ParseScope(value string) (Scope, error) {
 	scope := Scope(value)
 	switch scope {
-	case ScopeHost, ScopeContainer:
+	case ScopeTypeHost, ScopeTypeContainer:
 		return scope, nil
 	default:
-		return ScopeUnknown, fmt.Errorf("unsupported observation scope %q", value)
+		return ScopeTypeUnknown, fmt.Errorf("unsupported observation scope %q", value)
 	}
 }
 
 // ValidateScope checks the relationship between a scope and its container ID.
 func ValidateScope(scope Scope, containerID string) error {
 	switch scope {
-	case ScopeHost:
+	case ScopeTypeHost:
 		if containerID != "" {
 			return errors.New("container id must be empty for host scope")
 		}
-	case ScopeContainer:
+	case ScopeTypeContainer:
 		if containerID == "" {
 			return errors.New("container id is required for container scope")
 		}

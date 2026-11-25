@@ -261,10 +261,9 @@ curl -sS \
 最大值为 100。编码后的 Profile 数据超过 64 MiB 时返回
 `413 result_too_large`，调用方应减小 `limit` 后重试。
 
-火焰图每批读取并合并 100 个窗口，每次请求总上限为 100000 个窗口。一小时每秒产生
-一个窗口时，全部 3600 个窗口都会参与合并。超过 100000 个窗口时返回错误，提示缩小
-时间范围或过滤条件；查询或合并失败都不返回部分火焰图。原始 Profile 列表仍按 Job
-查询，其每页上限不限制完整火焰图的聚合数量。
+火焰图每次请求最多查询 100000 个窗口、1000000 个样本和
+10000000 个标签，按样本过滤前计数。超限需缩小时间范围或增加文档过滤条件；查询或
+合并失败不返回部分结果。原始 Profile 的分页上限不限制火焰图聚合数量。
 
 ## 停止任务
 
@@ -279,3 +278,68 @@ curl -sS \
 
 成功返回 `200 OK` 和当前 Job 快照。终态 Job 返回 `409 Conflict`。由于结果可能
 不完整，`stopped` Job 不提供结果查询。
+
+## 统一火焰图查询
+
+Grafana 使用 `/v1/profiling/flamegraph/querier.v1.QuerierService/` 下的 Pyroscope 兼容接口。
+请求与成功响应使用二进制 `application/proto`，需管理员权限；`id` 仅作过滤，不执行任务所有者授权。
+`SelectMergeStacktraces` 的标签选择器必须指定 `scope="host"` 或 `scope="container"`。
+`region` 是 Agent 配置的区域，`hostname` 仅表示采集节点，不隐含宿主机范围。
+容器查询使用 `container_id` 或单个任务 `id` 定位目标；宿主机查询不能携带容器条件。
+例如 `{region="example",hostname="node-01",scope="container",container_id="…",id="…"}`。
+
+文档标签（节点、容器、任务等）只接受一个等值条件。在本接口上，通配值 `*`、`all` 和空字符串只表示取消该标签
+的限制，因此 `{scope="host",hostname="*",id="job-1"}` 仍只选中一个任务，`scope` 依旧必填。
+容器筛选还支持 `container_name`、`container_hostname`、`container_namespace`、`container_type` 和 `container_qos`，均匹配完整字段值；名称和命名空间不能代替容器 ID。
+重复同一个等值条件会被接受，而 `{hostname="host-a",hostname="host-b"}` 这类互相矛盾的
+同名条件会返回 `400`，错误信息同时给出两个值，因为一次查询无法同时选中两台主机。
+文档标签使用 `=` 以外运算符的条件（包括 `hostname!="*"`）同样会被拒绝。
+
+样本标签 `pid`、`comm`、`cpu` 及扩展标签支持 `=`、`=~`，多个条件取 AND。
+例如 `{scope="host",id="job-1",pid="1234",cpu="0"}` 按宿主机 PID 和 CPU 0 过滤。
+`cpu` 仅由 native on-CPU 采集提供。不限制时省略条件或用 `=~".*"`，后者包含缺失标签；
+`all`、`*`、空字符串均为真实值。多值标签按值集合匹配，数值标签格式如 `4096 bytes`。
+`physical_usage` 先选最新快照再过滤，不回退到旧快照。
+
+原生 off-CPU 样本使用 `offcpu_reason` 表示离开 CPU 后的时间归因，取值为：
+
+| 值 | 含义 |
+| --- | --- |
+| `blocked` | 切出至唤醒的阻塞等待 |
+| `runqueue` | 唤醒后等待 CPU |
+| `runqueue_preempted` | 被抢占后等待 CPU |
+| `runqueue_yielded` | 可运行任务非抢占切出后等待 CPU |
+| `runqueue_missed_wakeup` | 未观察到唤醒，无法区分阻塞与运行队列等待的区间 |
+| `unknown` | 未识别的事件种类 |
+
+例如 `{scope="host",id="job-1",offcpu_reason="blocked"}` 仅选择阻塞等待；
+`offcpu_reason=~"runqueue.*"` 选择所有 `runqueue` 前缀的归因，其中
+`runqueue_missed_wakeup` 不能视为已确认的运行队列等待。样本权重单位为纳秒。
+
+标签查询方法为 `LabelNames`、`LabelValues`：
+
+| 字段 | 约束 |
+| --- | --- |
+| `matchers` | 一个选择器字符串。`LabelValues` 必须包含 `__profile_type__`；查询 `physical_usage` 样本标签时，两者均须指定类型和单个任务 `id`。 |
+| `name` | `LabelValues` 必填的标签名称，如 `pid`。 |
+| `start`、`end` | Unix 毫秒时间戳，`end >= start`；省略为 `0`，不是无限范围。 |
+
+请求字段示例（须编码为 Protobuf 后发送）：
+
+```json
+{
+  "name": "pid",
+  "matchers": ["{__profile_type__=\"process_cpu:cpu:nanoseconds:cpu:nanoseconds\",id=\"job-1\"}"],
+  "start": "1787565600000",
+  "end": "1787565660000"
+}
+```
+
+响应为 `names` 列表，如 `{"names":["1234","5678"]}`。样本标签结果去重排序，未知样本标签为空。
+`LabelNames` 省略 `matchers` 时返回文档标签清单；带条件时返回该清单与实际样本标签的并集。
+样本标签名称或单标签取值超过 1000 个时报错；文档标签值最多返回 100 个，
+不接受样本过滤条件。`scope` 固定返回 `host`、`container`；未知的 `__` 前缀标签会被拒绝。
+
+`result_url` 包含从已存储窗口取得的 Region 和实际指标；没有窗口的结果不返回该链接。
+
+Grafana 标签过滤的操作说明见[查看火焰图](/docs/best-practice/continuous-profiling_zh.md#5-查看火焰图)。

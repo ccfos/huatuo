@@ -23,12 +23,12 @@ package metric
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -59,11 +59,10 @@ type CollectorManager struct {
 	scrapeSuccessDesc  *prometheus.Desc
 }
 
-func NewCollectorManager(blackListed []string, region string) (*CollectorManager, error) {
+func NewCollectorManager(blackListed []string, metadata *observation.Metadata) (*CollectorManager, error) {
 	// Init defaultRegion, defaultHostname firstly,
 	// NewGaugeData may be used for data caching in tracing.NewRegister.
-	hostname, _ := os.Hostname()
-	defaultRegion, defaultHostname = region, hostname
+	defaultRegion, defaultHostname = metadata.Region, metadata.Hostname
 
 	tracings, err := tracing.NewRegister(blackListed)
 	if err != nil {
@@ -93,20 +92,20 @@ func NewCollectorManager(blackListed []string, region string) (*CollectorManager
 	scrapeDurationDesc := prometheus.NewDesc(
 		prometheus.BuildFQName(DefaultNamespace, "scrape", "collector_duration_seconds"),
 		DefaultNamespace+": Duration of a collector scrape.",
-		[]string{LabelHost, LabelRegion, "collector"},
+		[]string{observation.FieldHostname, observation.FieldRegion, "collector"},
 		nil,
 	)
 	scrapeSuccessDesc := prometheus.NewDesc(
 		prometheus.BuildFQName(DefaultNamespace, "scrape", "collector_success"),
 		DefaultNamespace+": Whether a collector succeeded.",
-		[]string{LabelHost, LabelRegion, "collector"},
+		[]string{observation.FieldHostname, observation.FieldRegion, "collector"},
 		nil,
 	)
 
 	return &CollectorManager{
 		collectors:         collectors,
-		hostname:           hostname,
-		region:             region,
+		hostname:           metadata.Hostname,
+		region:             metadata.Region,
 		scrapeDurationDesc: scrapeDurationDesc,
 		scrapeSuccessDesc:  scrapeSuccessDesc,
 	}, nil

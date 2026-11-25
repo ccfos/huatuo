@@ -237,7 +237,7 @@ curl -sS \
 
 Windows are in `data.items`; `data.limit`, `data.offset`, and `data.has_more` describe pagination. Each record includes `uploaded_timestamp`, `started_timestamp`, `profile_type`, and pprof-compatible `profile` data. A durably published empty result succeeds with an empty `items` array. Explicit `limit=0` is invalid; only omission uses the default. `limit` defaults to 20 and is capped at 100. Encoded Profile data above 64 MiB returns `413 result_too_large`; reduce `limit` and retry.
 
-Flame graphs read and merge batches of 100 windows, with a total limit of 100000 per request. At one window per second for an hour, all 3600 windows participate. Exceeding 100000 returns an error asking for a narrower time range or filters. Query or merge failures never return partial flame graphs. Raw Profile lists remain scoped to a task; their page limit does not cap aggregation for a complete flame graph.
+Each flame graph request can query at most 100000 windows, 1000000 samples, and 10000000 labels, counted before sample filtering. If a limit is exceeded, narrow the time range or add document filters. Query failures return no partial results. Raw Profile page limits do not cap flame graph aggregation.
 
 ## Stop a Task
 
@@ -251,3 +251,69 @@ curl -sS \
 ```
 
 Success returns `200 OK` with the current task snapshot. Terminal tasks return `409 Conflict`. Because results may be incomplete, `stopped` tasks do not support result queries.
+
+## Unified flame graph queries
+
+Grafana uses the Pyroscope-compatible endpoints under `/v1/profiling/flamegraph/querier.v1.QuerierService/`.
+Requests and successful responses use binary `application/proto` and require administrator access. The `id` condition filters data without enforcing task ownership.
+`SelectMergeStacktraces` selectors require `scope="host"` or `scope="container"`.
+`region` is the Agent's configured region; `hostname` is only the collection node.
+Container queries require `container_id` or one task `id`. Host queries cannot include container filters.
+For example: `{region="example",hostname="node-01",scope="container",container_id="…",id="…"}`.
+
+Document labels (node, container, task, and similar metadata) accept one equality condition. On this endpoint the wildcard values `*`, `all`,
+and the empty string only drop the restriction for that label, so
+`{scope="host",hostname="*",id="job-1"}` still selects one task; `scope` is still required.
+Container filters also support `container_name`, `container_hostname`, `container_namespace`, `container_type`, and `container_qos`, each matching the complete field value. Names and namespaces do not replace the container ID.
+Repeating a label with the same value is accepted, while contradictory duplicates such as
+`{hostname="host-a",hostname="host-b"}` are rejected with `400` and the error reports both
+values, because one query cannot select two hosts. A document matcher that uses any operator other
+than `=` is rejected as well, including `hostname!="*"`.
+
+Sample labels `pid`, `comm`, `cpu`, and extension labels support `=` and `=~`, combined with AND.
+For example, `{scope="host",id="job-1",pid="1234",cpu="0"}` filters by host PID and CPU 0.
+Only native on-CPU profiling records `cpu`. Omit a condition or use `=~".*"` for all values,
+including missing labels. Values `all`, `*`, and empty strings are literal. Multi-valued labels
+match their value sets; numeric labels use forms such as `4096 bytes`.
+Physical usage selects the latest snapshot before filtering, without falling back to older snapshots.
+
+Native off-CPU samples use `offcpu_reason` to attribute time away from the CPU:
+
+| Value | Meaning |
+| --- | --- |
+| `blocked` | Blocked time from switch-out to wakeup |
+| `runqueue` | Waiting for CPU after wakeup |
+| `runqueue_preempted` | Waiting for CPU after preemption |
+| `runqueue_yielded` | Waiting for CPU after a non-preemptive switch-out while runnable |
+| `runqueue_missed_wakeup` | No wakeup was observed, so blocked and run queue time cannot be separated |
+| `unknown` | Unrecognized event kind |
+
+For example, `{scope="host",id="job-1",offcpu_reason="blocked"}` selects blocked time.
+`offcpu_reason=~"runqueue.*"` selects all reasons with the `runqueue` prefix;
+`runqueue_missed_wakeup` does not establish that the interval was spent on a run queue.
+Sample weights are in nanoseconds.
+
+Label queries use `LabelNames` and `LabelValues`:
+
+| Field | Constraints |
+| --- | --- |
+| `matchers` | One selector string. `LabelValues` requires `__profile_type__`; for `physical_usage` sample labels, both methods require the type and one task `id`. |
+| `name` | Required label name for `LabelValues`, such as `pid`. |
+| `start`, `end` | Unix milliseconds, with `end >= start`. Omitted fields become `0`, not an unbounded range. |
+
+Example request fields; encode as Protobuf before sending:
+
+```json
+{
+  "name": "pid",
+  "matchers": ["{__profile_type__=\"process_cpu:cpu:nanoseconds:cpu:nanoseconds\",id=\"job-1\"}"],
+  "start": "1787565600000",
+  "end": "1787565660000"
+}
+```
+
+Responses contain a `names` list, such as `{"names":["1234","5678"]}`. Sample-label results are sorted and deduplicated; unknown sample labels return an empty list. Without `matchers`, `LabelNames` returns the document-label list; with conditions, it returns that list plus observed sample labels. More than 1000 sample-label names or values for one sample label returns an error. Document-label queries return at most 100 values and reject sample filters. `scope` always returns `host` and `container`; unknown labels beginning with `__` are rejected.
+
+`result_url` includes the stored windows' Region and actual profile type. Results without windows do not provide a dashboard link.
+
+For Grafana label-filter controls, see [View the Flame Graph](/docs/best-practice/continuous-profiling_en.md#5-view-the-flame-graph).

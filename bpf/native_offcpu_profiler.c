@@ -25,10 +25,10 @@ enum offcpu_phase_filter {
 	OFFCPU_PHASE_FILTER_RUNQUEUE,
 };
 
-static volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
-static volatile const __u64 profiler_offcpu_min_duration_ns = 1000000;
-static volatile const __u32 profiler_offcpu_cpu_set_enabled = 0;
-static volatile const __u32 profiler_offcpu_stats_enabled = 0;
+volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
+volatile const __u64 profiler_offcpu_min_duration_ns = 1000000;
+volatile const __u32 profiler_offcpu_cpu_set_enabled = 0;
+volatile const __u32 profiler_offcpu_stats_enabled = 0;
 
 BPF_DBG_MAP(native_cpu_dbg);
 

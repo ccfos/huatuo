@@ -195,7 +195,7 @@ func (r *rateLimitReaderStub) ReadInto(any) error {
 	return r.readErr
 }
 
-func (*rateLimitReaderStub) ReadBatch(func() any) (PerfEventBatch, error) {
+func (*rateLimitReaderStub) ReadBatch(func() any, ...ReadBatchOption) (PerfEventBatch, error) {
 	return PerfEventBatch{}, nil
 }
 

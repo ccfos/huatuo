@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -421,10 +422,36 @@ func TestOffCPUStatsFlag(t *testing.T) {
 }
 
 func TestValidateOutputFormat(t *testing.T) {
-	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "remote-store"} {
-		require.NoError(t, validateOutputFormat(format))
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "json", "speedscope", "chrometrace", "remote-store"} {
+		require.NoError(t, validateOutputFormat(format, profiling.TypeCPU))
 	}
-	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
+	require.NoError(t, validateOutputFormat("chrometrace", profiling.TypeCPU))
+	require.EqualError(
+		t,
+		validateOutputFormat("chrometrace", profiling.TypeMemory),
+		"--output-format=chrometrace needs a time-based profile and is not supported by --type=memory",
+	)
+	require.NoError(t, validateOutputFormat("speedscope", profiling.TypeMemory))
+	require.EqualError(t, validateOutputFormat("pprof", profiling.TypeCPU), `unsupported output format "pprof"`)
+}
+
+func TestValidateCommonOptionsOutputFormat(t *testing.T) {
+	pid := strconv.Itoa(os.Getpid())
+	outputPath := filepath.Join(t.TempDir(), "profile.out")
+
+	// Only CPU and memory reach the validator; chrometrace is limited to the
+	// time-based one.
+	ctx := newValidationCLIContext(t, "--pid", pid, "--type", "cpu",
+		"--output-path", outputPath, "--output-format", "chrometrace")
+	require.NoError(t, validateCommonOptions(ctx))
+
+	ctx = newValidationCLIContext(t, "--pid", pid, "--type", "memory",
+		"--output-path", outputPath, "--output-format", "chrometrace")
+	require.EqualError(
+		t,
+		validateCommonOptions(ctx),
+		"--output-format=chrometrace needs a time-based profile and is not supported by --type=memory",
+	)
 }
 
 func TestValidateNumericOptions(t *testing.T) {
@@ -615,6 +642,140 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestCLITargetFilters(t *testing.T) {
+	tests := []struct {
+		name        string
+		language    string
+		profileType string
+		modeFlag    string
+		mode        string
+		wantError   bool
+	}{
+		{
+			name:        "C on-CPU intersection",
+			language:    "c",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "oncpu",
+		},
+		{
+			name:        "C off-CPU intersection",
+			language:    "c",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "offcpu",
+		},
+		{
+			name:        "Go on-CPU intersection",
+			language:    "go",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "oncpu",
+		},
+		{
+			name:        "Go off-CPU intersection",
+			language:    "go",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "offcpu",
+		},
+		{
+			name:        "C++ on-CPU intersection",
+			language:    "c++",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "oncpu",
+		},
+		{
+			name:        "C++ off-CPU intersection",
+			language:    "c++",
+			profileType: "cpu",
+			modeFlag:    "--cpu-mode",
+			mode:        "offcpu",
+		},
+		{
+			name:        "C memory conflict",
+			language:    "c",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "virtual_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "Go memory conflict",
+			language:    "go",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "virtual_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "C++ memory conflict",
+			language:    "c++",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "virtual_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "Java CPU conflict before tool discovery",
+			language:    "java",
+			profileType: "cpu",
+			wantError:   true,
+		},
+		{
+			name:        "Java memory conflict before tool discovery",
+			language:    "java",
+			profileType: "memory",
+			modeFlag:    "--memory-mode",
+			mode:        "object_alloc",
+			wantError:   true,
+		},
+		{
+			name:        "Python CPU conflict before tool discovery",
+			language:    "python",
+			profileType: "cpu",
+			wantError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actionCalled := false
+			app := &cli.App{
+				Flags:     appFlags,
+				Before:    runBefore,
+				Writer:    io.Discard,
+				ErrWriter: io.Discard,
+				Action: func(*cli.Context) error {
+					actionCalled = true
+					return nil
+				},
+			}
+			args := []string{
+				"profiler",
+				"--language", tt.language,
+				"--type", tt.profileType,
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--container-id", strings.Repeat("a", 64),
+				"--output-format", "collapsed",
+				"--output-path", filepath.Join(t.TempDir(), "profile"),
+			}
+			if tt.modeFlag != "" {
+				args = append(args, tt.modeFlag, tt.mode)
+			}
+			err := app.Run(args)
+			if tt.wantError {
+				require.EqualError(t, err, "--pid and --container-id are mutually exclusive")
+				require.False(t, actionCalled, "target conflict reached collection")
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, actionCalled, "native CPU combined target filters were rejected")
 		})
 	}
 }

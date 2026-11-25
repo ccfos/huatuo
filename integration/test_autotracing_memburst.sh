@@ -14,86 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Host-only integration: private procfs input, real processes, collector and daemon.
+# Controlled procfs input, real processes, collector and daemon in a private PID namespace.
 set -euo pipefail
-source "${ROOT_DIR}/integration/lib.sh"
-source "${ROOT_DIR}/integration/config.sh"
-source "${ROOT_DIR}/integration/lib_memsnapshot.sh"
-require_commands go jq mount umount awk unshare timeout
-[[ ${EUID} == 0 ]] || skip "requires root and a private mount namespace"
-# Never replace procfs in the host mount namespace when invoked manually.
-if [[ ${MEMBURST_PRIVATE_PIDNS:-0} != 1 ]]; then
-	[[ $(readlink /proc/self/ns/mnt) != $(readlink /proc/1/ns/mnt) ]] || fatal "run through integration/run.sh (private mount namespace required)"
-	# Product scenarios use controlled rankings in their own PID namespace.
-	export MEMBURST_PRIVATE_PIDNS=1
-	exec unshare --pid --fork --mount-proc bash "${BASH_SOURCE[0]}"
-fi
-readonly MEMBURST_ROOT_WORKSPACE=${HUATUO_BAMAI_TEST_TMPDIR}
+source "${ROOT_DIR}/integration/lib_memburst.sh"
+require_commands go jq mount umount awk timeout readlink
+burst_setup
 readonly MEMBURST_STANDARD_BIN=${HUATUO_BAMAI_BIN}
-export MEMSNAP_ACCEPTANCE_ARTIFACTS="${MEMBURST_ROOT_WORKSPACE}/helpers"
-export MEMBURST_ACCEPTANCE_FIXTURE="${MEMSNAP_ACCEPTANCE_ARTIFACTS}/go-snapshot"
-mkdir -p "${MEMSNAP_ACCEPTANCE_ARTIFACTS}"
-cd "${ROOT_DIR}"
+trap burst_cleanup EXIT
 if [[ -n ${MEMBURST_ACCEPTANCE_PREBUILT_DIR:-} ]]; then
 	cp "${MEMBURST_ACCEPTANCE_PREBUILT_DIR}/go-snapshot" "${MEMBURST_ACCEPTANCE_FIXTURE}"
 fi
 if [[ ! -x ${MEMBURST_ACCEPTANCE_FIXTURE} ]]; then
 	go build -mod=vendor -o "${MEMBURST_ACCEPTANCE_FIXTURE}" ./integration/testdata/test_memory_threshold_snapshot_golang.go
 fi
-# Test only /proc/meminfo is replaced. RSS rankings and remote memory are real.
-for memburst_input_level in low high; do
-	memburst_input_value=100000
-	[[ ${memburst_input_level} != high ]] || memburst_input_value=400000
-	printf 'MemTotal: 1000000 kB\nMemFree: 500000 kB\nMemAvailable: 500000 kB\nActive(anon): %s kB\nInactive(anon): 10000 kB\n' "${memburst_input_value}" > "${MEMBURST_ROOT_WORKSPACE}/meminfo-${memburst_input_level}"
-done
-burst_mounted=0
-burst_workloads=()
-burst_fds=()
-burst_cleanup() {
-	local status=$? pid fd
-	huatuo_bamai_stop || status=1
-	for pid in "${burst_workloads[@]}"; do
-		kill -KILL "${pid}" 2> /dev/null || true
-		wait "${pid}" 2> /dev/null || true
-	done
-	for fd in "${burst_fds[@]}"; do eval "exec ${fd}>&-"; done
-	while ((burst_mounted > 0)); do
-		umount /proc/meminfo || {
-			status=1
-			break
-		}
-		burst_mounted=$((burst_mounted - 1))
-	done
-	return "${status}"
-}
-trap burst_cleanup EXIT
-# Stacked binds switch inputs atomically, without exposing host meminfo between samples.
-burst_input() {
-	burst_sample_offset=0
-	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log ]]; then
-		burst_sample_offset=$(wc -l < "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log")
-	fi
-	mount --bind "${MEMBURST_ROOT_WORKSPACE}/meminfo-$1" /proc/meminfo
-	burst_mounted=$((burst_mounted + 1))
-}
-
-burst_wait_samples() {
-	local memburst_input_level=$1 count=${2:-2} active=100000
-	[[ ${memburst_input_level} != high ]] || active=400000
-	memsnapshot_wait_memburst_samples "${burst_sample_offset}" "${count}" "${active}"
-}
-
-burst_count() {
-	if [[ ! -s ${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst ]]; then
-		echo 0
-		return
-	fi
-	jq -s length "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst" 2> /dev/null
-}
-burst_expected_count() { [[ $(burst_count) == "$1" ]]; }
-assert_burst_count() {
-	assert_eq "$(burst_count)" "$1" "${2:-memburst event count}"
-}
 
 assert_burst_cooldown() {
 	(($(date +%s) - memburst_first_started < 28)) || fatal "cooldown assertion exceeded budget"
@@ -107,54 +40,29 @@ assert_burst_configuration_rejected() {
 	! grep -q 'started successfully' "${file}" || fatal "daemon started with invalid ${name}"
 }
 
-GO_SNAPSHOT_BAMAI_PORT=$(allocate_available_port)
-GO_SNAPSHOT_KUBELET_PORT=10250
-go_snapshot_top_k=100
-KUBELET_CERT=${KUBELET_CERT:-unused}
-KUBELET_KEY=${KUBELET_KEY:-unused}
-HUATUO_BAMAI_ADDR="http://127.0.0.1:${GO_SNAPSHOT_BAMAI_PORT}"
-HUATUO_BAMAI_METRICS_API="${HUATUO_BAMAI_ADDR}/metrics"
-burst_top=10
-burst_threshold=10
-burst_anon=0
-burst_blacklist=0
-burst_cooldown=30
-burst_window=2
-burst_write_config() {
-	go_snapshot_case_dir=${HUATUO_BAMAI_TEST_TMPDIR}
-	write_memory_threshold_snapshot_config
-	sed -i 's/"memburst", //; s/, "tracing_status"//; s/^BlackList = \[/BlackList = ["memory_threshold_snapshot", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
-	if [[ ${burst_blacklist} == 1 ]]; then sed -i 's/^BlackList = \[/BlackList = ["memburst", /' "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"; fi
-	cat >> "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << CONFIG
-[AutoTracing.MemoryBurst]
- DeltaMemoryBurst = ${burst_threshold}
- DeltaAnonThreshold = ${burst_anon}
- Interval = 1
- SlidingWindowLength = ${burst_window}
- IntervalTracing = ${burst_cooldown}
- DumpProcessMaxNum = ${burst_top}
-CONFIG
+burst_daemon_resources() {
+	local pid fd target
+	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	local fds=(/proc/"${pid}"/fd/*)
+	for fd in "${fds[@]}"; do
+		if target=$(readlink "${fd}"); then
+			printf '%s -> %q\n' "${fd##*/}" "${target}"
+		fi
+	done > "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-fds-${1}.log"
+	printf '%s ' "${#fds[@]}"
+	awk '/^VmRSS:/ {rss=$2} /^Threads:/ {threads=$2} END {print rss, threads}' "/proc/${pid}/status"
 }
-burst_start() {
-	local pid
-	for pid in "${burst_workloads[@]}"; do kill -0 "${pid}" || fatal "workload exited before scenario"; done
-	integration_huatuo_bamai_start burst_write_config --region integration --disable-kubelet --log-debug
-	local enabled=1
-	[[ ${burst_blacklist} == 0 ]] || enabled=0
-	assert_memsnapshot_tracing_metrics memburst integration "${enabled}"
-}
-burst_stop() {
-	local signal=$1
-	huatuo_bamai_stop_with_signal "${signal}" "${2:-}"
-	if [[ -f ${HUATUO_BAMAI_TEST_TMPDIR}/expected-storage-failure ]]; then
-		# Only the deliberate directory obstruction may produce a save warning.
-		awk '!(/level="warning"/ && /msg="save memburst snapshot"/ && /not a directory/)' \
-			"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" > "${HUATUO_BAMAI_TEST_TMPDIR}/checked.log"
-		assert_memsnapshot_logs "${HUATUO_BAMAI_TEST_TMPDIR}/checked.log"
-	else
-		assert_memsnapshot_logs "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+
+assert_burst_resource_growth() {
+	local fds rss threads
+	read -r fds rss threads < <(burst_daemon_resources current) || fatal "cannot read daemon resources"
+	log_info "daemon resources: fds=${fds} baseline_fds=${burst_baseline_fds} rss_kib=${rss} baseline_rss_kib=${burst_baseline_rss} threads=${threads} baseline_threads=${burst_baseline_threads}"
+	if ((fds > burst_baseline_fds + 2)); then
+		cat "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-fds-baseline.log" "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-fds-current.log"
+		fatal "daemon FD growth exceeds 2: baseline=${burst_baseline_fds}, current=${fds}"
 	fi
-	mv "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-${signal}-${SECONDS}.log"
+	((rss <= burst_baseline_rss + 131072)) || fatal "daemon RSS growth exceeds 128 MiB: baseline=${burst_baseline_rss} KiB, current=${rss} KiB"
+	((threads <= burst_baseline_threads + 16)) || fatal "daemon thread growth exceeds 16: baseline=${burst_baseline_threads}, current=${threads}"
 }
 
 assert_burst_event() {
@@ -187,7 +95,7 @@ assert_burst_event() {
 while IFS='|' read -r memburst_invalid memburst_config_field memburst_input_value memburst_config_error; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/invalid-${memburst_invalid}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
-	burst_write_config
+	write_config_bamai_memburst > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	sed -i "s/^ ${memburst_config_field} = .*/ ${memburst_config_field} = ${memburst_input_value}/" "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf"
 	status=0
 	timeout --kill-after=2s 10s "${HUATUO_BAMAI_BIN}" \
@@ -206,6 +114,7 @@ cooldown-zero|IntervalTracing|0|memory burst tracing interval must be positive
 cooldown-negative|IntervalTracing|-1|memory burst tracing interval must be positive
 window-zero|SlidingWindowLength|0|memory burst sliding window length must be positive
 window-negative|SlidingWindowLength|-1|memory burst sliding window length must be positive
+window-over|SlidingWindowLength|86401|memory burst sliding window length must not exceed 86400 samples
 ranking-zero|DumpProcessMaxNum|0|memory burst dump process max num must be positive
 ranking-negative|DumpProcessMaxNum|-1|memory burst dump process max num must be positive
 wrong-type|DumpProcessMaxNum|"invalid"|invalid(string) to int
@@ -223,7 +132,7 @@ for i in 1 2 3; do
 	wait_until 20 .1 grep -qx 'pressure ready' "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "real allocation pressure failed"
 done
 huatuo_bamai_stop
-for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11; do
+for memburst_scenario in normal threshold anon_threshold anon_maximum window_minimum blacklist top1 top2 top3 top11 default_window; do
 	HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/${memburst_scenario}"
 	mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
 	burst_top=10
@@ -232,6 +141,7 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	burst_blacklist=0
 	burst_window=2
 	[[ ${memburst_scenario} != window_minimum ]] || burst_window=1
+	[[ ${memburst_scenario} != default_window ]] || burst_window=""
 	[[ ${memburst_scenario} != anon_maximum ]] || burst_anon=100
 	[[ ${memburst_scenario} != top1 ]] || burst_top=1
 	[[ ${memburst_scenario} != top2 ]] || burst_top=2
@@ -242,6 +152,16 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	[[ ${memburst_scenario} != blacklist ]] || burst_blacklist=1
 	burst_input low
 	burst_start
+	if [[ ${memburst_scenario} == default_window ]]; then
+		# Omit the setting: an early burst must not bypass the default history.
+		burst_wait_samples low
+		burst_input high
+		burst_wait_samples high 3
+		assert_burst_count 0 "default history triggered before filling"
+		burst_input low
+		wait_until 90 .2 memsnapshot_memburst_samples_ready "${burst_sample_offset}" 60 100000 \
+			|| fatal "default memburst history did not fill"
+	fi
 	[[ ${burst_blacklist} == 1 ]] || burst_wait_samples low
 	assert_burst_count 0 "event without burst"
 	burst_input high
@@ -275,6 +195,37 @@ for memburst_scenario in normal threshold anon_threshold anon_maximum window_min
 	log_info "PASS: memburst ${memburst_scenario}"
 done
 log_info "PASS: memburst controlled-input scenarios"
+burst_window=2
+
+# Repeated rankings must release pidfds without waiting for garbage collection.
+HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/pidfd-release"
+mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
+burst_top=10
+burst_threshold=10
+burst_anon=0
+burst_blacklist=0
+burst_cooldown=300
+burst_input low
+GOGC=off burst_start
+burst_wait_samples low
+burst_input high
+wait_until 20 .1 burst_expected_count 1 || fatal "initial low-GC burst did not persist"
+assert_burst_event
+read -r burst_baseline_fds burst_baseline_rss burst_baseline_threads < <(burst_daemon_resources baseline) \
+	|| fatal "cannot read daemon resource baseline"
+for burst_round in 1 2 3; do
+	burst_input low
+	burst_wait_samples low
+	burst_input high
+	burst_wait_samples high 1
+	burst_input low
+	burst_wait_samples low 1
+	assert_burst_resource_growth
+done
+assert_burst_count 1 "cooldown must suppress snapshots during the low-GC ranking checks"
+burst_stop TERM
+burst_cooldown=30
+log_info "PASS: memburst releases ranking pidfds without automatic GC"
 
 # Restart acceptance uses the standard daemon.
 # The standard daemon must retain completed events and recover after TERM/KILL.
@@ -314,31 +265,8 @@ for pid in "${burst_workloads[@]}"; do
 	wait "${pid}" 2> /dev/null || true
 done
 burst_workloads=()
-readonly MEMBURST_RUNTIME_DIR="${MEMBURST_ROOT_WORKSPACE}/runtimes"
 mkdir -p "${MEMBURST_RUNTIME_DIR}"
 MEMSNAP_OPTIONAL_RUNTIMES=1 HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_RUNTIME_DIR}" snapshot_build_runtime_fixtures
-
-burst_start_runtime() {
-	local mode=$1
-	mkfifo "${HUATUO_BAMAI_TEST_TMPDIR}/commands"
-	exec {burst_runtime_fd}<> "${HUATUO_BAMAI_TEST_TMPDIR}/commands"
-	burst_fds+=("${burst_runtime_fd}")
-	case ${mode} in
-	go) burst_command=("${MEMBURST_ACCEPTANCE_FIXTURE}" 1) ;;
-	disabled) burst_command=("${MEMBURST_ACCEPTANCE_FIXTURE}" 0) ;;
-	churn) burst_command=(env MEMSNAPSHOT_CHURN=1 "${MEMBURST_ACCEPTANCE_FIXTURE}" 1) ;;
-	python) burst_command=(python3 "${MEMBURST_RUNTIME_DIR}/snapshot.py") ;;
-	java) burst_command=(java -XX:+UseG1GC -Xms32m -Xmx256m -cp "${MEMBURST_RUNTIME_DIR}" HeapFixture) ;;
-	c | cpp) burst_command=("${MEMBURST_RUNTIME_DIR}/${mode}-snapshot") ;;
-	esac
-	"${burst_command[@]}" < "${HUATUO_BAMAI_TEST_TMPDIR}/commands" > "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" 2>&1 &
-	burst_runtime_pid=$!
-	burst_workloads=("${burst_runtime_pid}")
-	printf a >&"${burst_runtime_fd}"
-	wait_until 30 .1 grep -qx ready "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" || fatal "${mode}: allocation not ready"
-	printf p >&"${burst_runtime_fd}"
-	wait_until 30 .1 grep -qx 'pressure ready' "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" || fatal "${mode}: pressure not ready"
-}
 
 assert_burst_runtime() {
 	local mode=$1 language=${1} count=$2
@@ -365,27 +293,12 @@ assert_burst_runtime() {
  and all(.entries[]; .objects > 0 and .average_bytes == (.bytes / .objects))' \
 			"${go_snapshot_case_dir}/snapshot.json" > /dev/null || fatal "invalid concurrent allocation snapshot"
 		;;
+	# Each memburst process has only a two-second census budget.
+	python) assert_snapshot_runtime_payload python deadline-partial ;;
 	*) assert_snapshot_runtime_payload "${language}" ;;
 	esac
 	assert_burst_count "${count}"
 	assert_memsnapshot_tracing_metrics memburst integration 1
-}
-
-burst_daemon_resources() {
-	local pid
-	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
-	local fds=(/proc/"${pid}"/fd/*)
-	printf '%s ' "${#fds[@]}"
-	awk '/^VmRSS:/ {rss=$2} /^Threads:/ {threads=$2} END {print rss, threads}' "/proc/${pid}/status"
-}
-
-assert_burst_resource_growth() {
-	local fds rss threads
-	read -r fds rss threads < <(burst_daemon_resources)
-	log_info "daemon resources: fds=${fds} rss_kib=${rss} threads=${threads}"
-	((fds <= burst_baseline_fds + 2)) || fatal "daemon FD growth exceeds 2"
-	((rss <= burst_baseline_rss + 131072)) || fatal "daemon RSS growth exceeds 128 MiB"
-	((threads <= burst_baseline_threads + 16)) || fatal "daemon thread growth exceeds 16"
 }
 
 assert_burst_storage_failure() {
@@ -439,7 +352,8 @@ for memburst_runtime in go disabled churn python java c cpp; do
 		assert_burst_runtime "${memburst_runtime}" "${burst_round}"
 		if [[ ${memburst_runtime} == churn ]]; then
 			if ((burst_round == 1)); then
-				read -r burst_baseline_fds burst_baseline_rss burst_baseline_threads < <(burst_daemon_resources)
+				read -r burst_baseline_fds burst_baseline_rss burst_baseline_threads < <(burst_daemon_resources baseline) \
+					|| fatal "cannot read daemon resource baseline"
 			else
 				assert_burst_resource_growth
 			fi

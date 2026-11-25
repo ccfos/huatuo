@@ -123,6 +123,50 @@ func TestFormatterCombinesWindows(t *testing.T) {
 	}
 }
 
+func TestFormatterJSONConversionFailurePreservesOutput(t *testing.T) {
+	const previous = "previous result\n"
+	invalid := &types.AggregationWindow{ProfileType: "invalid"}
+
+	for _, kind := range []string{"existing", "absent", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "profile.json")
+			switch kind {
+			case "existing":
+				if err := os.WriteFile(path, []byte(previous), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				path = dir
+			}
+
+			formatter := createFormatter(t, output.FormatJSON, path)
+			if err := formatter.Add(t.Context(), invalid); err == nil {
+				t.Fatal("Add() error = nil, want conversion failure")
+			}
+
+			switch kind {
+			case "existing":
+				if got := string(readDestination(t, path)); got != previous {
+					t.Fatalf("previous result = %q, want %q", got, previous)
+				}
+			case "absent":
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("conversion failure left output file: %v", err)
+				}
+			case "directory":
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("conversion failure created %d output files", len(entries))
+				}
+			}
+		})
+	}
+}
+
 func TestFormatterCancellationDoesNotCreateFile(t *testing.T) {
 	for _, format := range []output.OutputFormat{
 		output.FormatCollapsed,

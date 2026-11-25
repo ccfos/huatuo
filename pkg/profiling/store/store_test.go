@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/storage"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -93,19 +94,55 @@ func TestMapperDecodeRejectsIncompleteDocument(t *testing.T) {
 
 func TestBuildProfileAggregationQueryPreservesTargetMatchers(t *testing.T) {
 	query := buildAggregationQuery(&Filter{
-		ContainerID:       "containerd://4df60fc5",
-		ContainerHostname: "checkout-api-7b9f6d8c4f-k2x7m",
+		Region:             "cn-beijing",
+		Hostname:           "node-1",
+		ContainerID:        "containerd://4df60fc5",
+		ContainerName:      "checkout-api",
+		ContainerHostname:  "checkout-api-7b9f6d8c4f-k2x7m",
+		ContainerNamespace: "team-a",
+		ContainerType:      "normal",
+		ContainerQoS:       "burstable",
 	})
 	want := []driver.Filter{
 		{
-			Field: types.DocumentFieldContainerID + ".keyword",
+			Field: observation.FieldRegion + ".keyword",
+			Op:    driver.OpEq,
+			Value: "cn-beijing",
+		},
+		{
+			Field: observation.FieldContainerID + ".keyword",
 			Op:    driver.OpEq,
 			Value: "containerd://4df60fc5",
 		},
 		{
-			Field: types.DocumentFieldContainerHostname + ".keyword",
+			Field: observation.FieldContainerName + ".keyword",
+			Op:    driver.OpEq,
+			Value: "checkout-api",
+		},
+		{
+			Field: observation.FieldContainerHostname + ".keyword",
 			Op:    driver.OpEq,
 			Value: "checkout-api-7b9f6d8c4f-k2x7m",
+		},
+		{
+			Field: observation.FieldContainerNamespace + ".keyword",
+			Op:    driver.OpEq,
+			Value: "team-a",
+		},
+		{
+			Field: observation.FieldContainerType + ".keyword",
+			Op:    driver.OpEq,
+			Value: "normal",
+		},
+		{
+			Field: observation.FieldContainerQoS + ".keyword",
+			Op:    driver.OpEq,
+			Value: "burstable",
+		},
+		{
+			Field: observation.FieldHostname + ".keyword",
+			Op:    driver.OpEq,
+			Value: "node-1",
 		},
 	}
 
@@ -137,7 +174,7 @@ func TestBuildProfileAggregationQueryFiltersByRegion(t *testing.T) {
 
 	found := false
 	for _, f := range query.Filters {
-		if f.Field == types.DocumentFieldRegion+".keyword" && f.Value == "cn-beijing" {
+		if f.Field == observation.FieldRegion+".keyword" && f.Value == "cn-beijing" {
 			found = true
 			break
 		}
@@ -148,6 +185,7 @@ func TestBuildProfileAggregationQueryFiltersByRegion(t *testing.T) {
 }
 
 type recordingBackend struct {
+	valueField string
 	asyncSaves int
 	syncSaves  int
 }
@@ -183,7 +221,8 @@ func (*recordingBackend) Query(context.Context, driver.Query, func([]driver.Reco
 
 func (*recordingBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
 
-func (*recordingBackend) Values(context.Context, string, driver.Query, int) ([]string, error) {
+func (b *recordingBackend) Values(_ context.Context, field string, _ driver.Query, _ int) ([]string, error) {
+	b.valueField = field
 	return nil, nil
 }
 
@@ -233,10 +272,10 @@ func TestBuildAggregationQueryTimestampFormat(t *testing.T) {
 }
 
 func TestBuildProfileHostQueryUsesMissingContainer(t *testing.T) {
-	query := buildAggregationQuery(&Filter{Hostname: "host-a"})
+	query := buildAggregationQuery(&Filter{Scope: observation.ScopeTypeHost, Hostname: "host-a"})
 	want := []driver.Filter{
-		{Field: types.DocumentFieldHostname + ".keyword", Op: driver.OpEq, Value: "host-a"},
-		{Field: types.DocumentFieldContainerHostname, Op: driver.OpNotExists},
+		{Field: observation.FieldHostname + ".keyword", Op: driver.OpEq, Value: "host-a"},
+		{Field: observation.FieldContainerID, Op: driver.OpNotExists},
 	}
 	if !reflect.DeepEqual(query.Filters, want) {
 		t.Fatalf("host filters = %#v, want %#v", query.Filters, want)
@@ -261,5 +300,166 @@ func TestPhysicalUsageQueryUsesObservationTime(t *testing.T) {
 				t.Fatalf("time filter=%+v", filter)
 			}
 		}
+	}
+}
+
+func TestBuildProfileScopeAndNodeFilters(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope observation.Scope
+		want  driver.Op
+	}{
+		{name: "node spans scopes"},
+		{
+			name:  "host",
+			scope: observation.ScopeTypeHost,
+			want:  driver.OpNotExists,
+		},
+		{
+			name:  "container",
+			scope: observation.ScopeTypeContainer,
+			want:  driver.OpExists,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query := buildAggregationQuery(&Filter{
+				Region:   "example",
+				Hostname: "node-1",
+				Scope:    tc.scope,
+			})
+			want := []driver.Filter{
+				{Field: observation.FieldRegion + ".keyword", Op: driver.OpEq, Value: "example"},
+				{Field: observation.FieldHostname + ".keyword", Op: driver.OpEq, Value: "node-1"},
+			}
+			if tc.want != "" {
+				want = append(want, driver.Filter{
+					Field: observation.FieldContainerID,
+					Op:    tc.want,
+				})
+			}
+			if !reflect.DeepEqual(query.Filters, want) {
+				t.Fatalf("filters = %#v, want %#v", query.Filters, want)
+			}
+		})
+	}
+}
+
+func TestProfileValuesUseKeywordFields(t *testing.T) {
+	for field, want := range map[string]string{
+		"region":              "region.keyword",
+		"hostname":            "hostname.keyword",
+		"container_id":        "container_id.keyword",
+		"container_name":      "container_name.keyword",
+		"container_hostname":  "container_hostname.keyword",
+		"container_namespace": "container_namespace.keyword",
+		"container_type":      "container_type.keyword",
+		"container_qos":       "container_qos.keyword",
+		"profile_type":        "profile_data.profile_type.keyword",
+		"id":                  "tracer_id.keyword",
+	} {
+		t.Run(field, func(t *testing.T) {
+			store, backend := newTestStore(t)
+			if _, err := store.Values(t.Context(), nil, field); err != nil {
+				t.Fatal(err)
+			}
+			if backend.valueField != want {
+				t.Fatalf("aggregation field = %q, want %q", backend.valueField, want)
+			}
+		})
+	}
+}
+
+func TestMapperPublicMetadataMatchesJSON(t *testing.T) {
+	document := validDocument()
+	document.UploadedTimestamp = timeutil.Timestamp{Time: time.Date(2026, 8, 28, 2, 0, 1, 0, time.UTC)}
+	document.Metadata = observation.Metadata{
+		Region:             "region-a",
+		Hostname:           "node-a",
+		ContainerID:        "container-a",
+		ContainerName:      "worker",
+		ContainerHostname:  "worker-pod",
+		ContainerNamespace: "production",
+		ContainerType:      "normal",
+		ContainerQoS:       "burstable",
+	}
+	fields, err := (mapper{}).Fields(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := (mapper{}).Encode(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jsonFields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &jsonFields); err != nil {
+		t.Fatal(err)
+	}
+	indexes := make(map[string]bool)
+	for _, index := range (mapper{}).Indexes() {
+		indexes[index.Field] = true
+	}
+	for _, key := range []string{"region", "hostname", "container_id", "container_name", "container_hostname", "container_namespace", "container_type", "container_qos"} {
+		var value string
+		if err := json.Unmarshal(jsonFields[key], &value); err != nil {
+			t.Fatalf("JSON field %q: %v", key, err)
+		}
+		if fields[key] != value {
+			t.Fatalf("mapper %s = %v, JSON = %q", key, fields[key], value)
+		}
+		if !indexes[key] {
+			t.Fatalf("metadata field %q has no index declaration", key)
+		}
+	}
+}
+
+func TestMapperOmitsMissingContainerMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata observation.Metadata
+	}{
+		{
+			name: "host",
+			metadata: observation.Metadata{
+				Region:   "region-a",
+				Hostname: "node-a",
+			},
+		},
+		{
+			name: "container with missing attributes",
+			metadata: observation.Metadata{
+				Region:      "region-a",
+				Hostname:    "node-a",
+				ContainerID: "container-a",
+			},
+		},
+	}
+	for i := range tests {
+		t.Run(tests[i].name, func(t *testing.T) {
+			document := validDocument()
+			document.UploadedTimestamp = timeutil.Timestamp{Time: time.Unix(1_700_000_000, 0).UTC()}
+			document.Metadata = tests[i].metadata
+			fields, err := (mapper{}).Fields(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			encoded, err := (mapper{}).Encode(document)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var jsonFields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &jsonFields); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, key := range []string{"container_id", "container_name", "container_hostname", "container_namespace", "container_type", "container_qos"} {
+				_, fieldPresent := fields[key]
+				_, jsonPresent := jsonFields[key]
+				if fieldPresent != jsonPresent {
+					t.Fatalf("metadata %s presence: mapper=%t JSON=%t", key, fieldPresent, jsonPresent)
+				}
+			}
+		})
 	}
 }

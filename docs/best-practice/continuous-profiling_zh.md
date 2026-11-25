@@ -28,6 +28,7 @@ weight: 7
 先按 [Docker 部署](/docs/deployment/docker_zh.md)准备 Linux 节点、Docker Compose 和 `build/docker/.env`。执行示例需要 `curl` 和 `jq`，目标节点应有待分析的 CPU 活动。
 
 以下配置分别写入项目根目录的 `huatuo-bamai.conf` 和 `huatuo-apiserver.conf`，由 Compose 挂载。huatuo-bamai 负责写入剖析数据，huatuo-apiserver 负责查询；两者需连接同一 ES 索引。ES 密码应与 `.env` 的 `ELASTIC_PASSWORD` 一致。节点 token 在两份配置中保持一致，API token 用于后续请求。
+Grafana 的 `pyroscope.yaml` 中，Pyroscope 和 Infinity 两个数据源需配置相同的 API token。
 
 在 `huatuo-bamai.conf` 中配置：
 
@@ -144,19 +145,33 @@ curl -fsS -H "Authorization: Bearer ${API_TOKEN}" \
 
 ### 5. 查看火焰图
 
-示例是对本机进行剖析，打开 **Continuous Profiling (host)** 面板（容器是独立的面板）：
+示例是对本机进行剖析，打开统一的 **Continuous Profiling** 面板：
 
-- 地址：[http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host) （根据实际环境地址替换 `localhost:3000`）
+- 地址：[http://localhost:3000/d/continuous-profiling](http://localhost:3000/d/continuous-profiling) （根据实际环境地址替换 `localhost:3000`）
 - 账号/密码：`admin / admin` （首次登录按提示修改密码）
 
 操作步骤：
 
 1. 右上角选择时间范围，确保覆盖采样时间段
-2. 变量栏选择目标 `hostname`，填写本次任务的 Task ID，并选择 `type` 为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
+2. 变量栏依次选择 Region、目标节点 `hostname`、范围 `host` 和本次 Task ID，并选择 `type` 为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
 3. 查看所选任务和时间范围内的聚合调用栈，使用 Focus block 聚焦目标栈帧
 4. 选择 Both 同时展示火焰图和函数统计表
 
 ![宿主机 CPU 火焰图与函数统计](/docs/img/continuous-profiling-grafana-host.png)
+
+#### 标签过滤
+
+目标变量栏下方的 Labels 过滤条支持按 `comm`、`pid`、`cpu` 或扩展标签精确过滤。
+`pid` 为宿主机 PID；`cpu` 仅适用于 native on-CPU 采集。
+
+- 点击 `+` 选择标签和取值，立即刷新火焰图；多条条件按 AND 组合。
+- 点击已有条件可编辑，点击 `×` 删除。
+- 切换目标、任务或 Profile type 时清空标签条件；调整全局时间范围时保留条件并刷新候选值，
+  无匹配的已选值会标记警告。
+- 候选值受当前任务、类型、时间和其他条件约束，编辑时排除该条件自身。
+
+标签过滤只影响火焰图，窗口曲线不变。容器选择 All 时，任务仍限定到一个目标；
+`physical_usage` 始终要求单个任务并只取最新快照。
 
 本地试用结束后，可在仓库根目录运行 `docker compose --project-directory ./build/docker down` 停止并移除本次 Compose 服务。
 
@@ -195,7 +210,10 @@ sudo _output/bin/profiler \
 
 `--type` 和 `--language` 为必填参数。Java、Python 和原生内存采集必须在 `--pid` 与 `--container-id` 中指定且仅指定一个目标；原生 CPU 采集未指定目标时可进行宿主机级采样。
 
-容器目标还需要可访问的 huatuo-bamai 节点接口，用于解析容器元数据；地址由 `--huatuo-api-address` 指定。
+容器目标采集必须在容器所在节点运行。原生 profiler 直接从本机内核解析 CSS 引用，
+无需节点接口。引用包含 CSS 地址与 cgroup ID；采样前，BPF 过滤器会用当前 cgroup
+核对两者。节点接口通过 `cgroup_css_refs` 向本机消费者提供完整引用；其中的内核地址
+在其他节点没有意义。
 
 ### C、C++ 和 Go
 
@@ -361,7 +379,11 @@ _output/bin/profiler \
 | `flamegraph` | `flamegraph_<Unix 时间戳>.svg`；内嵌交互脚本的 SVG | 推荐用于人工分析，可在浏览器中搜索、缩放和查看栈帧数值 |
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
 | `json` | 每个采集窗口一行 JSON，流式采集可输出多行 | 保留窗口、样本标签和有符号值 |
+| `speedscope` | Speedscope 格式的 profile JSON | 在 speedscope.app 或任意 Speedscope 查看器中交互分析 |
+| `chrometrace` | Chrome tracing 格式 JSON | 导入 `chrome://tracing` 或 Perfetto 查看；时间轴由样本单位合成，不代表真实事件顺序或并发关系 |
 | `remote-store` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
+
+`chrometrace` 只能用于带时间单位的采集（CPU、off-CPU），`--type=memory` 会被直接拒绝；`speedscope` 不受这个限制。
 
 ### 火焰图
 
@@ -382,7 +404,7 @@ main;handleRequest;writeResponse 172
 
 调用栈按用户栈、内核栈和完整标签组聚合。CPU 时间和等待时间使用纳秒，内存使用字节。`comm` 仅表示进程命令名，Java、Python 入口分别保存在 `java_entry`、`python_entry` 标签中。
 
-`collapsed`、`flamegraph` 和 `svg` 在采集成功结束后生成最终聚合结果；`json` 保留各窗口及有符号值。展示格式会将每个样本的负累计值归零并记录警告。标签已保存不代表查询接口支持任意标签索引或过滤。
+`collapsed`、`flamegraph`、`svg` 和 `speedscope` 在采集成功结束后生成最终聚合结果，并将负的累计样本值归零并记录警告。`chrometrace` 按到达顺序把各窗口的调用栈排到同一条估算时间轴上，遇到负样本权重会令采集失败，而不是归零。`json` 保留各窗口及有符号值。标签已保存不代表查询接口支持任意标签索引或过滤。
 
 ### 物理内存存活量
 
@@ -392,11 +414,13 @@ main;handleRequest;writeResponse 172
 
 本地 SVG 和折叠栈输出最终累计结果；JSON 保留各周期的有符号增量。样本全部抵消时仍生成有效空结果，从未收到样本则不创建本地展示文件。
 
-跨周期栈匹配、实际物理页释放及部分释放识别、正常停止时剩余数据收集仍待验证和完善，当前结果不能视为精确物理驻留量。高基数采集的内存占用也会随不同样本数量增长。
+正常停止时会读取剩余缓冲数据，但真实采样链路的尾部完整性仍待验证。跨周期栈匹配、实际物理页释放及部分释放识别仍待验证和完善，当前结果不能视为精确物理驻留量。高基数采集的内存占用也会随不同样本数量增长。
 
 ### 任务完成
 
-命令行达到采集时长或收到 Ctrl+C（SIGINT）后正常收尾；其他取消信号或采集、输出错误会阻止结果提交。API 的停止操作会中止任务，结果规则见 [API 停止任务](/docs/reference/profiling-api_zh.md#停止任务)。输出不提供事务回滚，失败前已经写出的窗口或本地数据可能保留。
+命令行达到采集时长或收到 SIGINT（Ctrl+C）后正常收尾：停止采集，读取并投递尾部样本，排空队列后提交结果。收尾共享 30 秒处理预算；超时、其他取消信号或采集、输出错误会阻止结果提交。资源清理仍会执行，外部工具清理有独立超时。
+
+API 主动停止会中止任务，不发布结果完成标记，结果规则见 [API 停止任务](/docs/reference/profiling-api_zh.md#停止任务)。输出不提供事务回滚，失败前已经写出的窗口或本地数据可能保留。
 
 远端结果经 `remote-store` 提交后才具有完成标记。任务原始结果查询依赖该标记；通用火焰图查询不保证排除所有未完成窗口，不能据图表出现数据就认定任务成功。升级远端采集链路时，应先升级接收端再升级发送端；当前统一窗口使用业务协议版本 3，旧版本 1/2 仅兼容旧的完整 pprof 数据。
 

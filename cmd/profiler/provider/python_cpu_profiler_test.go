@@ -86,6 +86,15 @@ func TestBuildPySpyArgs(t *testing.T) {
 	))
 }
 
+func collectPythonCPU(t *testing.T, p *pythonCPUProfiler, ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	t.Helper()
+	if err := p.ReadDataLoop(ctx, enqueue); err != nil {
+		return err
+	}
+
+	return p.Finalize(ctx, enqueue)
+}
+
 func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -125,8 +134,13 @@ func TestPythonCPUProfilerReadDataLoopUsesOnlyMemfdSamples(t *testing.T) {
 				pids: []int{123, 456},
 			}
 			var samples []aggregation.Sample
-			err := p.ReadDataLoop(
+			err := collectPythonCPU(
+
+				t,
+				p,
+
 				t.Context(),
+
 				func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
 			)
 			if tt.wantErr != "" {
@@ -169,6 +183,47 @@ func TestRunPySpyPreservesExitError(t *testing.T) {
 
 	require.Empty(t, results[0].Output)
 	require.Equal(t, "tool warning\n", string(results[0].Diagnostics))
+}
+
+func TestPythonCPUProfilerStopDuringFinalDelivery(t *testing.T) {
+	for _, cause := range []error{profile.ErrStopRequested, profile.ErrCollectionDurationElapsed, context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			taskCtx, cancelTask := context.WithCancelCause(t.Context())
+			defer cancelTask(nil)
+			ctx, cancel := context.WithCancelCause(taskCtx)
+			defer cancel(nil)
+			p := &pythonCPUProfiler{
+				config: Config{
+					Freq:    99,
+					ToolDir: writeFakePySpy(t, "work (app.py:10) 3\n", 0),
+				},
+				pids: []int{123, 456},
+			}
+			require.NoError(t, p.ReadDataLoop(ctx, func(*pipeline.SampleBatch) error {
+				t.Fatal("samples delivered before finalization")
+				return nil
+			}))
+
+			delivered := 0
+			err := p.Finalize(taskCtx, func(*pipeline.SampleBatch) error {
+				delivered++
+				cancel(cause)
+				// Run propagates only abnormal collection cancellation to the task.
+				if !profile.IsNormalStop(ctx) {
+					cancelTask(cause)
+				}
+
+				return nil
+			})
+			if errors.Is(cause, context.Canceled) {
+				require.ErrorIs(t, err, context.Canceled)
+				require.Equal(t, 1, delivered)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, 2, delivered)
+			}
+		})
+	}
 }
 
 func writeFakePySpy(t *testing.T, sample string, exitCode int) string {
@@ -306,8 +361,13 @@ RAW
 			}
 			require.NoError(
 				t,
-				p.ReadDataLoop(
+				collectPythonCPU(
+
+					t,
+					p,
+
 					ctx,
+
 					func(batch *pipeline.SampleBatch) error { samples = append(samples, batch.Samples...); return nil },
 				),
 			)

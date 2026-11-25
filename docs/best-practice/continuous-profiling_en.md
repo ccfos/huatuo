@@ -28,6 +28,7 @@ Use Docker Compose to collect a host CPU profile and view its flame graph in Gra
 Follow [Docker Deployment](/docs/deployment/docker_en.md) to prepare a Linux node, Docker Compose, and `build/docker/.env`. The example requires `curl` and `jq`; the target node should have CPU activity to analyze.
 
 Write the settings below to `huatuo-bamai.conf` and `huatuo-apiserver.conf` in the repository root, which Compose mounts. huatuo-bamai writes profiles and huatuo-apiserver queries them; both must connect to the same ES index. Match the ES password to `ELASTIC_PASSWORD` in `.env`. Use the same node token in both files; the API token authenticates subsequent requests.
+In Grafana's `pyroscope.yaml`, configure the Pyroscope and Infinity data sources with the same API token.
 
 In `huatuo-bamai.conf`:
 
@@ -144,19 +145,35 @@ A successful response means the result is published. `items` may be empty, for e
 
 ### 5. View the Flame Graph
 
-This example profiles the local host. Open **Continuous Profiling (host)**; containers use a separate dashboard:
+This example profiles the local host. Open **Continuous Profiling**, shared by host and container scopes:
 
-- URL: [http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host). Replace `localhost:3000` for your environment.
+- URL: [http://localhost:3000/d/continuous-profiling](http://localhost:3000/d/continuous-profiling). Replace `localhost:3000` for your environment.
 - Username/password: `admin / admin`. Change the password when prompted on first login.
 
 Steps:
 
 1. Select a time range in the upper-right corner covering the collection period.
-2. Select the target `hostname`, enter this task's Task ID, and choose `process_cpu:cpu:nanoseconds:cpu:nanoseconds` as `type`.
+2. Select Region, the node `hostname`, scope `host`, and this Task ID, then choose `process_cpu:cpu:nanoseconds:cpu:nanoseconds` as `type`.
 3. Inspect aggregated stacks for the task and time range; use Focus block to focus on a frame.
 4. Choose Both to show the flame graph and function statistics together.
 
 ![Host CPU flame graph and function statistics](/docs/img/continuous-profiling-grafana-host.png)
+
+#### Label filters
+
+The Labels bar below the target variables filters `comm`, `pid`, `cpu`, or extension labels by exact
+value. `pid` is the host PID; `cpu` is available only for native on-CPU profiling.
+
+- Click `+` and select a label and value to refresh the flame graph. Conditions use AND.
+- Click an existing condition to edit it or its `×` to remove it.
+- Changing the target, task, or profile type clears conditions. Changing the global time range
+  preserves them and refreshes suggestions, with warnings for selected values that no longer match.
+- Suggestions use the current task, type, time range, and other conditions, excluding the condition
+  being edited.
+
+Label filters affect only the flame graph; the window timeline is unchanged.
+With All containers selected, the task still identifies one target. Physical usage always requires
+one task and selects only the latest snapshot.
 
 After the local trial, run `docker compose --project-directory ./build/docker down` from the repository root to stop and remove these Compose services.
 
@@ -195,7 +212,12 @@ sudo _output/bin/profiler \
 
 `--type` and `--language` are required. Java, Python, and native memory collection require exactly one of `--pid` or `--container-id`. Native CPU collection can sample the host without a target.
 
-Container targets also require access to the huatuo-bamai node API to resolve container metadata. Set its address with `--huatuo-api-address`.
+Run container-targeted profiling on the node that hosts the container. Native
+profiling resolves the container CSS reference from the local kernel; it does not
+need the Node API. The reference contains a CSS address and cgroup ID, both of
+which the BPF filter checks against the current cgroup before sampling.
+The Node API exposes complete references through `cgroup_css_refs` for local
+consumers; its kernel addresses are not meaningful on another node.
 
 ### C, C++, and Go
 
@@ -357,7 +379,11 @@ A run with no samples may produce no display file; an existing file alone does n
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; SVG with interactive scripts | Recommended for visual analysis; search, zoom, and inspect frame values in a browser |
 | `svg` | Same interactive SVG as `flamegraph` | For callers explicitly requesting SVG; currently equivalent to `flamegraph` |
 | `json` | One JSON line per collection window; streaming collection may emit multiple lines | Preserve windows, sample labels, and signed values |
+| `speedscope` | Speedscope profile JSON | Inspect the profile interactively at speedscope.app or in any Speedscope viewer |
+| `chrometrace` | Chrome tracing JSON | Load the collection into `chrome://tracing` or Perfetto; the timeline is synthesised from the sample unit, so it does not preserve the real event order or concurrency |
 | `remote-store` | Uploads pprof-compatible data through a Unix socket without a local flame graph | HUATUO storage integration; not for offline viewing |
+
+`chrometrace` only accepts time-based profiles (CPU and off-CPU); `--type=memory` is rejected. `speedscope` has no such restriction.
 
 ### Flame Graphs
 
@@ -378,7 +404,7 @@ main;handleRequest;writeResponse 172
 
 Stacks are aggregated by user stack, kernel stack, and the complete label set. CPU and wait times use nanoseconds; memory uses bytes. `comm` is only the process command name. Java and Python entry points are stored in `java_entry` and `python_entry` labels.
 
-`collapsed`, `flamegraph`, and `svg` produce final aggregates after successful collection. `json` preserves each window and signed values. Display formats clamp negative cumulative sample values to zero and log a warning. Stored labels do not imply that query APIs support arbitrary label indexing or filtering.
+`collapsed`, `flamegraph`, `svg`, and `speedscope` produce final aggregates after successful collection and clamp negative cumulative sample values to zero with a warning. `chrometrace` places every window's stacks on one estimated timeline in arrival order and fails the collection on a negative sample weight instead of clamping it. `json` preserves each window and signed values. Stored labels do not imply that query APIs support arbitrary label indexing or filtering.
 
 ### Live Physical Memory
 
@@ -388,11 +414,13 @@ The remote type is `memory:physical_usage:bytes:space:bytes`. Each output period
 
 Local SVG and collapsed stacks show the final accumulated result; JSON retains signed deltas per period. Fully canceled samples still produce a valid empty result. If no samples were ever received, no local display file is created.
 
-Cross-period stack matching, detection of actual and partial physical-page frees, and collection of remaining data at normal shutdown still require validation and improvement. Current results must not be treated as exact physical residency. Memory usage for high-cardinality collection also grows with the number of distinct samples.
+Normal shutdown reads the remaining buffered data, but tail completeness in the real sampling path still requires validation. Cross-period stack matching and detection of actual and partial physical-page frees still require validation and improvement. Current results must not be treated as exact physical residency. Memory usage for high-cardinality collection also grows with the number of distinct samples.
 
 ### Task Completion
 
-The CLI finalizes normally after the collection duration or Ctrl+C (SIGINT). Other cancellation signals and collection or output errors prevent result submission. API stop requests abort tasks; see [Stop a Task](/docs/reference/profiling-api_en.md#stop-a-task) for result rules. Output is not transactional: windows or local data written before failure may remain.
+After the collection duration or SIGINT (Ctrl+C), the CLI stops collection, reads and delivers final samples, drains the queue, and submits the result. Final processing shares a 30-second budget. Exceeding it, receiving other cancellation signals, or encountering collection or output errors prevents result submission. Resource cleanup still runs; external tool cleanup has its own timeout.
+
+API stop requests abort tasks without publishing a result completion marker. See [Stop a Task](/docs/reference/profiling-api_en.md#stop-a-task) for result rules. Output is not transactional: windows or local data written before failure may remain.
 
 Remote results receive a completion marker only after `remote-store` commits them. Raw task-result queries depend on this marker. General flame graph queries do not guarantee exclusion of all incomplete windows, so chart data alone does not prove task success. Upgrade receivers before senders in the remote collection path. Unified windows use application protocol version 3; legacy versions 1/2 support only the older complete pprof payloads.
 

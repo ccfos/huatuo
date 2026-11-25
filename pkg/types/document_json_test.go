@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -94,7 +95,15 @@ func TestDocumentJSONOptionalTimestamps(t *testing.T) {
 
 func BenchmarkDocumentJSON(b *testing.B) {
 	now := time.Date(2026, 9, 17, 0, 0, 0, 123000000, time.UTC)
-	document := tracingstore.Document{Document: types.Document{Hostname: "host", UploadedTimestamp: timeutil.Timestamp{Time: now}, ObservedTimestamp: &timeutil.Timestamp{Time: now}, KernelObservedTimestamp: &timeutil.Timestamp{Time: now}}, TracerData: map[string]string{"message": "event"}}
+	document := tracingstore.Document{
+		Document: types.Document{
+			Metadata:                observation.Metadata{Hostname: "host"},
+			UploadedTimestamp:       timeutil.Timestamp{Time: now},
+			ObservedTimestamp:       &timeutil.Timestamp{Time: now},
+			KernelObservedTimestamp: &timeutil.Timestamp{Time: now},
+		},
+		TracerData: map[string]string{"message": "event"},
+	}
 	legacy := struct {
 		Hostname                string     `json:"hostname"`
 		UploadedTimestamp       time.Time  `json:"uploaded_timestamp"`

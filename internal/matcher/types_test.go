@@ -14,11 +14,15 @@
 
 package matcher
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ccfos/huatuo/pkg/observation"
+)
 
 func TestCloneRules(t *testing.T) {
 	source := []*Rule{
-		{Field: FieldTypeContainerHostname, Pattern: "^worker-"},
+		{Field: observation.FieldContainerHostname, Pattern: "^worker-"},
 		nil,
 	}
 

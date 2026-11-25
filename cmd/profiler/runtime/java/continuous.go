@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,29 +49,33 @@ type collapsedFile struct {
 	signature fileSignature
 }
 
-type collapsedFileCollector struct {
+// CollapsedFileCollector tracks consumed files across collection and finalization.
+// Its methods are called sequentially by one profiler task.
+type CollapsedFileCollector struct {
 	pids           []int
 	pidsToFilePath map[int]string
-	enqueueSample  func(profile.SampleOutput) error
 	observedFiles  map[string]observedFile
 	retainedFiles  map[string]fileSignature
 }
 
-func newCollapsedFileCollector(
+// NewCollapsedFileCollector creates per-task output tracking.
+func NewCollapsedFileCollector(
 	pids []int,
 	pidsToFilePath map[int]string,
-	enqueueSample func(profile.SampleOutput) error,
-) *collapsedFileCollector {
-	return &collapsedFileCollector{
+) *CollapsedFileCollector {
+	return &CollapsedFileCollector{
 		pids:           append([]int(nil), pids...),
-		pidsToFilePath: pidsToFilePath,
-		enqueueSample:  enqueueSample,
+		pidsToFilePath: maps.Clone(pidsToFilePath),
 		observedFiles:  make(map[string]observedFile),
 		retainedFiles:  make(map[string]fileSignature),
 	}
 }
 
-func (c *collapsedFileCollector) run(ctx context.Context) error {
+// ReadDataLoop polls complete output files until collection stops.
+func (c *CollapsedFileCollector) ReadDataLoop(
+	ctx context.Context,
+	enqueue func(profile.SampleOutput) error,
+) error {
 	ticker := time.NewTicker(asprofFilePollInterval)
 	defer ticker.Stop()
 
@@ -79,14 +84,22 @@ func (c *collapsedFileCollector) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := c.scanOutputFiles(false); err != nil {
+			if err := c.scanOutputFiles(ctx, false, enqueue); err != nil {
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					return nil
+				}
+
 				return err
 			}
 		}
 	}
 }
 
-func (c *collapsedFileCollector) scanOutputFiles(force bool) error {
+func (c *CollapsedFileCollector) scanOutputFiles(
+	ctx context.Context,
+	force bool,
+	enqueue func(profile.SampleOutput) error,
+) error {
 	for _, pid := range c.pids {
 		files, err := c.listSortedFiles(pid)
 		if err != nil {
@@ -94,7 +107,16 @@ func (c *collapsedFileCollector) scanOutputFiles(force bool) error {
 		}
 
 		for _, file := range files {
-			if err := c.observeOutputFile(pid, file, force); err != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			if err := c.observeOutputFile(
+				pid,
+				file,
+				force,
+				enqueue,
+			); err != nil {
 				return err
 			}
 		}
@@ -103,7 +125,7 @@ func (c *collapsedFileCollector) scanOutputFiles(force bool) error {
 	return nil
 }
 
-func (c *collapsedFileCollector) listSortedFiles(pid int) ([]collapsedFile, error) {
+func (c *CollapsedFileCollector) listSortedFiles(pid int) ([]collapsedFile, error) {
 	paths, err := filepath.Glob(c.pidsToFilePath[pid])
 	if err != nil {
 		return nil, fmt.Errorf("glob output for pid %d: %w", pid, err)
@@ -165,7 +187,12 @@ func collapsedFileSequence(path string) (uint64, error) {
 	return sequence, nil
 }
 
-func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, force bool) error {
+func (c *CollapsedFileCollector) observeOutputFile(
+	pid int,
+	file collapsedFile,
+	force bool,
+	enqueue func(profile.SampleOutput) error,
+) error {
 	if retained, ok := c.retainedFiles[file.path]; ok && retained == file.signature {
 		return nil
 	}
@@ -204,7 +231,7 @@ func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, 
 
 	delete(c.observedFiles, file.path)
 
-	if err := c.enqueueSample(profile.SampleOutput{
+	if err := enqueue(profile.SampleOutput{
 		PID:    pid,
 		Output: string(collapsedData),
 	}); err != nil {
@@ -217,22 +244,6 @@ func (c *collapsedFileCollector) observeOutputFile(pid int, file collapsedFile, 
 		Debug("collected async-profiler output")
 
 	return nil
-}
-
-func finishAsprofSampling(
-	ctx context.Context,
-	opt *AsprofSamplingOption,
-	collector *collapsedFileCollector,
-) error {
-	if err := stopAsprofSampling(ctx, opt); err != nil {
-		return err
-	}
-
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	return collector.scanOutputFiles(true)
 }
 
 func stopAsprofSampling(
@@ -270,32 +281,19 @@ func stopAsprofSampling(
 	)
 }
 
-// ReadAsprofDataLoop consumes complete files produced by async-profiler's loop.
-func ReadAsprofDataLoop(
+// Finalize stops the sampler before consuming its last output files.
+func (c *CollapsedFileCollector) Finalize(
 	ctx context.Context,
 	opt *AsprofSamplingOption,
-	pidToPath map[int]string,
 	enqueue func(profile.SampleOutput) error,
 ) error {
-	collector := newCollapsedFileCollector(
-		opt.Pids,
-		pidToPath,
-		enqueue,
-	)
-	if err := collector.run(ctx); err != nil {
+	if err := stopAsprofSampling(ctx, opt); err != nil {
 		return err
 	}
 
-	if !profile.IsNormalStop(ctx) {
-		return context.Cause(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
-	defer cancel()
-	collector.enqueueSample = func(output profile.SampleOutput) error {
-		if err := finalCtx.Err(); err != nil {
-			return err
-		}
-		return enqueue(output)
-	}
-	return finishAsprofSampling(finalCtx, opt, collector)
+
+	return c.scanOutputFiles(ctx, true, enqueue)
 }
