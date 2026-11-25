@@ -28,6 +28,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
+	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/version"
 )
@@ -76,6 +77,10 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		select {
 		case <-ctx.Done():
 		case sig := <-signals:
+			if cfg.output == profileroutput.FormatTUI {
+				// Release the collection listener before handing off to the viewer.
+				signal.Stop(signals)
+			}
 			if sig == syscall.SIGINT {
 				cancel(profile.ErrStopRequested)
 			} else {

@@ -79,7 +79,7 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagOutputFormat,
 			Value: string(profileroutput.FormatCollapsed),
-			Usage: "Output format: collapsed|flamegraph|svg|json|remote-store",
+			Usage: "Output format: collapsed|flamegraph|svg|tui|json|remote-store",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
@@ -96,16 +96,30 @@ func validateFlags(c *cli.Context) error {
 	if c.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %q", c.Args().Slice())
 	}
+
+	return validateOutputFlags(c)
+}
+
+func validateOutputFlags(c *cli.Context) error {
+	format := profileroutput.OutputFormat(c.String(cliFlagOutputFormat))
+	path := c.String(cliFlagOutputPath)
+	if format == profileroutput.FormatTUI {
+		if err := profileroutput.ValidateTUIDestination(path); err != nil {
+			return err
+		}
+		return profileroutput.ValidateTUITerminal()
+	}
+
 	if !c.IsSet(cliFlagOutputPath) || !c.IsSet(cliFlagOutputFormat) {
 		return fmt.Errorf("--output-path and --output-format must both be specified")
 	}
-	path := c.String(cliFlagOutputPath)
 	if err := profileroutput.ValidateDestination(path); err != nil {
 		return err
 	}
-	format := profileroutput.OutputFormat(c.String(cliFlagOutputFormat))
+
 	switch format {
-	case profileroutput.FormatCollapsed, profileroutput.FormatFlameGraph, profileroutput.FormatSVG, profileroutput.FormatJSON, profileroutput.FormatRemoteStore:
+	case profileroutput.FormatCollapsed, profileroutput.FormatFlameGraph, profileroutput.FormatSVG,
+		profileroutput.FormatJSON, profileroutput.FormatRemoteStore:
 	default:
 		return fmt.Errorf("unsupported output format %q", format)
 	}

@@ -26,6 +26,7 @@ source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 readonly IRQ_RATE_BIN="${ROOT_DIR}/_output/bin/irqtracing"
 readonly IRQ_RATE_BPF="${ROOT_DIR}/_output/bpf/irqtracing.o"
+readonly IRQ_RATE_PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly IRQ_RATE_OUTPUT_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/irqtracing"
 readonly IRQ_RATE_TARGET_IP="127.0.0.99"
 readonly IRQ_RATE_TARGET_PORT=9999
@@ -33,7 +34,7 @@ readonly IRQ_RATE_DURATION=3
 readonly IRQ_RATE_MAX_EVENTS_PER_SECOND_PER_CPU=2
 readonly IRQ_RATE_FLOOD_READY="${IRQ_RATE_OUTPUT_DIR}/flood.ready"
 
-require_commands jq taskset awk
+require_commands jq taskset awk script stty mkfifo timeout
 tracepoint_available irq softirq_raise || skip "irq/softirq_raise is unavailable"
 tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable"
 
@@ -90,6 +91,58 @@ irq_rate_tool_has_exited() {
 }
 
 readonly IRQ_RATE_TOOL_DEADLINE=$((IRQ_RATE_DURATION + 30))
+assert_irqtracing_tui_requires_terminal() {
+	if "${IRQ_RATE_BIN}" --bpf-path "${IRQ_RATE_BPF}" --output-format tui \
+		< /dev/null > "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log" 2>&1; then
+		fatal "irqtracing accepted non-terminal input and output"
+	fi
+	grep -Fq 'tui output requires terminal stdin and stdout' "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log" \
+		|| fatal "expected a terminal requirement: $(< "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log")"
+}
+
+assert_irqtracing_terminal_restored() {
+	local prefix=$1
+	grep -Fq 'HUATUO tui flamegraph' "${prefix}.log" \
+		&& grep -Fq $'\e[?1049l' "${prefix}.log" \
+		&& [[ -s ${prefix}.after ]] \
+		&& cmp -s "${prefix}.before" "${prefix}.after" \
+		|| fatal "TUI did not open and restore the terminal: $(tail -n 30 "${prefix}.log")"
+}
+
+run_irqtracing_tui() {
+	local prefix=$1 command input_fd status=0
+	shift
+	printf -v command '%q ' bash -ec '
+		stty rows 32 cols 120
+		stty -g > "$1"
+		after=$2
+		shift 2
+		"$@"
+		stty -g > "${after}"
+	' _ "${prefix}.before" "${prefix}.after" "$@"
+	mkfifo "${prefix}.in"
+	exec {input_fd}<> "${prefix}.in"
+	(
+		exec {input_fd}>&-
+		exec env TERM=xterm-256color NO_COLOR=1 SHELL=/bin/bash \
+			timeout -k 2 "${IRQ_RATE_TOOL_DEADLINE}" script -q -e -f -c "${command}" "${prefix}.log"
+	) < "${prefix}.in" > /dev/null 2>&1 &
+	irq_rate_tool_pid=$!
+	wait_until "${IRQ_RATE_TOOL_DEADLINE}" 0.1 grep -Esq '^value: [1-9][0-9]*  self:' "${prefix}.log" \
+		|| fatal "expected a TUI with nonzero sample weight: $(tail -n 30 "${prefix}.log")"
+	printf q >&"${input_fd}"
+	wait "${irq_rate_tool_pid}" || status=$?
+	irq_rate_tool_pid=""
+	exec {input_fd}>&-
+	assert_eq "${status}" 0 "TUI exit code" || fatal "TUI failed: $(tail -n 30 "${prefix}.log")"
+	assert_irqtracing_terminal_restored "${prefix}"
+}
+
+irqtracing_tui_weight() {
+	awk '/^value: [1-9][0-9]*  self:/ { print $2; exit }' "$1"
+}
+
+assert_irqtracing_tui_requires_terminal
 log_info "irqtracing: flood cpu ${IRQ_RATE_CPU_ID}, expect collection loss and a profile"
 
 rm -f "${IRQ_RATE_FLOOD_READY}"
@@ -114,9 +167,6 @@ if ! wait "${irq_rate_tool_pid}"; then
 fi
 kill -0 "${irq_rate_flood_pid}" 2> /dev/null \
 	|| fatal "flood exited before irqtracing completed"
-kill "${irq_rate_flood_pid}" 2> /dev/null || true
-wait "${irq_rate_flood_pid}" || true
-irq_rate_flood_pid=""
 irq_rate_tool_pid=""
 
 assert_irqtracing_dropped_samples() {
@@ -143,4 +193,20 @@ assert_irqtracing_dropped_samples() {
 }
 assert_irqtracing_dropped_samples "${IRQ_RATE_OUTPUT_DIR}/result.json" "${IRQ_RATE_OUTPUT_DIR}/err.txt" \
 	|| fatal "IRQ loss assertions failed; inspect ${IRQ_RATE_OUTPUT_DIR}"
+
+readonly IRQTRACING_REPORT="${IRQ_RATE_OUTPUT_DIR}/profile.gob"
+run_irqtracing_tui "${IRQ_RATE_OUTPUT_DIR}/capture" "${IRQ_RATE_BIN}" \
+	--bpf-path "${IRQ_RATE_BPF}" --cpu-list "${IRQ_RATE_CPU_ID}" --duration "${IRQ_RATE_DURATION}" \
+	--max-events-per-second-per-cpu "${IRQ_RATE_MAX_EVENTS_PER_SECOND_PER_CPU}" \
+	--output-format tui --output-path "${IRQTRACING_REPORT}"
+kill "${irq_rate_flood_pid}" 2> /dev/null || true
+wait "${irq_rate_flood_pid}" || true
+irq_rate_flood_pid=""
+
+assert_eq "$(test -s "${IRQTRACING_REPORT}" && echo 1 || echo 0)" 1 "TUI report saved by q" \
+	|| fatal "irqtracing did not save ${IRQTRACING_REPORT}"
+run_irqtracing_tui "${IRQ_RATE_OUTPUT_DIR}/replay" "${IRQ_RATE_PROFILER_BIN}" --tui-report "${IRQTRACING_REPORT}"
+assert_eq "$(irqtracing_tui_weight "${IRQ_RATE_OUTPUT_DIR}/replay.log")" \
+	"$(irqtracing_tui_weight "${IRQ_RATE_OUTPUT_DIR}/capture.log")" "replayed IRQ sample weight" \
+	|| fatal "profiler did not replay the expected IRQ profile"
 log_info "PASS"

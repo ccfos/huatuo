@@ -37,6 +37,7 @@ func TestValidateFlags(t *testing.T) {
 		{name: "format missing", args: []string{"--output-path", "profile"}, wantErr: "must both be specified"},
 		{name: "path missing", args: []string{"--output-format", "collapsed"}, wantErr: "must both be specified"},
 		{name: "empty path", args: []string{"--output-format", "collapsed", "--output-path", ""}, wantErr: "must not be empty"},
+		{name: "blank TUI path", args: []string{"--output-format", "tui", "--output-path", " "}, wantErr: "--output-path must not be empty"},
 		{name: "stdout", args: []string{"--output-format", "collapsed", "--output-path", "stdout"}},
 		{name: "stdout alias", args: []string{"--output-format", "collapsed", "--output-path", "-"}},
 		{name: "collapsed", args: []string{"--output-format", "collapsed", "--output-path", "profile"}},
