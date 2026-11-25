@@ -166,6 +166,8 @@ Example with some common fields omitted:
 
 ### Disk I/O
 
+File I/O counts synchronous return bytes. `-EIOCBQUEUED` retains submitted-byte accounting. If pending records cannot be stored or a later entry detects a missed return, the tool emits collected rows with `failure_reason: "accounting_incomplete"` and returns an error; these rates are incomplete.
+
 Tracer: `iotracing`.
 
 Reads `/proc/diskstats` every 5 seconds. A trigger condition must hold for two consecutive intervals. Non-NVMe devices check utilization; NVMe devices require both utilization and either read or write throughput to exceed thresholds. Each device also checks mean read and write wait times independently. Results include process and file I/O rates and I/O scheduling wait stacks.

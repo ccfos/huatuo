@@ -18,6 +18,9 @@ package types
 // Observations collected before the error remain in the snapshot.
 const IOTracingFailureReader = "reader_error"
 
+// IOTracingFailureAccounting marks failed inserts or detected missing returns.
+const IOTracingFailureAccounting = "accounting_incomplete"
+
 // IOTracingSnapshot is the wire schema produced by one iotracing run and
 // sent to huatuo-bamai over toolstream. The trigger reason snapshot is
 // attached by the daemon after receipt and is not part of this payload.

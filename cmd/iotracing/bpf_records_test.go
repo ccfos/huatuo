@@ -23,6 +23,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unsafe"
@@ -35,6 +36,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBPFFilesystemIOLayout(t *testing.T) {
@@ -200,9 +202,11 @@ func (r *reportTestReader) ReadInto(data any) error {
 
 type reportTestBPF struct {
 	bpf.BPF
-	t        *testing.T
-	rows     []bpf.MapItem
-	detached bool
+	t             *testing.T
+	rows          []bpf.MapItem
+	detached      bool
+	dropped       uint64
+	accountingErr error
 }
 
 func (b *reportTestBPF) Detach() error {
@@ -212,10 +216,65 @@ func (b *reportTestBPF) Detach() error {
 
 func (b *reportTestBPF) DumpMapByName(name string) ([]bpf.MapItem, error) {
 	b.t.Helper()
-	if !b.detached || name != bpfSourceMapName {
-		b.t.Fatalf("map dump before detach or unexpected map: %s", name)
+	if !b.detached {
+		b.t.Fatal("map dump before detach")
+	}
+	if name != bpfSourceMapName {
+		b.t.Fatalf("unexpected map: %s", name)
 	}
 	return b.rows, nil
+}
+
+func (b *reportTestBPF) MapIDByName(name string) uint32 {
+	b.t.Helper()
+	if name != "file_io_dropped" {
+		b.t.Fatalf("unexpected map: %s", name)
+	}
+	return 1
+}
+
+func (b *reportTestBPF) ReadMap(id uint32, key []byte) ([]byte, error) {
+	b.t.Helper()
+	if !b.detached || id != 1 || len(key) != 4 || binary.LittleEndian.Uint32(key) != 0 {
+		b.t.Fatal("loss read before detach or invalid lookup")
+	}
+	value := make([]byte, 8)
+	binary.LittleEndian.PutUint64(value, b.dropped)
+	return value, b.accountingErr
+}
+
+func TestCollectReportMarksIncompleteFileAccounting(t *testing.T) {
+	object := &reportTestBPF{t: t, dropped: 1}
+	snapshot, err := collectReport(object,
+		&reportTestReader{hasRead: true, readErr: types.ErrExitByCancelCtx},
+		ioConfig{}, time.Now())
+	require.ErrorContains(t, err, "1 entry/return pairs lost")
+	require.NotNil(t, snapshot)
+	require.Equal(t, types.IOTracingFailureAccounting, snapshot.FailureReason)
+}
+
+func TestFileIOAccountingError(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		dropped   uint64
+		readErr   error
+		wantError bool
+	}{
+		{name: "complete"},
+		{name: "pending capacity", dropped: 1, wantError: true},
+		{name: "counter unavailable", readErr: syscall.EIO, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			object := &reportTestBPF{
+				t: t, detached: true, dropped: test.dropped,
+				accountingErr: test.readErr,
+			}
+			err := fileIOAccountingError(object)
+			if (err != nil) != test.wantError {
+				t.Fatalf("accounting error=%v, wantError=%v", err, test.wantError)
+			}
+		})
+	}
 }
 
 type failingReportOutput struct{ err error }

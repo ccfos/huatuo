@@ -70,6 +70,13 @@ struct {
 	__type(value, struct file_io_start);
 } file_io_start_map SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, u64);
+} file_io_dropped SEC(".maps");
+
 struct hash_key {
 	dev_t dev;
 	u32 _pad;
@@ -345,6 +352,15 @@ get_file_io_entry(struct io_key *key, struct file *file)
 	return entry;
 }
 
+static __always_inline void record_file_io_drop(void)
+{
+	u32 zero = 0;
+	u64 *dropped = bpf_map_lookup_elem(&file_io_dropped, &zero);
+
+	if (dropped)
+		__sync_fetch_and_add(dropped, 1);
+}
+
 /* Keep pending metadata off the caller's stack during file-entry creation. */
 static __noinline void
 save_file_io_start(struct io_key *key, u64 requested, bool is_write)
@@ -356,7 +372,8 @@ save_file_io_start(struct io_key *key, u64 requested, bool is_write)
 	};
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 
-	bpf_map_update_elem(&file_io_start_map, &pid_tgid, &start, COMPAT_BPF_ANY);
+	if (bpf_map_update_elem(&file_io_start_map, &pid_tgid, &start, COMPAT_BPF_ANY))
+		record_file_io_drop();
 }
 
 static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_write)
@@ -371,8 +388,11 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx, bool is_writ
 	u32 file_flags = 0;
 	u64 inode_number = 0;
 
-	/* Retire metadata even when this entry is filtered out. */
-	bpf_map_delete_elem(&file_io_start_map, &pid_tgid);
+	/* A previous operation still present here missed its return probe. */
+	if (bpf_map_lookup_elem(&file_io_start_map, &pid_tgid)) {
+		record_file_io_drop();
+		bpf_map_delete_elem(&file_io_start_map, &pid_tgid);
+	}
 
 	file = BPF_CORE_READ(iocb, ki_filp);
 	/* Batch only when the target layout matches the snapshot's field spacing. */

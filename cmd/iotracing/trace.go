@@ -99,7 +99,29 @@ func collectReport(b bpf.BPF, reader bpf.PerfEventReader, cfg ioConfig, started 
 	if collectErr != nil {
 		snapshot.FailureReason = types.IOTracingFailureReader
 	}
+	if err := fileIOAccountingError(b); err != nil {
+		if snapshot.FailureReason == "" {
+			snapshot.FailureReason = types.IOTracingFailureAccounting
+		}
+		collectErr = errors.Join(collectErr, err)
+	}
 	return snapshot, collectErr
+}
+
+// Report failed inserts and stale pairs; calls still in flight are not completions.
+func fileIOAccountingError(b bpf.BPF) error {
+	value, err := b.ReadMap(b.MapIDByName("file_io_dropped"), make([]byte, 4))
+	if err != nil {
+		return fmt.Errorf("read file IO loss counter: %w", err)
+	}
+	if len(value) != 8 {
+		return fmt.Errorf("file IO loss counter has %d bytes, expected 8", len(value))
+	}
+	dropped := binary.LittleEndian.Uint64(value)
+	if dropped != 0 {
+		return fmt.Errorf("incomplete file IO accounting: %d entry/return pairs lost", dropped)
+	}
+	return nil
 }
 
 // collectStalls drains the iodelay perf reader until ctx cancellation
