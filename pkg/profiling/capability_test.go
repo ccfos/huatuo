@@ -119,8 +119,13 @@ func TestCapabilityDefinitionsAreUnique(t *testing.T) {
 		}{typ: capability.Type, language: capability.Language}
 
 		require.NotEqual(t, TypeUnknown, capability.Type)
-		require.NotEqual(t, LanguageUnknown, capability.Language)
-		require.NotEqual(t, ImplementationUnknown, capability.implementation)
+		if capability.Type == TypeIRQ {
+			require.Equal(t, LanguageUnknown, capability.Language)
+			require.Equal(t, ImplementationUnknown, capability.implementation)
+		} else {
+			require.NotEqual(t, LanguageUnknown, capability.Language)
+			require.NotEqual(t, ImplementationUnknown, capability.implementation)
+		}
 		require.False(t, keys[key], "duplicate capability %q/%q", capability.Type, capability.Language)
 		keys[key] = true
 		require.NotEmpty(t, capability.Modes)
@@ -156,6 +161,9 @@ func TestCapabilitiesExposeSupportedScopeAndBinaryMatch(t *testing.T) {
 		case capability.Type == TypeCPU:
 			require.Equal(t, containerOnly, capability.SupportedScopes)
 			require.True(t, capability.SupportsBinaryMatch)
+		case capability.Type == TypeIRQ:
+			require.Equal(t, []observation.Scope{observation.ScopeTypeHost}, capability.SupportedScopes)
+			require.False(t, capability.SupportsBinaryMatch)
 		case capability.Type == TypeMemory:
 			require.Equal(t, containerOnly, capability.SupportedScopes)
 			require.False(t, capability.SupportsBinaryMatch)
@@ -166,7 +174,7 @@ func TestCapabilitiesExposeSupportedScopeAndBinaryMatch(t *testing.T) {
 }
 
 func TestParsers(t *testing.T) {
-	for _, typ := range []Type{TypeCPU, TypeMemory} {
+	for _, typ := range []Type{TypeCPU, TypeMemory, TypeIRQ} {
 		parsed, err := ParseType(string(typ))
 		require.NoError(t, err)
 		require.Equal(t, typ, parsed)
@@ -186,6 +194,7 @@ func TestParsers(t *testing.T) {
 	require.EqualError(t, err, `unsupported language "rust"`)
 
 	for _, mode := range []Mode{
+		ModeSoftIRQ,
 		ModeOnCPU,
 		ModeOffCPU,
 		ModeObjectAlloc,

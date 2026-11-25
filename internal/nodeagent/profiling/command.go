@@ -15,6 +15,8 @@
 package profiling
 
 import (
+	"fmt"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -23,7 +25,37 @@ import (
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
 
+// Bound all-CPU collection cost without changing direct CLI defaults.
+const irqMaxEventsPerSecondPerCPU uint64 = 1000
+
 func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) {
+	switch request.Spec.Type {
+	case profilingdomain.TypeIRQ:
+		return buildIRQTracingCommand(request, config), nil
+	case profilingdomain.TypeCPU, profilingdomain.TypeMemory:
+		return buildProfilerCommand(request, config), nil
+	default:
+		return executil.Spec{}, fmt.Errorf("unsupported profiling type %q", request.Spec.Type)
+	}
+}
+
+func buildIRQTracingCommand(request *StartRequest, config *Config) executil.Spec {
+	return executil.Spec{
+		Path: filepath.Join(config.ToolBinDir, "irqtracing"),
+		Args: []string{
+			"--bpf-path", filepath.Join(config.BPFObjDir, "irqtracing.o"),
+			"--target-cpu", "-1",
+			"--duration", strconv.FormatInt(int64(request.Duration/time.Second), 10),
+			"--max-events-per-second-per-cpu", strconv.FormatUint(irqMaxEventsPerSecondPerCPU, 10),
+			"--output-format", "remote-store",
+			"--output-path", config.ToolstreamSocketPath,
+			"--task-id", request.RequestID,
+		},
+		MaxStdoutBytes: config.CommandOutputLimitBytes,
+	}
+}
+
+func buildProfilerCommand(request *StartRequest, config *Config) executil.Spec {
 	durationSeconds := int64(request.Duration / time.Second)
 	aggregationInterval := min(config.AggregationInterval, request.Duration)
 	if request.Spec.Language == profilingdomain.LanguagePython {
@@ -57,8 +89,8 @@ func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) 
 	}
 
 	return executil.Spec{
-		Path:           config.ProfilerPath,
+		Path:           filepath.Join(config.ToolBinDir, "profiler"),
 		Args:           args,
 		MaxStdoutBytes: config.CommandOutputLimitBytes,
-	}, nil
+	}
 }

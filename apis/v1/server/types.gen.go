@@ -112,6 +112,7 @@ const (
 	ProfilingModeOnCPU         ProfilingMode = "oncpu"
 	ProfilingModePhysicalAlloc ProfilingMode = "physical_alloc"
 	ProfilingModePhysicalUsage ProfilingMode = "physical_usage"
+	ProfilingModeSoftIRQ       ProfilingMode = "softirq"
 	ProfilingModeVirtualAlloc  ProfilingMode = "virtual_alloc"
 )
 
@@ -130,6 +131,8 @@ func (e ProfilingMode) Valid() bool {
 		return true
 	case ProfilingModePhysicalUsage:
 		return true
+	case ProfilingModeSoftIRQ:
+		return true
 	case ProfilingModeVirtualAlloc:
 		return true
 	default:
@@ -140,6 +143,7 @@ func (e ProfilingMode) Valid() bool {
 // Defines values for ProfilingType.
 const (
 	ProfilingTypeCPU    ProfilingType = "cpu"
+	ProfilingTypeIRQ    ProfilingType = "irq"
 	ProfilingTypeMemory ProfilingType = "memory"
 )
 
@@ -147,6 +151,8 @@ const (
 func (e ProfilingType) Valid() bool {
 	switch e {
 	case ProfilingTypeCPU:
+		return true
+	case ProfilingTypeIRQ:
 		return true
 	case ProfilingTypeMemory:
 		return true
@@ -178,12 +184,12 @@ func (e TracingType) Valid() bool {
 
 // CreateProfilingJobRequest defines model for CreateProfilingJobRequest.
 type CreateProfilingJobRequest struct {
-	BinaryMatchPath *string           `json:"binary_match_path,omitempty"`
-	ContainerID     *string           `json:"container_id,omitempty"`
-	DurationSeconds int64             `json:"duration_seconds"`
-	Hostname        string            `json:"hostname"`
-	Language        ProfilingLanguage `json:"language"`
-	Mode            ProfilingMode     `json:"mode"`
+	BinaryMatchPath *string            `json:"binary_match_path,omitempty"`
+	ContainerID     *string            `json:"container_id,omitempty"`
+	DurationSeconds int64              `json:"duration_seconds"`
+	Hostname        string             `json:"hostname"`
+	Language        *ProfilingLanguage `json:"language,omitempty"`
+	Mode            ProfilingMode      `json:"mode"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope externalRef0.ObservationScope `json:"scope"`
@@ -244,7 +250,7 @@ type ProfilingCapabilitiesResponse struct {
 
 // ProfilingCapability defines model for ProfilingCapability.
 type ProfilingCapability struct {
-	Language            ProfilingLanguage               `json:"language"`
+	Language            *ProfilingLanguage              `json:"language,omitempty"`
 	Modes               []ProfilingMode                 `json:"modes"`
 	SupportedScopes     []externalRef0.ObservationScope `json:"supported_scopes"`
 	SupportsBinaryMatch bool                            `json:"supports_binary_match"`
@@ -253,16 +259,16 @@ type ProfilingCapability struct {
 
 // ProfilingJob defines model for ProfilingJob.
 type ProfilingJob struct {
-	BinaryMatchPath *string           `json:"binary_match_path,omitempty"`
-	ContainerID     *string           `json:"container_id,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	DurationSeconds int64             `json:"duration_seconds"`
-	EndedAt         *time.Time        `json:"ended_at,omitempty"`
-	Hostname        string            `json:"hostname"`
-	Language        ProfilingLanguage `json:"language"`
-	Mode            ProfilingMode     `json:"mode"`
-	RequestID       string            `json:"request_id"`
-	ResultURL       *string           `json:"result_url,omitempty"`
+	BinaryMatchPath *string            `json:"binary_match_path,omitempty"`
+	ContainerID     *string            `json:"container_id,omitempty"`
+	CreatedAt       time.Time          `json:"created_at"`
+	DurationSeconds int64              `json:"duration_seconds"`
+	EndedAt         *time.Time         `json:"ended_at,omitempty"`
+	Hostname        string             `json:"hostname"`
+	Language        *ProfilingLanguage `json:"language,omitempty"`
+	Mode            ProfilingMode      `json:"mode"`
+	RequestID       string             `json:"request_id"`
+	ResultURL       *string            `json:"result_url,omitempty"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope     externalRef0.ObservationScope `json:"scope"`
@@ -302,14 +308,17 @@ type ProtobufPayload = openapi_types.File
 
 // RawProfile defines model for RawProfile.
 type RawProfile struct {
-	ContainerHostname *string     `json:"container_hostname,omitempty"`
-	ContainerID       *string     `json:"container_id,omitempty"`
-	ContainerQos      *string     `json:"container_qos,omitempty"`
-	ContainerType     *string     `json:"container_type,omitempty"`
-	Hostname          string      `json:"hostname"`
-	Profile           interface{} `json:"profile"`
-	ProfileType       string      `json:"profile_type"`
-	Region            string      `json:"region"`
+	ContainerHostname *string `json:"container_hostname,omitempty"`
+	ContainerID       *string `json:"container_id,omitempty"`
+	ContainerQos      *string `json:"container_qos,omitempty"`
+	ContainerType     *string `json:"container_type,omitempty"`
+
+	// DroppedSamples Dropped sample counts by reason; nonzero values indicate incomplete collection.
+	DroppedSamples *map[string]uint64 `json:"dropped_samples,omitempty"`
+	Hostname       string             `json:"hostname"`
+	Profile        interface{}        `json:"profile"`
+	ProfileType    string             `json:"profile_type"`
+	Region         string             `json:"region"`
 
 	// StartedTimestamp UTC timestamp emitted with nine fractional digits.
 	StartedTimestamp timeutil.Timestamp `json:"started_timestamp"`

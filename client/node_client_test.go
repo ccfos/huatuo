@@ -226,8 +226,11 @@ func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 		Scope:           "host",
 		Kind:            nodeapi.OperationKindProfiling,
 	}
+	language := nodeapi.ProfilingLanguageGo
 	if err := request.Spec.FromProfilingOperationSpec(nodeapi.ProfilingOperationSpec{
-		Type: "cpu", Language: "go", Mode: "oncpu",
+		Type:     "cpu",
+		Language: &language,
+		Mode:     "oncpu",
 	}); err != nil {
 		t.Fatalf("set profiling spec: %v", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
@@ -30,8 +31,10 @@ func validateConfig(config *Config) error {
 		return errors.New("create node profiling service: config is required")
 	}
 	switch {
-	case config.ProfilerPath == "":
-		return errors.New("create node profiling service: profiler path is required")
+	case config.ToolBinDir == "":
+		return errors.New("create node profiling service: tool binary directory is required")
+	case config.BPFObjDir == "":
+		return errors.New("create node profiling service: BPF object directory is required")
 	case config.ToolstreamSocketPath == "":
 		return errors.New("create node profiling service: toolstream socket path is required")
 	case config.AggregationInterval <= 0:
@@ -73,7 +76,29 @@ func validateRequest(request *StartRequest) error {
 }
 
 func validateEnvironment(request *StartRequest, config *Config) error {
-	if err := validateExecutable(config.ProfilerPath); err != nil {
+	if request.Spec.Type == profilingdomain.TypeIRQ {
+		if err := validateExecutable(filepath.Join(config.ToolBinDir, "irqtracing")); err != nil {
+			return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
+		}
+		bpfPath := filepath.Join(config.BPFObjDir, "irqtracing.o")
+		info, err := os.Stat(bpfPath)
+		if err != nil {
+			return fmt.Errorf("%w: inspect IRQ BPF object %q: %w", ErrEnvironmentUnsupported, bpfPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%w: IRQ BPF object %q is not a regular file", ErrEnvironmentUnsupported, bpfPath)
+		}
+		file, err := os.Open(bpfPath)
+		if err != nil {
+			return fmt.Errorf("%w: open IRQ BPF object %q: %w", ErrEnvironmentUnsupported, bpfPath, err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("%w: close IRQ BPF object %q: %w", ErrEnvironmentUnsupported, bpfPath, err)
+		}
+		return nil
+	}
+
+	if err := validateExecutable(filepath.Join(config.ToolBinDir, "profiler")); err != nil {
 		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
 	}
 	if request.ContainerID != "" {

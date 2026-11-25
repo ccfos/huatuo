@@ -35,9 +35,12 @@ func buildStartOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error
 	case KindProfiling:
 		spec := job.Spec.Profiling
 		profilingSpec := nodeapi.ProfilingOperationSpec{
-			Type:     nodeapi.ProfilingType(spec.Type),
-			Language: nodeapi.ProfilingLanguage(spec.Language),
-			Mode:     nodeapi.ProfilingMode(spec.Mode),
+			Type: nodeapi.ProfilingType(spec.Type),
+			Mode: nodeapi.ProfilingMode(spec.Mode),
+		}
+		if spec.Language != "" {
+			language := nodeapi.ProfilingLanguage(spec.Language)
+			profilingSpec.Language = &language
 		}
 		if spec.BinaryMatchPath != "" {
 			profilingSpec.BinaryMatchPath = &spec.BinaryMatchPath

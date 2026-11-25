@@ -109,9 +109,33 @@ assert_profile_api_without_storage \
 			modes:["physical_alloc", "physical_usage", "virtual_alloc"],
 			supported_scopes:["container"], supports_binary_match:false}),
 		{type:"memory", language:"java", modes:["object_alloc", "object_usage"],
-			supported_scopes:["container"], supports_binary_match:false}
+			supported_scopes:["container"], supports_binary_match:false},
+		{type:"irq", language:null, modes:["softirq"],
+			supported_scopes:["host"], supports_binary_match:false}
 	] | sort_by(.type, .language))' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-capabilities.json"
+jq -e 'all(.data.items[] | select(.type == "irq"); has("language") | not)' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/profile-capabilities.json" > /dev/null \
+	|| fatal "IRQ capability exposed a language"
+# The shared request schema keeps language conditional on the profiling type.
+for profile_disabled_extra in '{"language":"c"}' '{"mode":"oncpu"}' \
+	'{"binary_match_path":"/usr/bin/worker"}' \
+	'{"scope":"container","container_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' \
+	'{"type":"cpu","mode":"oncpu"}' '{"type":"memory","mode":"physical_usage"}' \
+	'{"target_cpu":0}' '{"irq_options":{}}'; do
+	profile_disabled_body=$(jq -nc --argjson extra "${profile_disabled_extra}" \
+		'{hostname:"127.0.0.1",duration_seconds:10,scope:"host",type:"irq",mode:"softirq"}+$extra')
+	profile_disabled_curl_status=0
+	profile_disabled_status=$(curl -sS "${CURL_TIMEOUT[@]}" \
+		-H "Authorization: Bearer ${API_TOKEN}" -H 'Content-Type: application/json' \
+		-o "${HUATUO_BAMAI_TEST_TMPDIR}/invalid-profile.json" -w '%{http_code}' \
+		-d "${profile_disabled_body}" "${APISERVER_ADDR}/v1/profiling") || profile_disabled_curl_status=$?
+	report_response "POST /v1/profiling ${profile_disabled_body}" \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/invalid-profile.json" "${profile_disabled_curl_status}"
+	[[ ${profile_disabled_status} == 400 ]] || fatal "invalid profiling combination returned ${profile_disabled_status}"
+	jq -e '.error.code == "invalid_request"' "${HUATUO_BAMAI_TEST_TMPDIR}/invalid-profile.json" > /dev/null \
+		|| fatal "invalid profiling combination did not return invalid_request"
+done
 assert_readiness_endpoint "${APISERVER_ADDR}/readyz" "${HUATUO_BAMAI_TEST_TMPDIR}/readyz" \
 	|| fatal "apiserver readiness contract failed"
 assert_removed_profile_route_is_not_registered

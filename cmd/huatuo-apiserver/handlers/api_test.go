@@ -15,7 +15,9 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +28,7 @@ import (
 	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
@@ -130,5 +133,59 @@ func TestRawProfilesRejectsOversizedEncodedPage(t *testing.T) {
 	}}, 1)
 	if !errors.Is(err, errRawProfileResponseTooLarge) {
 		t.Fatalf("rawProfiles() error = %v, want ErrResponseTooLarge", err)
+	}
+}
+
+func TestIRQJobAndCapabilitiesOmitLanguage(t *testing.T) {
+	spec := profiling.Spec{
+		Type: profiling.TypeIRQ,
+		Mode: profiling.ModeSoftIRQ,
+	}
+	source := &job.Job{
+		Kind: job.KindProfiling,
+		Spec: job.Spec{Profiling: &spec},
+	}
+	mapped := mapProfilingJob(source)
+	data, err := json.Marshal(mapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mapped.Language != nil || strings.Contains(string(data), `"language"`) || mapped.Type != serverapi.ProfilingTypeIRQ {
+		t.Fatalf("IRQ response = %s", data)
+	}
+	capabilities := profiling.Capabilities()
+	for i := range capabilities {
+		capability := &capabilities[i]
+		result := profilingCapability(capability)
+		if capability.Type == profiling.TypeIRQ && result.Language != nil {
+			t.Fatalf("IRQ capability language = %v", result.Language)
+		}
+		if capability.Type != profiling.TypeIRQ && (result.Language == nil || string(*result.Language) != string(capability.Language)) {
+			t.Fatalf("lost language for capability %+v", capability)
+		}
+	}
+}
+
+func TestRawProfileIncludesCommonDroppedSamples(t *testing.T) {
+	for _, profileType := range []string{profiling.ProfileTypeIRQTracingSample, profiling.ProfileTypeCpuSample} {
+		t.Run(profileType, func(t *testing.T) {
+			source := &profilinghandler.RawProfile{
+				ProfileType:    profileType,
+				Profile:        &profilev1.Profile{},
+				DroppedSamples: map[string]uint64{"collection": 42},
+			}
+			result, _, err := rawProfile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.DroppedSamples == nil || !maps.Equal(*result.DroppedSamples, source.DroppedSamples) {
+				t.Fatalf("raw diagnostics = %+v", result.DroppedSamples)
+			}
+			source.DroppedSamples = nil
+			result, _, err = rawProfile(source)
+			if err != nil || result.DroppedSamples != nil {
+				t.Fatalf("absent diagnostics = %v, error %v", result.DroppedSamples, err)
+			}
+		})
 	}
 }

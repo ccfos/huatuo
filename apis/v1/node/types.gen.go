@@ -128,6 +128,7 @@ const (
 	ProfilingModeOnCPU         ProfilingMode = "oncpu"
 	ProfilingModePhysicalAlloc ProfilingMode = "physical_alloc"
 	ProfilingModePhysicalUsage ProfilingMode = "physical_usage"
+	ProfilingModeSoftIRQ       ProfilingMode = "softirq"
 	ProfilingModeVirtualAlloc  ProfilingMode = "virtual_alloc"
 )
 
@@ -146,6 +147,8 @@ func (e ProfilingMode) Valid() bool {
 		return true
 	case ProfilingModePhysicalUsage:
 		return true
+	case ProfilingModeSoftIRQ:
+		return true
 	case ProfilingModeVirtualAlloc:
 		return true
 	default:
@@ -156,6 +159,7 @@ func (e ProfilingMode) Valid() bool {
 // Defines values for ProfilingType.
 const (
 	ProfilingTypeCPU    ProfilingType = "cpu"
+	ProfilingTypeIRQ    ProfilingType = "irq"
 	ProfilingTypeMemory ProfilingType = "memory"
 )
 
@@ -163,6 +167,8 @@ const (
 func (e ProfilingType) Valid() bool {
 	switch e {
 	case ProfilingTypeCPU:
+		return true
+	case ProfilingTypeIRQ:
 		return true
 	case ProfilingTypeMemory:
 		return true
@@ -268,10 +274,10 @@ type ProfilingMode string
 
 // ProfilingOperationSpec defines model for ProfilingOperationSpec.
 type ProfilingOperationSpec struct {
-	BinaryMatchPath *string           `json:"binary_match_path,omitempty"`
-	Language        ProfilingLanguage `json:"language"`
-	Mode            ProfilingMode     `json:"mode"`
-	Type            ProfilingType     `json:"type"`
+	BinaryMatchPath *string            `json:"binary_match_path,omitempty"`
+	Language        *ProfilingLanguage `json:"language,omitempty"`
+	Mode            ProfilingMode      `json:"mode"`
+	Type            ProfilingType      `json:"type"`
 }
 
 // ProfilingType defines model for ProfilingType.

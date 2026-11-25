@@ -202,7 +202,6 @@
           "duration_seconds",
           "scope",
           "type",
-          "language",
           "mode"
         ],
         "type": "object"
@@ -408,7 +407,6 @@
         },
         "required": [
           "type",
-          "language",
           "modes",
           "supports_binary_match",
           "supported_scopes"
@@ -438,7 +436,6 @@
             },
             "required": [
               "type",
-              "language",
               "mode"
             ],
             "type": "object"
@@ -514,6 +511,7 @@
         "enum": [
           "oncpu",
           "offcpu",
+          "softirq",
           "object_alloc",
           "object_usage",
           "virtual_alloc",
@@ -524,6 +522,7 @@
         "x-enum-varnames": [
           "ProfilingModeOnCPU",
           "ProfilingModeOffCPU",
+          "ProfilingModeSoftIRQ",
           "ProfilingModeObjectAlloc",
           "ProfilingModeObjectUsage",
           "ProfilingModeVirtualAlloc",
@@ -534,12 +533,14 @@
       "ProfilingType": {
         "enum": [
           "cpu",
-          "memory"
+          "memory",
+          "irq"
         ],
         "type": "string",
         "x-enum-varnames": [
           "ProfilingTypeCPU",
-          "ProfilingTypeMemory"
+          "ProfilingTypeMemory",
+          "ProfilingTypeIRQ"
         ]
       },
       "ProtobufPayload": {
@@ -560,6 +561,15 @@
           },
           "container_type": {
             "type": "string"
+          },
+          "dropped_samples": {
+            "additionalProperties": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": "Dropped sample counts by reason; nonzero values indicate incomplete collection.",
+            "type": "object"
           },
           "hostname": {
             "type": "string"

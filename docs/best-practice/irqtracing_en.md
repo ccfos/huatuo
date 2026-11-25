@@ -83,9 +83,13 @@ Use `--output-format json --output-path irqtracing.json` to save the same window
 }
 ```
 
-`profile` uses the same `types.ProfilingWindow` format as the profiler tool. The example is an empty window; populated windows also contain sample, location, and function data. An empty window still returns a valid profile with its start time and actual collection duration. Stacks retain `source` / `victim` roots and process and interrupt-vector grouping, followed by user-space frames and kernel frames with the `_[k]` suffix. The selected target CPU is also recorded in sample labels.
+`profile` uses pprof format. Samples distinguish roles with `irq=source|victim`
+and retain process, CPU, and softirq-vector labels. Kernel frames use the `_[k]` suffix.
 
-`dropped_samples.collection` counts samples dropped because the kernel sampling budget or counts map is full; the current counter cannot distinguish these causes. A nonzero value means the profile is incomplete and produces a stderr warning. Failure to read the counter fails collection. A full profiler user-space queue waits for aggregation to make space or for the processing context to be canceled; `dropped_samples.aggregation_queue` is retained only for historical data compatibility.
+`dropped_samples.collection` combines losses from rate limiting and counts-map
+write failures without distinguishing their causes. Nonzero values indicate
+incomplete results; unreadable counters fail collection. Zero values may be omitted.
+`aggregation_queue` is retained only for historical data compatibility.
 
 ## Profile the tool's Go runtime
 
@@ -106,3 +110,7 @@ IRQ results are written to `profile_data` in profiling storage with `tracer_name
 ### Completion
 
 A task succeeds only after the profile is queryable, publication succeeds, and the tool receives the daemon's acknowledgment. Ending data transmission alone, collection failure, or disconnection does not publish a task completion marker. If the acknowledgment is lost, results may already be published; query by task ID to confirm. See [Profiling Window Commit](/docs/development/storage_en.md#profiling-window-commit) for implementation details.
+
+## Collect through the API
+
+Use the [Profiling API](../reference/profiling-api_en.md#create-a-task) to collect softirq stacks on all CPUs and query tasks and results.

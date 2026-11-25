@@ -269,3 +269,42 @@ func TestStorageStoreKeysetAfterStatusChange(t *testing.T) {
 		t.Fatalf("zero limit=%v error=%v", empty, err)
 	}
 }
+
+func TestIRQJobRoundTripAndNodeRequest(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	source := storedTestJob("irq-job", "user-1", "node-1", StatusPending, now)
+	source.Spec.Profiling = &profiling.Spec{
+		Type: profiling.TypeIRQ,
+		Mode: profiling.ModeSoftIRQ,
+	}
+	if err := store.Create(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(t.Context(), source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *got.Spec.Profiling != *source.Spec.Profiling {
+		t.Fatalf("stored spec = %+v, want %+v", got.Spec.Profiling, source.Spec.Profiling)
+	}
+	request, err := buildStartOperationRequest(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := request.Spec.AsProfilingOperationSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(spec.Type) != "irq" || string(spec.Mode) != "softirq" || spec.Language != nil || request.RequestID != got.ID {
+		t.Fatalf("node request = %+v, spec %+v", request, spec)
+	}
+	listed, err := store.List(t.Context(), &Query{
+		UserID:   source.UserID,
+		Subtypes: []string{"irq"},
+		Limit:    10,
+	})
+	if err != nil || len(listed) != 1 || listed[0].ID != source.ID {
+		t.Fatalf("IRQ job query = %+v, error %v", listed, err)
+	}
+}

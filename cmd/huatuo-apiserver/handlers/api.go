@@ -127,7 +127,7 @@ func (h *APIHandler) CreateProfilingJob(
 		ContainerID:     optionalValue(request.Body.ContainerID),
 		Spec: profilingdomain.Spec{
 			Type:            profilingdomain.Type(request.Body.Type),
-			Language:        profilingdomain.Language(request.Body.Language),
+			Language:        profilingdomain.Language(optionalValue(request.Body.Language)),
 			Mode:            profilingdomain.Mode(request.Body.Mode),
 			BinaryMatchPath: optionalValue(request.Body.BinaryMatchPath),
 		},
@@ -454,7 +454,7 @@ func mapProfilingJob(source *job.Job) serverapi.ProfilingJob {
 		StartedAt:       common.StartedAt,
 		EndedAt:         common.EndedAt,
 		Type:            serverapi.ProfilingType(source.Spec.Profiling.Type),
-		Language:        serverapi.ProfilingLanguage(source.Spec.Profiling.Language),
+		Language:        optionalString(serverapi.ProfilingLanguage(source.Spec.Profiling.Language)),
 		Mode:            serverapi.ProfilingMode(source.Spec.Profiling.Mode),
 		BinaryMatchPath: optionalString(source.Spec.Profiling.BinaryMatchPath),
 	}
@@ -531,7 +531,7 @@ func profilingCapability(capability *profilingdomain.Capability) serverapi.Profi
 	}
 	return serverapi.ProfilingCapability{
 		Type:                serverapi.ProfilingType(capability.Type),
-		Language:            serverapi.ProfilingLanguage(capability.Language),
+		Language:            optionalString(serverapi.ProfilingLanguage(capability.Language)),
 		Modes:               modes,
 		SupportsBinaryMatch: capability.SupportsBinaryMatch,
 		SupportedScopes:     scopes,
@@ -554,6 +554,10 @@ func rawProfile(profile *profilinghandler.RawProfile) (serverapi.RawProfile, int
 	if err != nil {
 		return serverapi.RawProfile{}, 0, fmt.Errorf("map raw Profile: encode payload: %w", err)
 	}
+	var droppedSamples *map[string]uint64
+	if len(profile.DroppedSamples) > 0 {
+		droppedSamples = &profile.DroppedSamples
+	}
 	return serverapi.RawProfile{
 		Hostname:          profile.Hostname,
 		Region:            profile.Region,
@@ -564,6 +568,7 @@ func rawProfile(profile *profilinghandler.RawProfile) (serverapi.RawProfile, int
 		ContainerType:     optionalString(profile.ContainerType),
 		ContainerQos:      optionalString(profile.ContainerQoS),
 		ProfileType:       profile.ProfileType,
+		DroppedSamples:    droppedSamples,
 		Profile:           json.RawMessage(data),
 	}, len(data), nil
 }
@@ -697,14 +702,14 @@ func serverAPIError(err error) error {
 	}
 }
 
-func optionalValue(value *string) string {
+func optionalValue[T ~string](value *T) T {
 	if value == nil {
 		return ""
 	}
 	return *value
 }
 
-func optionalString(value string) *string {
+func optionalString[T ~string](value T) *T {
 	if value == "" {
 		return nil
 	}

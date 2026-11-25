@@ -119,7 +119,24 @@
 						]
 					}
 				},
-				"overrides": []
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Dropped samples (collection)"
+						},
+						"properties": [
+							{
+								"id": "custom.axisPlacement",
+								"value": "right"
+							},
+							{
+								"id": "custom.axisLabel",
+								"value": "Dropped samples"
+							}
+						]
+					}
+				]
 			},
 			"gridPos": {
 				"x": 0,
@@ -144,7 +161,7 @@
 			"pluginVersion": "12.0.3",
 			"targets": [
 				{
-					"alias": "",
+					"alias": "Profiling windows",
 					"bucketAggs": [
 						{
 							"field": "uploaded_timestamp",
@@ -169,10 +186,40 @@
 					"query": "region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene} AND tracer_id.keyword:${task_id:lucene}",
 					"refId": "A",
 					"timeField": "uploaded_timestamp"
+				},
+				{
+					"alias": "Dropped samples (collection)",
+					"bucketAggs": [
+						{
+							"field": "uploaded_timestamp",
+							"id": "2",
+							"settings": {
+								"interval": "auto",
+								"min_doc_count": "1"
+							},
+							"type": "date_histogram"
+						}
+					],
+					"datasource": {
+						"type": "elasticsearch",
+						"uid": "huatuo-bamai-es"
+					},
+					"hide": false,
+					"metrics": [
+						{
+							"id": "1",
+							"type": "sum",
+							"field": "profile_data.metrics.dropped_samples.collection"
+						}
+					],
+					"query": "region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene} AND tracer_id.keyword:${task_id:lucene} AND _exists_:profile_data.metrics.dropped_samples.collection",
+					"refId": "B",
+					"timeField": "uploaded_timestamp"
 				}
 			],
-			"title": "Profiling windows (before label filtering)",
-			"type": "timeseries"
+			"title": "Windows and collection losses (before label filtering)",
+			"type": "timeseries",
+			"description": "Collection losses include rate limiting and collection capacity. Nonzero losses indicate incomplete profiles. These counts cover the selected task and time range before sample label filtering."
 		},
 		{
 			"datasource": {

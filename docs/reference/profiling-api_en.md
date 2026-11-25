@@ -8,7 +8,7 @@ weight: 5
 
 This reference covers profiling task requests, responses, and states. For a first collection, see the [Profiling Guide](/docs/best-practice/continuous-profiling_en.md#quick-start).
 
-huatuo-apiserver creates, supervises, and stops profiling tasks through `/v1/profiling`. Each HTTP creation request is an independent execution. Profiling tasks are persisted as Jobs in huatuo-apiserver; the node keeps only in-memory operations and profiler processes.
+huatuo-apiserver creates, supervises, and stops profiling tasks through `/v1/profiling`. Each HTTP creation request is an independent execution. Profiling tasks are persisted as Jobs in huatuo-apiserver; the node keeps only in-memory operations and profiling tool processes.
 
 Task control does not depend on Elasticsearch. Raw-result queries and dashboard links require it. huatuo-bamai and huatuo-apiserver must use the same index.
 
@@ -62,8 +62,8 @@ curl -sS \
 
 | Field | Description |
 | --- | --- |
-| `type` | Profiling type: `cpu` or `memory` |
-| `language` | Target language |
+| `type` | Profiling type: `cpu`, `memory`, or `irq` |
+| `language` | Target language for CPU and memory; omitted for IRQ |
 | `modes` | Allowed `mode` values for this type/language combination |
 | `supports_binary_match` | Whether `binary_match_path` is allowed |
 | `supported_scopes` | Allowed `scope` values |
@@ -84,8 +84,8 @@ JSON parameters for `POST /v1/profiling`:
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `type` | Yes | Profiling type: `cpu` or `memory` |
-| `language` | Yes | Target process language; must match the profiling type |
+| `type` | Yes | Profiling type: `cpu`, `memory`, or `irq` |
+| `language` | CPU and memory only | Target process language; omit for IRQ |
 | `mode` | Yes | Mode declared by the capability table for the type and language |
 | `duration_seconds` | Yes | Collection duration in seconds |
 | `hostname` | Yes | Hostname of the node running the target process, used for scheduling |
@@ -131,6 +131,23 @@ curl -sS -i \
   }' \
   "${API_BASE}/v1/profiling"
 ```
+
+Create a host softirq profiling task:
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname":"node-01","duration_seconds":10,"scope":"host","type":"irq","mode":"softirq"}' \
+  "${API_BASE}/v1/profiling"
+```
+
+IRQ supports only `scope=host` and `mode=softirq`; omit `language`, `container_id`,
+and `binary_match_path`. It traces all CPUs, allowing 500 source and 500 victim
+samples per CPU per second, with no CPU selection or rate-limit parameter.
+Results are published once after collection with profile type
+`irqtracing:irq:count:irq:count` and count units. Hardware interrupt stacks are not collected.
 
 Success returns `201 Created`, a `Location` header pointing to the new task, and the task ID needed for later queries:
 
@@ -197,8 +214,8 @@ Task information is in `data`:
 | `hostname` | Target node hostname |
 | `duration_seconds` | Requested profiling duration in seconds |
 | `scope` | `host` or `container` |
-| `type` | `cpu` or `memory` |
-| `language` | Target process language |
+| `type` | `cpu`, `memory`, or `irq` |
+| `language` | Target process language; omitted for IRQ |
 | `mode` | Profiling mode selected from the capability table |
 | `binary_match_path` | Executable match path; omitted when unused |
 | `status` | Current task status |
@@ -235,7 +252,14 @@ curl -sS \
   "${API_BASE}/v1/profiling/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
-Windows are in `data.items`; `data.limit`, `data.offset`, and `data.has_more` describe pagination. Each record includes `uploaded_timestamp`, `started_timestamp`, `profile_type`, and pprof-compatible `profile` data. A durably published empty result succeeds with an empty `items` array. Explicit `limit=0` is invalid; only omission uses the default. `limit` defaults to 20 and is capped at 100. Encoded Profile data above 64 MiB returns `413 result_too_large`; reduce `limit` and retry.
+Windows are in `data.items`; `data.limit`, `data.offset`, and `data.has_more` describe pagination. Each record includes `uploaded_timestamp`, `started_timestamp`, `profile_type`, and pprof-compatible `profile` data.
+
+Optional `dropped_samples` records losses by reason; zero values may be omitted.
+A nonzero `collection` count indicates incomplete results due to rate limiting
+or collection capacity. The Grafana timeline shows this count on the right axis;
+label filters affect only the flame graph.
+
+A durably published empty result succeeds with an empty `items` array. Explicit `limit=0` is invalid; only omission uses the default. `limit` defaults to 20 and is capped at 100. Encoded Profile data above 64 MiB returns `413 result_too_large`; reduce `limit` and retry.
 
 Each flame graph request can query at most 100000 windows, 1000000 samples, and 10000000 labels, counted before sample filtering. If a limit is exceeded, narrow the time range or add document filters. Query failures return no partial results. Raw Profile page limits do not cap flame graph aggregation.
 

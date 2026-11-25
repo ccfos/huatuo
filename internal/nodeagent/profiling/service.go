@@ -36,7 +36,8 @@ var (
 
 // Config contains Node-local profiler implementation settings.
 type Config struct {
-	ProfilerPath         string
+	ToolBinDir           string
+	BPFObjDir            string
 	ToolstreamSocketPath string
 	// ToolDir is the shared root of external profiling tools.
 	ToolDir                 string
@@ -97,7 +98,7 @@ func (s *Service) Start(
 	}
 	process, err := executil.New(commandSpec)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: build profiler process: %w", ErrInvalidRequest, err)
+		return nil, false, fmt.Errorf("%w: build profiling tool process: %w", ErrInvalidRequest, err)
 	}
 
 	return s.manager.Start(operation.StartRequest{

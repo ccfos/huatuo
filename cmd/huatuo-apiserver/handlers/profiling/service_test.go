@@ -195,6 +195,14 @@ func TestBuildDashboardURL(t *testing.T) {
 			wantScopeValue: "node+1&debug",
 		},
 		{
+			name:           "host irq",
+			baseURL:        "https://grafana.example/d/",
+			input:          newJob(observation.ScopeTypeHost, profilingdomain.TypeIRQ),
+			wantPath:       "/d/continuous-profiling",
+			wantScopeKey:   "var-hostname",
+			wantScopeValue: "node+1&debug",
+		},
+		{
 			name:           "container memory",
 			baseURL:        "https://grafana.example/d/",
 			input:          newJob(observation.ScopeTypeContainer, profilingdomain.TypeMemory),

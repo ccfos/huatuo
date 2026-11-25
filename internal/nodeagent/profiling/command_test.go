@@ -28,7 +28,8 @@ import (
 func testProfilingConfig(t *testing.T) *Config {
 	t.Helper()
 	return &Config{
-		ProfilerPath:            "/opt/huatuo/profiler",
+		ToolBinDir:              "/opt/huatuo",
+		BPFObjDir:               "/opt/huatuo/bpf",
 		ToolstreamSocketPath:    "/var/run/huatuo-toolstream.sock",
 		ToolDir:                 "/opt/huatuo/tools",
 		AggregationInterval:     10 * time.Second,
@@ -73,7 +74,7 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 		"--cpu-mode", "offcpu",
 		"--binary-match-path", "/usr/bin/service worker",
 	}
-	if spec.Path != config.ProfilerPath || !slices.Equal(spec.Args, want) {
+	if spec.Path != "/opt/huatuo/profiler" || !slices.Equal(spec.Args, want) {
 		t.Fatalf("command spec = %+v, want args %q", spec, want)
 	}
 	if spec.StopSignal != 0 {
@@ -138,5 +139,38 @@ func TestBuildCommandPassesSharedToolDir(t *testing.T) {
 				t.Fatalf("command args = %q, want shared root as one --tool-path argument", command.Args)
 			}
 		})
+	}
+}
+
+func TestBuildIRQCommandUsesCommonPublicationAndFixedCollectionPolicy(t *testing.T) {
+	config := testProfilingConfig(t)
+	request := testProfilingRequest()
+	request.Spec = profilingdomain.Spec{
+		Type: profilingdomain.TypeIRQ,
+		Mode: profilingdomain.ModeSoftIRQ,
+	}
+	command, err := buildCommand(request, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []string{
+		"--bpf-path", "/opt/huatuo/bpf/irqtracing.o",
+		"--target-cpu", "-1",
+		"--duration", "60",
+		"--max-events-per-second-per-cpu", "1000",
+		"--output-format", "remote-store",
+		"--output-path", config.ToolstreamSocketPath,
+		"--task-id", request.RequestID,
+	}
+	if command.Path != "/opt/huatuo/irqtracing" || !slices.Equal(command.Args, expected) {
+		t.Fatalf("IRQ command = %+v, want args %q", command, expected)
+	}
+	if command.StopSignal != 0 || command.MaxStdoutBytes != config.CommandOutputLimitBytes {
+		t.Fatalf("IRQ process policy differs from other profiling tools: %+v", command)
+	}
+	request.Scope = observation.ScopeTypeContainer
+	request.ContainerID = strings.Repeat("a", 64)
+	if err := validateRequest(request); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("container IRQ request error = %v", err)
 	}
 }

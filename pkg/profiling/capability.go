@@ -27,6 +27,7 @@ const (
 	TypeUnknown Type = ""
 	TypeCPU     Type = "cpu"
 	TypeMemory  Type = "memory"
+	TypeIRQ     Type = "irq"
 	TypeLock    Type = "lock"
 )
 
@@ -91,6 +92,11 @@ var capabilities = []Capability{
 		SupportedScopes: []observation.Scope{observation.ScopeTypeContainer},
 		implementation:  ImplementationJava,
 	},
+	{
+		Type:            TypeIRQ,
+		Modes:           []Mode{ModeSoftIRQ},
+		SupportedScopes: []observation.Scope{observation.ScopeTypeHost},
+	},
 }
 
 func newNativeCapability(language Language, typ Type) Capability {
@@ -125,7 +131,7 @@ func Capabilities() []Capability {
 
 func ParseType(value string) (Type, error) {
 	typ := Type(value)
-	if typ == TypeCPU || typ == TypeMemory {
+	if typ == TypeCPU || typ == TypeMemory || typ == TypeIRQ {
 		return typ, nil
 	}
 	return TypeUnknown, fmt.Errorf("unsupported profiling type %q", value)
@@ -135,7 +141,7 @@ func ParseLanguage(value string) (Language, error) {
 	language := Language(value)
 	for i := range capabilities {
 		capability := &capabilities[i]
-		if capability.Language == language {
+		if language != LanguageUnknown && capability.Language == language {
 			return language, nil
 		}
 	}
@@ -171,7 +177,7 @@ func ModesFor(language Language, typ Type) []Mode {
 // ImplementationFor returns the implementation for one supported capability.
 func ImplementationFor(language Language, typ Type) (Implementation, bool) {
 	capability, ok := capabilityFor(language, typ)
-	if !ok {
+	if !ok || capability.implementation == ImplementationUnknown {
 		return ImplementationUnknown, false
 	}
 	return capability.implementation, true

@@ -41,7 +41,7 @@ func (e *executor) Start(ctx context.Context) error {
 			default:
 			}
 		}
-		return e.withOutput("start profiler", errors.Join(err, closeErr))
+		return e.withOutput("start profiling tool", errors.Join(err, closeErr))
 	}
 	return nil
 }
@@ -51,11 +51,11 @@ func (e *executor) Wait() error {
 	if err == executil.ErrStopped { //nolint:errorlint // Wrapped or joined stop markers can contain independent failures.
 		err = errors.Join(operation.ErrStopped, err)
 	}
-	return e.withOutput("wait for profiler", err)
+	return e.withOutput("wait for profiling tool", err)
 }
 
 func (e *executor) Stop(ctx context.Context) error {
-	return e.withOutput("stop profiler", e.process.Stop(ctx))
+	return e.withOutput("stop profiling tool", e.process.Stop(ctx))
 }
 
 func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (err error) {
@@ -64,14 +64,14 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) (e
 	}()
 
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("finalize profiler: %w", err)
+		return fmt.Errorf("finalize profiling tool: %w", err)
 	}
 	switch mode {
 	case operation.FinalizePublish, operation.FinalizeDiscard:
 		// The CLI waits for the commit ACK before exiting successfully.
 		return nil
 	default:
-		return fmt.Errorf("finalize profiler: unsupported mode %d", mode)
+		return fmt.Errorf("finalize profiling tool: unsupported mode %d", mode)
 	}
 }
 

@@ -406,8 +406,8 @@ components:
               name: json
     ProfilingType:
       type: string
-      enum: [cpu, memory]
-      x-enum-varnames: [ProfilingTypeCPU, ProfilingTypeMemory]
+      enum: [cpu, memory, irq]
+      x-enum-varnames: [ProfilingTypeCPU, ProfilingTypeMemory, ProfilingTypeIRQ]
     ProfilingLanguage:
       type: string
       enum: [c, c++, go, java, python]
@@ -422,6 +422,7 @@ components:
       enum:
         - oncpu
         - offcpu
+        - softirq
         - object_alloc
         - object_usage
         - virtual_alloc
@@ -430,6 +431,7 @@ components:
       x-enum-varnames:
         - ProfilingModeOnCPU
         - ProfilingModeOffCPU
+        - ProfilingModeSoftIRQ
         - ProfilingModeObjectAlloc
         - ProfilingModeObjectUsage
         - ProfilingModeVirtualAlloc
@@ -502,11 +504,12 @@ components:
     ProfilingOperationSpec:
       type: object
       additionalProperties: false
-      required: [type, language, mode]
+      required: [type, mode]
       properties:
         type:
           $ref: '#/components/schemas/ProfilingType'
         language:
+          description: Required for CPU and memory profiling; omit for IRQ profiling.
           $ref: '#/components/schemas/ProfilingLanguage'
         mode:
           $ref: '#/components/schemas/ProfilingMode'

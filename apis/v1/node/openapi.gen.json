@@ -340,6 +340,7 @@
         "enum": [
           "oncpu",
           "offcpu",
+          "softirq",
           "object_alloc",
           "object_usage",
           "virtual_alloc",
@@ -350,6 +351,7 @@
         "x-enum-varnames": [
           "ProfilingModeOnCPU",
           "ProfilingModeOffCPU",
+          "ProfilingModeSoftIRQ",
           "ProfilingModeObjectAlloc",
           "ProfilingModeObjectUsage",
           "ProfilingModeVirtualAlloc",
@@ -376,7 +378,6 @@
         },
         "required": [
           "type",
-          "language",
           "mode"
         ],
         "type": "object"
@@ -384,12 +385,14 @@
       "ProfilingType": {
         "enum": [
           "cpu",
-          "memory"
+          "memory",
+          "irq"
         ],
         "type": "string",
         "x-enum-varnames": [
           "ProfilingTypeCPU",
-          "ProfilingTypeMemory"
+          "ProfilingTypeMemory",
+          "ProfilingTypeIRQ"
         ]
       },
       "StartOperationRequest": {

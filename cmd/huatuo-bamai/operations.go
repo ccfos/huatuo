@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
@@ -53,7 +52,8 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	}()
 
 	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
-		ProfilerPath:         filepath.Join(d.opts.ToolBinDir, "profiler"),
+		ToolBinDir:           d.opts.ToolBinDir,
+		BPFObjDir:            d.opts.BPFObjDir,
 		ToolstreamSocketPath: toolstream.DefaultSockPath,
 		ToolDir:              cfg.Profiling.ToolDir,
 		AggregationInterval: time.Duration(cfg.Profiling.AggregationIntervalSeconds) *

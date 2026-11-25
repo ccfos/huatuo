@@ -10,7 +10,7 @@ weight: 5
 
 huatuo-apiserver 通过 `/v1/profiling` 创建、监督和停止 Profiling Job。每次 HTTP
 创建请求都是一次独立执行。Job 持久化在 huatuo-apiserver，Node 只维护内存中的
-Operation 和 profiler 进程。
+Operation 和采集工具进程。
 
 Job 控制不依赖 Elasticsearch；查询原始结果和生成 Dashboard 链接时才要求配置
 Elasticsearch。Node 和 Apiserver 必须使用同一索引。
@@ -66,8 +66,8 @@ curl -sS \
 
 | 字段 | 说明 |
 | --- | --- |
-| `type` | 剖析类型：`cpu` 或 `memory` |
-| `language` | 目标语言 |
+| `type` | 剖析类型：`cpu`、`memory` 或 `irq` |
+| `language` | CPU、Memory 的目标语言；IRQ 不返回此字段 |
 | `modes` | 此类型与语言组合允许的 `mode` |
 | `supports_binary_match` | 是否允许 `binary_match_path` |
 | `supported_scopes` | 允许的 `scope` |
@@ -89,8 +89,8 @@ curl -sS \
 
 | 参数 | 是否必需 | 说明 |
 | --- | --- | --- |
-| `type` | 是 | 剖析类型：`cpu` 或 `memory` |
-| `language` | 是 | 目标进程语言，必须与剖析类型匹配 |
+| `type` | 是 | 剖析类型：`cpu`、`memory` 或 `irq` |
+| `language` | CPU、Memory 必需 | 目标进程语言；IRQ 不得传入 |
 | `mode` | 是 | 能力表为对应类型和语言声明的模式 |
 | `duration_seconds` | 是 | 采集时长，单位为秒 |
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
@@ -137,6 +137,22 @@ curl -sS -i \
   }' \
   "${API_BASE}/v1/profiling"
 ```
+
+创建宿主机 softirq 剖析任务：
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname":"node-01","duration_seconds":10,"scope":"host","type":"irq","mode":"softirq"}' \
+  "${API_BASE}/v1/profiling"
+```
+
+IRQ 仅支持 `scope=host`、`mode=softirq`，不传 `language`、`container_id`
+或 `binary_match_path`。采集全部 CPU，source、victim 各限 500 样本/CPU/秒，
+不提供 CPU 选择或限速参数。结果在结束后一次发布，profile type 为
+`irqtracing:irq:count:irq:count`，单位为次数；不采集硬中断调用栈。
 
 创建成功返回 `201 Created`，`Location` 响应头指向新任务，响应体包含后续查询所需的任务 ID：
 
@@ -205,8 +221,8 @@ curl -sS \
 | `hostname` | 目标节点主机名 |
 | `duration_seconds` | 请求的剖析时长，单位为秒 |
 | `scope` | `host` 或 `container` |
-| `type` | `cpu` 或 `memory` |
-| `language` | 目标进程语言 |
+| `type` | `cpu`、`memory` 或 `irq` |
+| `language` | 目标进程语言；IRQ 不返回此字段 |
 | `mode` | 从能力表中选择的剖析模式 |
 | `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
 | `status` | 当前任务状态 |
@@ -256,6 +272,8 @@ curl -sS \
 剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_timestamp`、`started_timestamp`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
+可选 `dropped_samples` 按原因记录丢样数，零值可省略。`collection` 非零表示
+限速或采集容量不足导致结果不完整。Grafana 时间线右轴显示该计数，标签筛选只作用于火焰图。
 已持久发布但内容为空的结果仍返回成功，`items` 为空数组。显式 `limit=0` 返回参数
 错误；只有未传 limit 才使用默认值。`limit` 默认值为 20，
 最大值为 100。编码后的 Profile 数据超过 64 MiB 时返回

@@ -107,3 +107,76 @@ func TestSpecValidateRejectsInvalidCombination(t *testing.T) {
 		})
 	}
 }
+
+func TestIRQSpecValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		spec      Spec
+		wantError bool
+	}{
+		{
+			name: "softirq without language",
+			spec: Spec{
+				Type: TypeIRQ,
+				Mode: ModeSoftIRQ,
+			},
+		},
+		{
+			name: "irq with language",
+			spec: Spec{
+				Type:     TypeIRQ,
+				Mode:     ModeSoftIRQ,
+				Language: LanguageC,
+			},
+			wantError: true,
+		},
+		{
+			name: "irq with cpu mode",
+			spec: Spec{
+				Type: TypeIRQ,
+				Mode: ModeOnCPU,
+			},
+			wantError: true,
+		},
+		{
+			name: "irq with binary match",
+			spec: Spec{
+				Type:            TypeIRQ,
+				Mode:            ModeSoftIRQ,
+				BinaryMatchPath: "/usr/bin/worker",
+			},
+			wantError: true,
+		},
+		{
+			name: "cpu without language",
+			spec: Spec{
+				Type: TypeCPU,
+				Mode: ModeOnCPU,
+			},
+			wantError: true,
+		},
+		{
+			name: "memory without language",
+			spec: Spec{
+				Type: TypeMemory,
+				Mode: ModePhysicalUsage,
+			},
+			wantError: true,
+		},
+	}
+	for i := range tests {
+		tt := &tests[i]
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.spec.Validate()
+			if (err != nil) != tt.wantError {
+				t.Fatalf("Validate() = %v, want error %v", err, tt.wantError)
+			}
+		})
+	}
+	if _, err := ParseLanguage(""); err == nil {
+		t.Fatal("ParseLanguage accepted an empty language")
+	}
+	if _, ok := ImplementationFor(LanguageUnknown, TypeIRQ); ok {
+		t.Fatal("IRQ was exposed as a profiler implementation")
+	}
+}

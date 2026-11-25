@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/url"
 	"strconv"
@@ -77,6 +78,7 @@ type RawProfile struct {
 	ContainerQoS      string
 	ProfileType       string
 	Profile           *profilev1.Profile
+	DroppedSamples    map[string]uint64
 }
 
 // RawProfilePage contains one page of published profiling windows.
@@ -244,6 +246,10 @@ func (s *Service) RawProfiles(
 	}
 	items := make([]*RawProfile, 0, len(documents))
 	for _, document := range documents {
+		var droppedSamples map[string]uint64
+		if document.ProfileData.Metrics != nil {
+			droppedSamples = maps.Clone(document.ProfileData.Metrics.DroppedSamples)
+		}
 		items = append(items, &RawProfile{
 			Hostname:          document.Hostname,
 			Region:            document.Region,
@@ -255,6 +261,7 @@ func (s *Service) RawProfiles(
 			ContainerQoS:      document.ContainerQoS,
 			ProfileType:       document.ProfileData.ProfileType,
 			Profile:           document.ProfileData.Profile,
+			DroppedSamples:    droppedSamples,
 		})
 	}
 	return &RawProfilePage{
@@ -329,7 +336,9 @@ func buildDashboardURL(baseURL string, resultJob *job.Job, region, profileType s
 	if baseURL == "" || resultJob == nil || resultJob.Spec.Profiling == nil {
 		return nil
 	}
-	if resultJob.Spec.Profiling.Type != profilingdomain.TypeCPU && resultJob.Spec.Profiling.Type != profilingdomain.TypeMemory {
+	switch resultJob.Spec.Profiling.Type {
+	case profilingdomain.TypeCPU, profilingdomain.TypeMemory, profilingdomain.TypeIRQ:
+	default:
 		return nil
 	}
 

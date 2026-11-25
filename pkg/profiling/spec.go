@@ -22,7 +22,7 @@ import (
 // Spec contains stable profiling service parameters.
 type Spec struct {
 	Type            Type     `json:"type"`
-	Language        Language `json:"language"`
+	Language        Language `json:"language,omitempty"`
 	Mode            Mode     `json:"mode"`
 	BinaryMatchPath string   `json:"binary_match_path,omitempty"`
 }
@@ -32,7 +32,11 @@ func (s Spec) Validate() error {
 	if _, err := ParseType(string(s.Type)); err != nil {
 		return err
 	}
-	if _, err := ParseLanguage(string(s.Language)); err != nil {
+	if s.Type == TypeIRQ {
+		if s.Language != LanguageUnknown {
+			return fmt.Errorf("language %q is not supported for IRQ profiling", s.Language)
+		}
+	} else if _, err := ParseLanguage(string(s.Language)); err != nil {
 		return err
 	}
 	if _, err := ParseMode(string(s.Mode)); err != nil {

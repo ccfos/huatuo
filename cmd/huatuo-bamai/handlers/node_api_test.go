@@ -67,7 +67,8 @@ func newTestNodeServices(
 	}
 	socketPath := filepath.Join(directory, "toolstream.sock")
 	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
-		ProfilerPath:            profilerPath,
+		ToolBinDir:              directory,
+		BPFObjDir:               directory,
 		ToolstreamSocketPath:    socketPath,
 		AggregationInterval:     time.Second,
 		MaxConcurrentProcesses:  1,
@@ -172,9 +173,11 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 		Scope:           apiv1.ObservationScopeHost,
 		Kind:            nodeapi.OperationKindProfiling,
 	}
+	language := nodeapi.ProfilingLanguageGo
 	spec := nodeapi.ProfilingOperationSpec{
-		Type: nodeapi.ProfilingTypeCPU, Language: nodeapi.ProfilingLanguageGo,
-		Mode: nodeapi.ProfilingModeOnCPU,
+		Type:     nodeapi.ProfilingTypeCPU,
+		Language: &language,
+		Mode:     nodeapi.ProfilingModeOnCPU,
 	}
 	if err := body.Spec.FromProfilingOperationSpec(spec); err != nil {
 		t.Fatalf("set profiling spec: %v", err)

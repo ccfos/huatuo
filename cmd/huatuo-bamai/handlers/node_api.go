@@ -109,7 +109,7 @@ func (h *NodeAPIHandler) startProfilingOperation(
 		ContainerID: optionalString(body.ContainerID),
 		Spec: profilingdomain.Spec{
 			Type:            profilingdomain.Type(spec.Type),
-			Language:        profilingdomain.Language(spec.Language),
+			Language:        profilingdomain.Language(optionalString(spec.Language)),
 			Mode:            profilingdomain.Mode(spec.Mode),
 			BinaryMatchPath: optionalString(spec.BinaryMatchPath),
 		},
@@ -250,7 +250,7 @@ func secondsDuration(seconds int64) (time.Duration, error) {
 	return time.Duration(seconds) * time.Second, nil
 }
 
-func optionalString(value *string) string {
+func optionalString[T ~string](value *T) T {
 	if value == nil {
 		return ""
 	}
