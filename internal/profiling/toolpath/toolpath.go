@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -56,6 +58,13 @@ func validateFile(path string, permissions os.FileMode) error {
 	}
 	if info.Mode().Perm()&permissions == 0 {
 		return fmt.Errorf("profiling tool %q requires permission bits %#o", path, permissions)
+	}
+	access := uint32(unix.R_OK)
+	if permissions == 0o111 {
+		access = unix.X_OK
+	}
+	if err := unix.Faccessat(unix.AT_FDCWD, path, access, unix.AT_EACCESS); err != nil {
+		return fmt.Errorf("profiling tool %q cannot be accessed: %w", path, err)
 	}
 	return nil
 }
