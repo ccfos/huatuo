@@ -100,7 +100,7 @@ func ValidateLabels(labels []ProfileLabel) error {
 
 func singleProfileLabel(name string) bool {
 	switch name {
-	case "pid", "cpu", "comm", "lock_address", "irq", "softirq_vector", "offcpu_category":
+	case "pid", "cpu", "comm", "lock_address", "irq", "softirq_vector", "offcpu_reason":
 		return true
 	default:
 		return false
@@ -154,9 +154,9 @@ func validateProfileLabel(label *ProfileLabel) error {
 		if value != "source" && value != "victim" {
 			return fmt.Errorf("irq requires source or victim: %q", value)
 		}
-	case "offcpu_category":
+	case "offcpu_reason":
 		if value == "" {
-			return fmt.Errorf("offcpu_category must not be empty")
+			return fmt.Errorf("offcpu_reason must not be empty")
 		}
 	}
 

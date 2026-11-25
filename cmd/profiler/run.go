@@ -21,6 +21,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/cmd/profiler/provider"
+	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -50,17 +51,17 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	}
 
 	if cliCtx.Bool("enable-pprof") {
-		server, err := startPprofServer(ctx, profilerPprofAddress)
+		server, err := serverpprof.StartDefault(ctx)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			if err := server.Close(); err != nil {
-				log.Errorf("close pprof server on %s: %v", profilerPprofAddress, err)
+				log.Errorf("close pprof server on 127.0.0.1:6000: %v", err)
 			}
 		}()
 
-		log.Infof("pprof server started on %s", profilerPprofAddress)
+		log.Info("pprof server started on 127.0.0.1:6000")
 	}
 
 	log.Infof("using profiler: %s-%s (%s)", meta.Implementation, meta.Type, meta.Description)

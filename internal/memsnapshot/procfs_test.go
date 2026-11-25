@@ -15,6 +15,7 @@
 package memsnapshot
 
 import (
+	"debug/elf"
 	"errors"
 	"os"
 	"path/filepath"
@@ -44,6 +45,68 @@ func TestProcessInstanceID(t *testing.T) {
 	identity.StartTimeTicks++
 	if err := ValidateProcessInstanceID(identity); err == nil {
 		t.Fatal("changed process identity was accepted")
+	}
+}
+
+func TestReadProcMapsPreservesPath(t *testing.T) {
+	for name, path := range map[string]string{
+		"anonymous":                "",
+		"ordinary":                 "/opt/runtime/libjvm.so",
+		"single spaces":            "/opt/runtime with spaces/libjvm.so",
+		"consecutive spaces":       "/opt/runtime  with  spaces/libjvm.so",
+		"tabs":                     "/opt/runtime\twith\ttabs/libjvm.so",
+		"unicode whitespace":       "/opt/runtime\u00a0name/libjvm.so",
+		"trailing space":           "/opt/library.so ",
+		"trailing tab":             "/opt/library.so\t",
+		"carriage return":          "/opt/runtime\rname/libjvm.so",
+		"trailing carriage return": "/opt/library.so\r",
+		"deleted":                  "/opt/runtime  name/libjvm.so (deleted)",
+		"heap":                     "[heap]",
+	} {
+		for ending, suffix := range map[string]string{"newline": "\n", "eof": ""} {
+			t.Run(name+"/"+ending, func(t *testing.T) {
+				mapsPath := filepath.Join(t.TempDir(), "maps")
+				line := "1000-2000 r-xp 00001000 08:01 42    " + path + suffix
+				if err := os.WriteFile(mapsPath, []byte(line), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				mappings, err := ReadProcMaps(mapsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := ProcMap{
+					Start:    0x1000,
+					End:      0x2000,
+					Offset:   0x1000,
+					DevMajor: 8,
+					DevMinor: 1,
+					Inode:    42,
+					Perms:    "r-xp",
+					Path:     path,
+				}
+				if len(mappings) != 1 || mappings[0] != want {
+					t.Fatalf("mappings = %#v, want %#v", mappings, want)
+				}
+			})
+		}
+	}
+}
+
+func TestReadProcMapsSkipsMalformedLines(t *testing.T) {
+	mapsPath := filepath.Join(t.TempDir(), "maps")
+	data := "1000-2000 r-xp 00000000 08:01\n" +
+		"2000-1000 r-xp 00000000 08:01 42 /invalid\n" +
+		"1000-2000 r-xp 00000000 08:01 invalid /invalid\n" +
+		"1000-2000 r-xp 00000000 08:01 42"
+	if err := os.WriteFile(mapsPath, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := ReadProcMaps(mapsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mappings) != 1 || mappings[0].Inode != 42 || mappings[0].Path != "" {
+		t.Fatalf("mappings = %#v, want one anonymous mapping", mappings)
 	}
 }
 
@@ -126,4 +189,70 @@ func identityProcRootForTest(t *testing.T) string {
 	procfs.RootPrefix(root)
 	t.Cleanup(func() { procfs.RootPrefix(previous) })
 	return procRoot
+}
+
+func TestFindELFLoadBiasMappingIdentity(t *testing.T) {
+	pageSize := uint64(os.Getpagesize())
+	file := &elf.File{Progs: []*elf.Prog{
+		{ProgHeader: elf.ProgHeader{Type: elf.PT_LOAD, Vaddr: pageSize, Filesz: pageSize}},
+	}}
+	target := ProcMap{Inode: 42, DevMajor: 8, DevMinor: 3}
+	maps := []ProcMap{
+		{Inode: 42, DevMajor: 9, DevMinor: 3, Start: 0x100000},
+		{Inode: 42, DevMajor: 8, DevMinor: 2, Start: 0x200000},
+		{Inode: 41, DevMajor: 8, DevMinor: 3, Start: 0x300000},
+		{Inode: 42, DevMajor: 8, DevMinor: 3, Start: 0x80000000},
+	}
+	bias, err := FindELFLoadBias(file, maps, &target)
+	want := uint64(0x80000000) - pageSize
+	if err != nil || bias != want {
+		t.Fatalf("bias = %#x, %v; want %#x", bias, err, want)
+	}
+	if _, err := FindELFLoadBias(file, maps[:3], &target); err == nil {
+		t.Fatal("accepted an unrelated mapping with a colliding inode")
+	}
+	file.Progs[0].Off = pageSize
+	if _, err := FindELFLoadBias(file, maps, &target); err == nil {
+		t.Fatal("accepted a mapping outside the load segment")
+	}
+	file.Progs[0].Off = 0
+	file.Progs[0].Vaddr = 0x90000000
+	if _, err := FindELFLoadBias(file, maps, &target); err == nil {
+		t.Fatal("accepted an underflowing relocation")
+	}
+}
+
+func TestFindELFLoadBiasSplitMapping(t *testing.T) {
+	pageSize := uint64(os.Getpagesize())
+	file := &elf.File{Progs: []*elf.Prog{
+		{ProgHeader: elf.ProgHeader{Type: elf.PT_LOAD, Off: pageSize, Vaddr: pageSize, Filesz: 6*pageSize + pageSize/2, Flags: elf.PF_R}},
+		{ProgHeader: elf.ProgHeader{Type: elf.PT_LOAD, Off: pageSize, Vaddr: 0x400000 + pageSize, Filesz: 6*pageSize + pageSize/2, Flags: elf.PF_R | elf.PF_X}},
+	}}
+	for _, tc := range []struct {
+		name    string
+		offset  uint64
+		start   uint64
+		wantErr bool
+	}{
+		{"segment start", pageSize, 0x80000000, false},
+		{"split segment", 3 * pageSize, 0x80000000 + 2*pageSize, false},
+		{"last partial page", 7 * pageSize, 0x80000000 + 6*pageSize, false},
+		{"before segment", 0, 0x80000000 - pageSize, true},
+		{"after segment", 8 * pageSize, 0x80000000 + 7*pageSize, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mapping := ProcMap{Inode: 42, Start: tc.start, Offset: tc.offset, Perms: "r-xp"}
+			bias, err := FindELFLoadBias(file, []ProcMap{mapping}, &mapping)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("accepted a mapping outside the segment")
+				}
+				return
+			}
+			want := uint64(0x80000000) - (0x400000 + pageSize)
+			if err != nil || bias != want {
+				t.Fatalf("bias=%#x, error=%v; want %#x", bias, err, want)
+			}
+		})
+	}
 }

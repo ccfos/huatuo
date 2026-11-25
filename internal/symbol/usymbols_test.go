@@ -206,6 +206,17 @@ func TestUsymResolverExePath(t *testing.T) {
 }
 
 func TestUsymResolverLoadElfCaches(t *testing.T) {
+	t.Run("non-xfs-executable-with-other-xfs-mounts", func(t *testing.T) {
+		resolver, processID, functionName, functionAddr := setupMainElfResolverFixture(t)
+		setTestXfsMounts(t, []string{"/media/xfs-data", "/media/xfs-logs"})
+		mustWriteFile(t, procfs.Path(strconv.Itoa(int(processID)), "cgroup"), "0::/user.slice\n")
+
+		got := resolver.UsymStackStrs(processID, []uint64{functionAddr}, 1)
+		if !slices.Equal(got, []string{functionName}) {
+			t.Errorf("UsymStackStrs(non-XFS executable): got %v, want %q", got, functionName)
+		}
+	})
+
 	t.Run("repeated-load-shares-cache-entry", func(t *testing.T) {
 		resolver, processID, _, _ := setupMainElfResolverFixture(t)
 

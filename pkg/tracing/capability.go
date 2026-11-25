@@ -46,19 +46,19 @@ var capabilityDefinitions = []capabilityDefinition{
 	{
 		Capability: Capability{
 			Type:            TypeNetworkingDrop,
-			SupportedScopes: []observation.Scope{observation.ScopeHost},
+			SupportedScopes: []observation.Scope{observation.ScopeTypeHost},
 		},
 	},
 	{
 		Capability: Capability{
 			Type:            TypeIO,
-			SupportedScopes: []observation.Scope{observation.ScopeHost},
+			SupportedScopes: []observation.Scope{observation.ScopeTypeHost},
 		},
 	},
 	{
 		Capability: Capability{
 			Type:            TypeTCPRetransmit,
-			SupportedScopes: []observation.Scope{observation.ScopeHost},
+			SupportedScopes: []observation.Scope{observation.ScopeTypeHost},
 		},
 	},
 }

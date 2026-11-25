@@ -18,9 +18,13 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"os"
+	"os/signal"
 	"slices"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -31,11 +35,12 @@ import (
 
 type setupBPFStub struct {
 	tracerBPFStub
-	failAt      string
-	setupErr    error
-	eventReader bpf.PerfEventReader
-	alertReader bpf.PerfEventReader
-	filterItems []bpf.MapItem
+	failAt          string
+	setupErr        error
+	eventReader     bpf.PerfEventReader
+	alertReader     bpf.PerfEventReader
+	filterItems     []bpf.MapItem
+	beforeEventPipe func()
 }
 
 func (s *setupBPFStub) MapIDByName(name string) uint32 {
@@ -59,6 +64,9 @@ func (s *setupBPFStub) WriteMapItems(_ uint32, items []bpf.MapItem) error {
 
 func (s *setupBPFStub) EventPipeByName(ctx context.Context, name string, _ uint32) (bpf.PerfEventReader, error) {
 	s.operations = append(s.operations, name)
+	if name == "perf_events" && s.beforeEventPipe != nil {
+		s.beforeEventPipe()
+	}
 	if s.failAt == name {
 		return nil, s.setupErr
 	}
@@ -85,6 +93,7 @@ type blockingReaderStub struct {
 	ctx      context.Context
 	started  chan struct{}
 	readErr  error
+	closeErr error
 	closes   atomic.Uint32
 	readGate <-chan struct{}
 }
@@ -102,7 +111,7 @@ func (r *blockingReaderStub) ReadInto(any) error {
 	<-r.ctx.Done()
 	return types.ErrExitByCancelCtx
 }
-func (r *blockingReaderStub) Close() error { r.closes.Add(1); return nil }
+func (r *blockingReaderStub) Close() error { r.closes.Add(1); return r.closeErr }
 
 func newSetupBPF(t *testing.T) *setupBPFStub {
 	t.Helper()
@@ -150,6 +159,84 @@ func TestTracerSetupRollback(t *testing.T) {
 			}
 			if got := object.alertReader.(*blockingReaderStub).closes.Load(); got != wantAlertCloses {
 				t.Fatalf("alert closes = %d, want %d", got, wantAlertCloses)
+			}
+		})
+	}
+}
+
+func TestTracerSetupCancellation(t *testing.T) {
+	failure := errors.New("resource failure")
+	tests := []struct {
+		name     string
+		stage    string
+		setupErr error
+		closeErr error
+	}{
+		{name: "successful rollback"},
+		{name: "detach failure", stage: "detach", closeErr: failure},
+		{name: "reader close failure", stage: "reader", closeErr: failure},
+		{name: "object close failure", stage: "object", closeErr: failure},
+		{name: "cleanup returns cancellation", stage: "object", closeErr: context.Canceled},
+		{name: "independent setup failure", stage: "setup", setupErr: failure},
+		{
+			name:     "joined setup failure",
+			stage:    "setup",
+			setupErr: errors.Join(context.Canceled, failure),
+		},
+		{
+			name:     "wrapped setup cancellation",
+			stage:    "setup",
+			setupErr: fmt.Errorf("event pipe: %w", context.Canceled),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			object := newSetupBPF(t)
+			object.beforeEventPipe = cancel
+			switch tt.stage {
+			case "detach":
+				object.detachErr = tt.closeErr
+			case "reader":
+				object.eventReader.(*blockingReaderStub).closeErr = tt.closeErr
+			case "object":
+				object.closeErr = tt.closeErr
+			case "setup":
+				object.failAt, object.setupErr = "perf_events", tt.setupErr
+			}
+
+			tracer, err := newTracer(ctx, object, netdevOptions{}, bpf.NewRateLimiter("dropwatch", 1), false)
+			if tracer != nil || err == nil {
+				t.Fatalf("newTracer() = (%v, %v), want failed startup", tracer, err)
+			}
+			if tt.stage == "" {
+				if err != ErrOpenCanceled { //nolint:errorlint // Successful rollback must return the exact marker.
+					t.Fatalf("newTracer() = %v, want ErrOpenCanceled directly", err)
+				}
+			} else {
+				if errors.Is(err, ErrOpenCanceled) {
+					t.Fatalf("failure marked as successful cancellation: %v", err)
+				}
+				if tt.closeErr != nil && !errors.Is(err, tt.closeErr) {
+					t.Fatalf("cleanup error lost: %v", err)
+				}
+				if tt.setupErr != nil && !errors.Is(err, tt.setupErr) {
+					t.Fatalf("setup error lost: %v", err)
+				}
+			}
+			if object.operations[len(object.operations)-1] != "object_close" {
+				t.Fatalf("rollback did not close BPF object: %v", object.operations)
+			}
+			if got := object.alertReader.(*blockingReaderStub).closes.Load(); got != 1 {
+				t.Fatalf("alert reader closes = %d, want 1", got)
+			}
+			wantEventCloses := uint32(1)
+			if tt.stage == "setup" {
+				wantEventCloses = 0
+			}
+			if got := object.eventReader.(*blockingReaderStub).closes.Load(); got != wantEventCloses {
+				t.Fatalf("event reader closes = %d, want %d", got, wantEventCloses)
 			}
 		})
 	}
@@ -209,7 +296,7 @@ func TestTracerIdleReadStops(t *testing.T) {
 			default:
 				cancel(context.Canceled)
 			}
-			if err := <-done; !errors.Is(err, wantErr) {
+			if err := <-done; err != wantErr { //nolint:errorlint // Cancellation must preserve the direct reader marker.
 				t.Fatalf("read = %v, want %v", err, wantErr)
 			}
 			if mode != "close" {
@@ -229,10 +316,11 @@ func TestTracerIdleReadStops(t *testing.T) {
 
 func TestTracerLostSamplesAndReadErrors(t *testing.T) {
 	readErr := errors.New("decode failed")
+	joinedErr := errors.Join(context.Canceled, readErr)
 	record := &abi.DropwatchPacketEvent{}
 	record.Meta.KernelObservedNS = 42
 	reader := &tracerReaderStub{
-		errors:  []error{&bpf.PerfEventSamplesLostError{Count: 5}, readErr},
+		errors:  []error{&bpf.PerfEventSamplesLostError{Count: 5}, readErr, joinedErr},
 		records: []*abi.DropwatchPacketEvent{record},
 	}
 	object := newSetupBPF(t)
@@ -257,8 +345,10 @@ func TestTracerLostSamplesAndReadErrors(t *testing.T) {
 	if err != nil || status.LostSamples != 5 {
 		t.Fatalf("status = %+v, %v", status, err)
 	}
-	if err := tracer.ReadInto(&got); !errors.Is(err, readErr) {
-		t.Fatal(err)
+	for _, wantErr := range []error{readErr, joinedErr} {
+		if err := tracer.ReadInto(&got); err != wantErr { //nolint:errorlint // ReadInto must return independent and joined failures unchanged.
+			t.Fatalf("read = %v, want original error %v", err, wantErr)
+		}
 	}
 	if err := tracer.ReadInto(&got); err != nil || got.Meta.KernelObservedNS != 42 {
 		t.Fatalf("record = %d, %v", got.Meta.KernelObservedNS, err)
@@ -282,7 +372,7 @@ func TestTracerAlertFailureInterruptsRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	var record abi.DropwatchPacketEvent
-	if err := tracer.ReadInto(&record); !errors.Is(err, types.ErrExitByCancelCtx) {
+	if err := tracer.ReadInto(&record); !errors.Is(err, alertErr) {
 		t.Fatalf("read = %v", err)
 	}
 	if err := tracer.ReadInto(&record); !errors.Is(err, alertErr) {
@@ -290,6 +380,30 @@ func TestTracerAlertFailureInterruptsRead(t *testing.T) {
 	}
 	if err := tracer.Close(); !errors.Is(err, alertErr) {
 		t.Fatalf("close = %v", err)
+	}
+}
+
+func TestTracerReadIntoPreservesFailureDuringCancellation(t *testing.T) {
+	readErr := errors.New("read failed")
+	for _, err := range []error{readErr, errors.Join(types.ErrExitByCancelCtx, readErr)} {
+		t.Run(err.Error(), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			object := newSetupBPF(t)
+			object.eventReader = &tracerReaderStub{
+				errors:     []error{err},
+				beforeRead: cancel,
+			}
+			tracer, openErr := newTracer(ctx, object, netdevOptions{}, bpf.NewRateLimiter("dropwatch", 0), false)
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			t.Cleanup(func() { _ = tracer.Close() })
+			var record abi.DropwatchPacketEvent
+			if got := tracer.ReadInto(&record); got != err { //nolint:errorlint // Cancellation must not replace independent or joined read errors.
+				t.Fatalf("read during cancellation = %v, want original error %v", got, err)
+			}
+		})
 	}
 }
 
@@ -308,10 +422,9 @@ func TestTracerReadIntoPreservesSuccess(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = tracer.Close() })
-			wantErr := context.Canceled
+			wantErr := types.ErrExitByCancelCtx
 			reader.afterRead = cancel
 			if mode == "close" {
-				wantErr = bpf.ErrClosed
 				reader.afterRead = func() {
 					if err := tracer.Close(); err != nil {
 						t.Fatal(err)
@@ -322,8 +435,31 @@ func TestTracerReadIntoPreservesSuccess(t *testing.T) {
 			if err := tracer.ReadInto(&got); err != nil || got.Meta.KernelObservedNS != 42 {
 				t.Fatalf("read = %d, %v; want 42, nil", got.Meta.KernelObservedNS, err)
 			}
-			if err := tracer.ReadInto(&got); !errors.Is(err, wantErr) {
+			if err := tracer.ReadInto(&got); err != wantErr { //nolint:errorlint // Verify direct cancellation and closure markers.
 				t.Fatalf("next read = %v, want %v", err, wantErr)
+			}
+		})
+	}
+}
+
+func TestTracerReadIntoSignalCancellation(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT} {
+		t.Run(sig.String(), func(t *testing.T) {
+			ctx, stop := signal.NotifyContext(t.Context(), sig)
+			defer stop()
+			object := newSetupBPF(t)
+			tracer, err := newTracer(ctx, object, netdevOptions{}, bpf.NewRateLimiter("dropwatch", 0), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = tracer.Close() })
+			if err := syscall.Kill(os.Getpid(), sig); err != nil {
+				t.Fatal(err)
+			}
+			<-ctx.Done()
+			var record abi.DropwatchPacketEvent
+			if err := tracer.ReadInto(&record); err != types.ErrExitByCancelCtx { //nolint:errorlint // The public contract requires the exact stop marker.
+				t.Fatalf("read after signal = %v, want ErrExitByCancelCtx", err)
 			}
 		})
 	}

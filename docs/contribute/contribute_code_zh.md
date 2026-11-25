@@ -25,7 +25,6 @@ weight: 1
 | **Go** | 以 `go.mod` 为准（当前为 1.24.3） | 项目主体使用 Go 编写 |
 | **Linux** | 内核 4.18+ | eBPF 程序需要 Linux 内核 |
 | **Clang/LLVM** | 任意较新版本 | 编译 eBPF C 程序所需 |
-| **Kernel headers** | linux-headers | BPF 编译所需 |
 | **Docker** | (可选) | 容器化开发环境 |
 | **Git** | 任意较新版本 | 版本管理 |
 

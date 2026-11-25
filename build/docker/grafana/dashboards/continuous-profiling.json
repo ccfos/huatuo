@@ -1,0 +1,351 @@
+{
+	"annotations": {
+		"list": [
+			{
+				"builtIn": 1,
+				"datasource": {
+					"type": "grafana",
+					"uid": "-- Grafana --"
+				},
+				"enable": true,
+				"hide": true,
+				"iconColor": "rgba(0, 211, 255, 1)",
+				"name": "Annotations & Alerts",
+				"target": {
+					"limit": 100,
+					"matchAny": false,
+					"tags": [],
+					"type": "dashboard"
+				},
+				"type": "dashboard"
+			}
+		]
+	},
+	"editable": false,
+	"fiscalYearStartMonth": 0,
+	"graphTooltip": 0,
+	"links": [],
+	"panels": [
+		{
+			"id": 5,
+			"type": "volkovlabs-echarts-panel",
+			"title": "",
+			"gridPos": {
+				"x": 0,
+				"y": 0,
+				"w": 24,
+				"h": 2
+			},
+			"datasource": {
+				"type": "yesoreyeram-infinity-datasource",
+				"uid": "huatuo-apiserver"
+			},
+			"targets": [
+				{
+					"refId": "A",
+					"type": "json",
+					"source": "inline",
+					"format": "table",
+					"parser": "backend",
+					"data": "[{\"profile_type\":\"${type:percentencode}\",\"region\":\"${region:percentencode}\",\"hostname\":\"${hostname:percentencode}\",\"scope\":\"${scope:text}\",\"id\":\"${task_id:percentencode}\",\"container_id\":\"${container_id:percentencode}\",\"filters\":\"${sample_filters:percentencode}\"}]",
+					"columns": []
+				}
+			],
+			"options": {
+				"getOption": "const chart = context.panel.chart;\nconst host = chart.getDom();\n// Cancel discovery from the previous render before it can update these controls.\nhost.huatuoLabelCleanup?.();\nconst controller = new AbortController();\nconst colors = context.grafana.theme.colors;\nconst root = document.createElement('div');\nObject.assign(root.style, { position: 'absolute', inset: '0', overflow: 'auto', padding: '2px 8px', zIndex: '2', background: colors.background.primary, color: colors.text.primary });\nroot.setAttribute('role', 'group');\nroot.setAttribute('aria-label', 'Profile label filters');\nhost.appendChild(root);\n// Keep the last panel inside the viewport; the flame graph owns stack scrolling.\nconst layoutRoot = document.getElementById('pageContent') ?? document.body;\nlet layout;\nconst clearLayout = () => {\n  layout?.removeAttribute('data-huatuo-profile-layout');\n  layout?.style.removeProperty('--huatuo-flame-height');\n  layout?.style.removeProperty('--huatuo-layout-height');\n};\nlet stopLayout = () => {};\n{\n  const sizing = document.createElement('style');\n  sizing.textContent = `\n    [data-huatuo-profile-layout] { height: var(--huatuo-layout-height) !important; }\n    [data-huatuo-profile-layout] [data-griditem-key=\"grid-item-1\"] { height: var(--huatuo-flame-height) !important; }\n    [data-huatuo-profile-layout] [data-viz-panel-key=\"panel-1\"] > section { height: 100% !important; }\n  `;\n  host.appendChild(sizing);\n  let frame = 0;\n  const fit = () => {\n    frame = 0;\n    const currentLayout = host.closest('.react-grid-layout');\n    if (currentLayout !== layout) { clearLayout(); layout = currentLayout; }\n    if (!layout) return;\n    layout.setAttribute('data-huatuo-profile-layout', '');\n    const panel = layout.querySelector('[data-griditem-key=\"grid-item-1\"]');\n    if (!panel) return;\n    const panelTop = panel.getBoundingClientRect().top + window.scrollY;\n    const layoutTop = layout.getBoundingClientRect().top + window.scrollY;\n    // Leave room for the dashboard gutter and a usable window on small screens.\n    const height = Math.max(180, window.innerHeight - panelTop - 16);\n    layout.style.setProperty('--huatuo-flame-height', height + 'px');\n    layout.style.setProperty('--huatuo-layout-height', panelTop - layoutTop + height + 'px');\n  };\n  const scheduleFit = () => { if (!frame) frame = requestAnimationFrame(fit); };\n  const resize = new ResizeObserver(scheduleFit);\n  resize.observe(layoutRoot);\n  const mounted = new MutationObserver(scheduleFit);\n  // Grafana can mount the chart before attaching its grid item on return from fullscreen.\n  mounted.observe(layoutRoot, { childList: true, subtree: true });\n  window.addEventListener('resize', scheduleFit);\n  scheduleFit();\n  stopLayout = () => {\n    resize.disconnect();\n    mounted.disconnect();\n    window.removeEventListener('resize', scheduleFit);\n    cancelAnimationFrame(frame);\n    sizing.remove();\n    clearLayout();\n  };\n}\nconst cleanup = () => { controller.abort(); stopLayout(); root.remove(); };\nhost.huatuoLabelCleanup = cleanup;\nconst result = { version: 2, option: {}, unsubscribe: cleanup };\nconst add = (parent, tag, text) => {\n  const element = document.createElement(tag);\n  if (text !== undefined) element.textContent = text;\n  parent.appendChild(element);\n  return element;\n};\nconst button = (parent, title, onClick) => {\n  const element = add(parent, 'button', title);\n  element.type = 'button';\n  Object.assign(element.style, { minHeight: '28px', padding: '3px 8px', borderRadius: '3px', border: '1px solid ' + colors.border.medium, background: colors.background.secondary, color: colors.text.primary, cursor: 'pointer' });\n  element.addEventListener('click', onClick);\n  return element;\n};\nconst bar = add(root, 'div');\nObject.assign(bar.style, { display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' });\nconst labelTitle = add(bar, 'span', 'Labels');\nObject.assign(labelTitle.style, { display: 'inline-flex', alignItems: 'center', flexShrink: '0', boxSizing: 'border-box', minHeight: '32px', padding: '0 8px', fontSize: '12px', fontWeight: '400', borderRadius: '2px', border: '1px solid ' + colors.border.medium, background: colors.background.secondary, color: colors.text.primary, cursor: 'default' });\nconst labelHelpText = 'Filter the task\\'s flame graph by sample labels. Conditions use AND; the window timeline is unchanged.';\nconst labelHelp = add(root, 'div', labelHelpText);\nlabelHelp.id = 'huatuo-label-help-' + crypto.getRandomValues(new Uint32Array(2)).join('-');\nlabelHelp.setAttribute('popover', 'auto');\nlabelHelp.setAttribute('role', 'note');\nObject.assign(labelHelp.style, { position: 'fixed', inset: 'auto', margin: '0', maxWidth: 'min(340px, calc(100vw - 24px))', boxSizing: 'border-box', padding: '12px', fontSize: '12px', lineHeight: '1.5', borderRadius: '4px', border: '1px solid ' + colors.border.medium, background: colors.background.secondary, color: colors.text.primary });\nlet helpPinned = false;\nconst helpButton = button(labelTitle, '', () => {\n  helpPinned = !helpPinned;\n  if (helpPinned) showHelp();\n  else labelHelp.hidePopover();\n});\n// Match Grafana's info-circle icon used by the Task ID variable description.\nconst helpIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');\nhelpIcon.setAttribute('viewBox', '0 0 24 24');\nhelpIcon.setAttribute('width', '16');\nhelpIcon.setAttribute('height', '16');\nhelpIcon.setAttribute('fill', 'currentColor');\nhelpIcon.setAttribute('aria-hidden', 'true');\nconst helpPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');\nhelpPath.setAttribute('d', 'M12,2A10,10,0,1,0,22,12,10.01114,10.01114,0,0,0,12,2Zm0,18a8,8,0,1,1,8-8A8.00917,8.00917,0,0,1,12,20Zm0-8.5a1,1,0,0,0-1,1v3a1,1,0,0,0,2,0v-3A1,1,0,0,0,12,11.5Zm0-4a1.25,1.25,0,1,0,1.25,1.25A1.25,1.25,0,0,0,12,7.5Z');\nhelpIcon.appendChild(helpPath);\nhelpButton.appendChild(helpIcon);\nconst showHelp = () => {\n  if (!labelHelp.matches(':popover-open')) labelHelp.showPopover();\n  const anchor = helpButton.getBoundingClientRect();\n  const bounds = labelHelp.getBoundingClientRect();\n  labelHelp.style.left = Math.max(12, Math.min(anchor.left, window.innerWidth - bounds.width - 12)) + 'px';\n  labelHelp.style.top = Math.max(12, Math.min(anchor.bottom + 6, window.innerHeight - bounds.height - 12)) + 'px';\n};\nconst hideHelp = () => { if (!helpPinned) labelHelp.hidePopover(); };\nhelpButton.addEventListener('pointerenter', showHelp);\nhelpButton.addEventListener('pointerleave', hideHelp);\nlet restoringHelpFocus = false;\n// Closing a popover can restore focus to its trigger; keep it closed in that case.\nlabelHelp.addEventListener('beforetoggle', event => {\n  if (event.newState !== 'closed') return;\n  restoringHelpFocus = true;\n  setTimeout(() => { restoringHelpFocus = false; }, 0);\n});\nhelpButton.addEventListener('focus', () => { if (!restoringHelpFocus) showHelp(); });\nhelpButton.addEventListener('blur', hideHelp);\ndocument.addEventListener('keydown', event => {\n  if (event.key !== 'Escape' || !labelHelp.matches(':popover-open')) return;\n  event.preventDefault();\n  helpPinned = false;\n  labelHelp.hidePopover();\n}, { signal: controller.signal });\nhelpButton.setAttribute('aria-label', 'About label filters');\nhelpButton.setAttribute('aria-describedby', labelHelp.id);\nhelpButton.setAttribute('aria-controls', labelHelp.id);\nhelpButton.setAttribute('aria-expanded', 'false');\nObject.assign(helpButton.style, { display: 'inline-flex', alignItems: 'center', minHeight: '0', width: '16px', height: '16px', padding: '0', marginLeft: '6px', border: 'none', background: 'transparent', color: colors.text.secondary });\nlabelHelp.addEventListener('toggle', () => {\n  const open = labelHelp.matches(':popover-open');\n  if (!open) helpPinned = false;\n  helpButton.setAttribute('aria-expanded', String(open));\n});\nconst status = add(root, 'div');\nstatus.setAttribute('role', 'status');\nconst frame = context.panel.data.series[0];\nif (!frame) { status.textContent = 'Waiting for task selection.'; return result; }\nconst values = Object.fromEntries(frame.fields.map(field => [field.name, decodeURIComponent(String(field.values[0] ?? ''))]));\nconst base = {\n  __profile_type__: values.profile_type,\n  region: values.region,\n  hostname: values.hostname,\n  scope: values.scope,\n  id: values.id,\n  container_id: values.scope === 'container' ? values.container_id : '*',\n};\nif (!base.id || !base.__profile_type__) { status.textContent = 'Select a Task ID and Profile type to load labels.'; return result; }\nconst selection = JSON.stringify(base);\n// The first render restores shared URLs; later target changes discard old filters.\nif (host.huatuoLabelSelection !== undefined && host.huatuoLabelSelection !== selection) {\n  host.huatuoLabelDraft = undefined;\n  if (values.filters) {\n    host.huatuoLabelSelection = selection;\n    status.textContent = 'Target changed. Clearing label filters…';\n    context.grafana.locationService.partial({ 'var-sample_filters': '' });\n    return result;\n  }\n}\nhost.huatuoLabelSelection = selection;\nconst documentLabels = new Set([...Object.keys(base), 'region', 'hostname', 'container_id', 'container_name', 'container_hostname', 'container_namespace', 'container_type', 'container_qos', 'profile_type', 'tracer_name', 'tracer_id', 'tracer_type']);\nconst filters = [];\n// JSON string values preserve literal quotes, backslashes, empty strings and \"all\".\nconst matcher = /,([a-zA-Z_][a-zA-Z0-9_]*)=(\"(?:[^\"\\\\]|\\\\.)*\")/y;\nlet offset = 0;\ntry {\n  while (offset < values.filters.length) {\n    matcher.lastIndex = offset;\n    const match = matcher.exec(values.filters);\n    if (!match || match[1].startsWith('__') || documentLabels.has(match[1])) throw new Error('Invalid sample label');\n    filters.push({ key: match[1], value: JSON.parse(match[2]) });\n    offset = matcher.lastIndex;\n  }\n} catch {\n  status.textContent = 'Invalid label filter in URL. Clear filters and select labels again.';\n  button(root, 'Clear filters', () => context.grafana.locationService.partial({ 'var-sample_filters': '' }));\n  return result;\n}\nconst range = context.panel.data.request.range;\nconst selector = excluded => '{' + [\n  ...Object.entries(base).map(([key, value]) => key + '=' + JSON.stringify(value)),\n  ...filters.filter((filter, index) => index !== excluded).map(filter => filter.key + '=' + JSON.stringify(filter.value)),\n].join(',') + '}';\nconst request = async (method, excluded, label) => {\n  const url = new URL('api/datasources/uid/huatuo-apiserver-pyroscope/resources/' + method, document.baseURI);\n  url.searchParams.set('query', selector(excluded));\n  url.searchParams.set('start', String(range.from.valueOf()));\n  url.searchParams.set('end', String(range.to.valueOf()));\n  if (label) url.searchParams.set('label', label);\n  const response = await fetch(url, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) });\n  if (!response.ok) throw new Error('Label lookup failed (HTTP ' + response.status + '). Narrow the time range or filters and retry.');\n  const names = await response.json();\n  if (!Array.isArray(names) || names.some(name => typeof name !== 'string')) throw new Error('Label lookup returned an invalid list.');\n  return names;\n};\nconst errorText = error => error.name === 'TimeoutError' ? 'Label lookup timed out. Retry or narrow the time range.' : error.message;\nconst commit = () => {\n  host.huatuoLabelDraft = undefined;\n  const expression = filters.map(filter => ',' + filter.key + '=' + JSON.stringify(filter.value)).join('');\n  context.grafana.locationService.partial({ 'var-sample_filters': expression });\n};\nconst stateKey = selection + values.filters;\nif (host.huatuoLabelDraft?.stateKey !== stateKey) host.huatuoLabelDraft = undefined;\nroot.dataset.filters = values.filters;\nconst chips = [];\nfilters.forEach((filter, index) => {\n  const chip = add(bar, 'span');\n  Object.assign(chip.style, { display: 'inline-flex', alignItems: 'center', maxWidth: '100%' });\n  const label = button(chip, filter.key + ' = ' + JSON.stringify(filter.value), () => openEditor(index));\n  Object.assign(label.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });\n  label.setAttribute('aria-label', 'Edit filter ' + filter.key);\n  const remove = button(chip, '×', () => { filters.splice(index, 1); commit(); });\n  remove.setAttribute('aria-label', 'Remove filter ' + filter.key);\n  remove.title = 'Remove this filter';\n  chips.push(label);\n});\nconst addFilter = button(bar, '+', () => openEditor());\naddFilter.title = 'Add label filter';\naddFilter.setAttribute('aria-label', 'Add label filter');\nconst editor = add(bar, 'span');\nObject.assign(editor.style, { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', maxWidth: '100%' });\neditor.style.display = 'none';\nlet editorVersion = 0;\nconst fill = (select, names, selected, placeholder) => {\n  select.replaceChildren();\n  if (selected === undefined) { const option = add(select, 'option', placeholder); option.value = ''; option.disabled = true; }\n  for (const name of [...new Set(selected !== undefined ? [selected, ...names] : names)]) {\n    const missing = selected === name && !names.includes(name);\n    const option = add(select, 'option', (name === '' ? '(empty)' : name) + (missing ? ' (no match in current range)' : ''));\n    option.value = name;\n  }\n  select.value = selected ?? '';\n};\nconst openEditor = index => {\n  const version = ++editorVersion;\n  addFilter.hidden = true;\n  editor.replaceChildren();\n  editor.style.display = 'flex';\n  const saved = host.huatuoLabelDraft;\n  const draft = saved && saved.index === index ? saved : { stateKey, index, key: filters[index]?.key ?? '', value: filters[index]?.value };\n  host.huatuoLabelDraft = draft;\n  const key = add(editor, 'select');\n  key.setAttribute('aria-label', 'Label');\n  fill(key, [], draft.key || undefined, 'Select label');\n  add(editor, 'span', '=');\n  const value = add(editor, 'select');\n  value.setAttribute('aria-label', 'Label value');\n  fill(value, [], draft.value, 'Select value');\n  value.disabled = true;\n  for (const select of [key, value]) Object.assign(select.style, { minWidth: '120px', maxWidth: '280px', height: '28px', color: colors.text.primary, background: colors.background.secondary, border: '1px solid ' + colors.border.medium });\n  const message = add(editor, 'span');\n  message.setAttribute('role', 'status');\n  let lookup = 0;\n  const loadValues = async () => {\n    const current = ++lookup;\n    retry.hidden = true;\n    message.textContent = 'Loading values…';\n    value.disabled = true;\n    try {\n      const names = await request('labelValues', index, draft.key);\n      if (controller.signal.aborted || current !== lookup || version !== editorVersion) return;\n      fill(value, names, draft.value, 'Select value');\n      value.disabled = false;\n      message.textContent = draft.value !== undefined && !names.includes(draft.value) ? 'Selected value has no match in the current range.' : names.length ? '' : 'No values in the selected task and time range.';\n    } catch (error) {\n      if (controller.signal.aborted || current !== lookup || version !== editorVersion) return;\n      message.textContent = errorText(error);\n      retry.hidden = false;\n    }\n  };\n  key.addEventListener('change', () => {\n    draft.key = key.value;\n    draft.value = undefined;\n    fill(value, [], undefined, 'Select value');\n    loadValues();\n  });\n  value.addEventListener('change', () => {\n    const filter = { key: draft.key, value: value.value };\n    if (index === undefined) filters.push(filter);\n    else filters[index] = filter;\n    commit();\n  });\n  const retry = button(editor, 'Retry', loadValues);\n  retry.hidden = true;\n  button(editor, 'Cancel', () => { addFilter.hidden = false; ++editorVersion; host.huatuoLabelDraft = undefined; editor.style.display = 'none'; editor.replaceChildren(); loadNames(); });\n  if (draft.key) loadValues();\n  loadNames();\n  key.focus();\n};\nlet namesVersion = 0;\nconst loadNames = async () => {\n  const current = ++namesVersion;\n  status.textContent = 'Loading labels…';\n  reload.hidden = true;\n  try {\n    const names = await request('labelNames', host.huatuoLabelDraft?.index);\n    if (controller.signal.aborted || current !== namesVersion) return;\n    const priority = ['comm', 'pid', 'cpu'];\n    const labelNames = names.filter(name => !documentLabels.has(name) && !name.startsWith('__') && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name));\n    labelNames.sort((a, b) => {\n      const rank = name => priority.includes(name) ? priority.indexOf(name) : priority.length;\n      return rank(a) - rank(b) || a.localeCompare(b);\n    });\n    const key = editor.querySelector('select[aria-label=\"Label\"]');\n    if (key) fill(key, labelNames, host.huatuoLabelDraft?.key || undefined, 'Select label');\n    status.textContent = labelNames.length ? '' : 'No sample labels match the current task, time range and filters.';\n  } catch (error) {\n    if (controller.signal.aborted || current !== namesVersion) return;\n    status.textContent = errorText(error);\n    reload.hidden = false;\n  }\n};\nconst reload = button(root, 'Retry labels', loadNames);\nreload.hidden = true;\n// Retain applied values even when a narrower time range no longer contains them.\nfilters.forEach(async (filter, index) => {\n  try {\n    const names = await request('labelValues', index, filter.key);\n    if (controller.signal.aborted) return;\n    if (!names.includes(filter.value)) {\n      chips[index].textContent += ' ⚠';\n      chips[index].title = 'No match in the current task, time range and other filters. Edit or remove this condition.';\n      chips[index].setAttribute('aria-label', 'Edit filter ' + filter.key + ' (no match in current range)');\n    }\n  } catch (error) {\n    if (!controller.signal.aborted) chips[index].title = errorText(error);\n  }\n});\nif (host.huatuoLabelDraft) openEditor(host.huatuoLabelDraft.index);\nelse loadNames();\nreturn result;\n",
+				"renderer": "svg"
+			},
+			"transparent": true
+		},
+		{
+			"datasource": {
+				"type": "elasticsearch",
+				"uid": "huatuo-bamai-es"
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"custom": {
+						"axisBorderShow": false,
+						"axisCenteredZero": false,
+						"axisColorMode": "series",
+						"axisLabel": "",
+						"axisPlacement": "auto",
+						"axisSoftMin": 0,
+						"barAlignment": 0,
+						"barWidthFactor": 0.6,
+						"drawStyle": "line",
+						"fillOpacity": 0,
+						"gradientMode": "none",
+						"hideFrom": {
+							"legend": false,
+							"tooltip": false,
+							"viz": false
+						},
+						"insertNulls": false,
+						"lineInterpolation": "linear",
+						"lineStyle": {
+							"fill": "solid"
+						},
+						"lineWidth": 1,
+						"pointSize": 8,
+						"scaleDistribution": {
+							"type": "linear"
+						},
+						"showPoints": "auto",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "none"
+						},
+						"thresholdsStyle": {
+							"mode": "off"
+						}
+					},
+					"fieldMinMax": false,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green"
+							},
+							{
+								"color": "red",
+								"value": 80
+							}
+						]
+					}
+				},
+				"overrides": []
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 2,
+				"w": 24,
+				"h": 5
+			},
+			"id": 2,
+			"options": {
+				"legend": {
+					"calcs": [],
+					"displayMode": "table",
+					"placement": "bottom",
+					"showLegend": false
+				},
+				"tooltip": {
+					"hideZeros": true,
+					"mode": "multi",
+					"sort": "asc"
+				}
+			},
+			"pluginVersion": "12.0.3",
+			"targets": [
+				{
+					"alias": "",
+					"bucketAggs": [
+						{
+							"field": "uploaded_timestamp",
+							"id": "2",
+							"settings": {
+								"interval": "auto"
+							},
+							"type": "date_histogram"
+						}
+					],
+					"datasource": {
+						"type": "elasticsearch",
+						"uid": "huatuo-bamai-es"
+					},
+					"hide": false,
+					"metrics": [
+						{
+							"id": "1",
+							"type": "count"
+						}
+					],
+					"query": "region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene} AND tracer_id.keyword:${task_id:lucene}",
+					"refId": "A",
+					"timeField": "uploaded_timestamp"
+				}
+			],
+			"title": "Profiling windows (before label filtering)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": {
+				"type": "grafana-pyroscope-datasource",
+				"uid": "huatuo-apiserver-pyroscope"
+			},
+			"fieldConfig": {
+				"defaults": {},
+				"overrides": []
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 7,
+				"w": 24,
+				"h": 18
+			},
+			"id": 1,
+			"options": {},
+			"pluginVersion": "12.0.3",
+			"targets": [
+				{
+					"datasource": {
+						"type": "grafana-pyroscope-datasource",
+						"uid": "huatuo-apiserver-pyroscope"
+					},
+					"groupBy": [],
+					"labelSelector": "{region=${region:doublequote},hostname=${hostname:doublequote},scope=\"${scope:text}\",container_id=\"$container_id\",id=\"$task_id\"${sample_filters:raw}}",
+					"profileTypeId": "$type",
+					"queryType": "profile",
+					"refId": "A",
+					"spanSelector": []
+				}
+			],
+			"title": "${scope:text} · $hostname · $task_id",
+			"type": "flamegraph"
+		}
+	],
+	"preload": false,
+	"schemaVersion": 41,
+	"tags": [
+		"profiling"
+	],
+	"templating": {
+		"list": [
+			{
+				"name": "region",
+				"label": "Region",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"region.keyword\",\n  \"query\": \"_exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"region.keyword\",\n  \"query\": \"_exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false
+			},
+			{
+				"name": "hostname",
+				"label": "Node",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND _exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND _exists_:profile_data.profile_type\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false
+			},
+			{
+				"name": "scope",
+				"label": "Scope",
+				"type": "custom",
+				"query": "host : NOT _exists_:container_id,container : _exists_:container_id",
+				"current": {
+					"text": "host",
+					"value": "NOT _exists_:container_id"
+				},
+				"options": [
+					{
+						"text": "host",
+						"value": "NOT _exists_:container_id",
+						"selected": true
+					},
+					{
+						"text": "container",
+						"value": "_exists_:container_id",
+						"selected": false
+					}
+				],
+				"multi": false,
+				"includeAll": false
+			},
+			{
+				"name": "container_id",
+				"label": "Container ID",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw})\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw})\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false,
+				"includeAll": true,
+				"allValue": "*",
+				"current": {
+					"text": "All",
+					"value": "$__all"
+				}
+			},
+			{
+				"name": "type",
+				"label": "Profile type",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"profile_data.profile_type.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id))\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"profile_data.profile_type.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id))\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false
+			},
+			{
+				"name": "task_id",
+				"label": "Task ID",
+				"type": "query",
+				"datasource": {
+					"type": "elasticsearch",
+					"uid": "huatuo-bamai-es"
+				},
+				"query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene}\",\n  \"size\": 5000\n}",
+				"definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_id.keyword\",\n  \"query\": \"region.keyword:${region:lucene} AND hostname.keyword:${hostname:lucene} AND (${scope:raw}) AND (container_id.keyword:${container_id:lucene} OR (*:* AND NOT _exists_:container_id)) AND profile_data.profile_type.keyword:${type:lucene}\",\n  \"size\": 5000\n}",
+				"refresh": 2,
+				"options": [],
+				"allowCustomValue": false,
+				"multi": false,
+				"description": "Select one task. Changing Region, node, scope or profile type refreshes available tasks."
+			},
+			{
+				"name": "sample_filters",
+				"label": "Sample filters",
+				"type": "textbox",
+				"hide": 2,
+				"query": "",
+				"current": {
+					"text": "",
+					"value": ""
+				},
+				"skipUrlSync": false
+			}
+		]
+	},
+	"time": {
+		"from": "now-15m",
+		"to": "now"
+	},
+	"timepicker": {},
+	"timezone": "browser",
+	"title": "Continuous Profiling",
+	"uid": "continuous-profiling",
+	"description": "Host and container profiling by Region, node and task. Node is the Agent hostname; container IDs identify workloads.",
+	"version": 1,
+	"refresh": "10s"
+}

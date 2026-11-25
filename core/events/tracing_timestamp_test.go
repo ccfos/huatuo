@@ -24,6 +24,7 @@ import (
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -38,7 +39,10 @@ func TestToolEventsPersistSeparateObservationTimes(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := tracing.EnableDocumentWriter(store, document.New("test")); err != nil {
+	if err := tracing.EnableDocumentWriter(store, document.New(&observation.Metadata{
+		Region:   "test",
+		Hostname: "test-node",
+	})); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(tracing.DisableDocumentWriter)

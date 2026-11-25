@@ -95,7 +95,9 @@ func (c *tcpMemory) Update() ([]*metric.Data, error) {
 
 	usagePercent := float64(0)
 	if stats.memoryLimit > 0 {
-		usagePercent = stats.memoryPages / stats.memoryLimit
+		// The metric is published in percent, so keep alert thresholds such as
+		// usage_percent > 80 meaningful.
+		usagePercent = stats.memoryPages / stats.memoryLimit * 100
 	}
 
 	return []*metric.Data{

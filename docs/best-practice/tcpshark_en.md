@@ -51,11 +51,14 @@ tcpshark --mode retransmit [flags]
 | `--device-excluded <names>` | None | Device denylist, mutually exclusive with `--device`; requires `--with-dropwatch`. |
 | `--duration <n>` | 0 | Exit after N seconds; 0 runs until Ctrl-C. |
 | `--max-events-per-second <n>` | 0 | BPF event rate limit; 0 is unlimited. |
+| `--enable-pprof` | `false` | Expose the tool process's Go runtime profiles on `127.0.0.1:6000`. |
 | `--output <json\|text>` | `text` | Output format; ignored when `--output-storage` is set. |
 | `--output-storage <path>` | None | Send events to huatuo-bamai through a Unix socket. |
 | `--task-id <id>` | None | Task ID for the toolstream session; must be used with `--output-storage`. |
 
 If both `--output` and `--output-storage` are explicitly set, `--output` is ignored and a warning is printed.
+
+pprof is disabled by default. Passing `--enable-pprof` enables it on `127.0.0.1:6000`; an occupied port fails startup. It profiles this tool process, not huatuo-bamai or the traced target.
 
 ### Common Commands
 

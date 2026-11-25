@@ -25,6 +25,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 func newTestCollectorManager() *CollectorManager {
@@ -35,13 +37,13 @@ func newTestCollectorManager() *CollectorManager {
 		scrapeDurationDesc: prometheus.NewDesc(
 			prometheus.BuildFQName(DefaultNamespace, "scrape", "collector_duration_seconds"),
 			"duration",
-			[]string{LabelHost, LabelRegion, "collector"},
+			[]string{observation.FieldHostname, observation.FieldRegion, "collector"},
 			nil,
 		),
 		scrapeSuccessDesc: prometheus.NewDesc(
 			prometheus.BuildFQName(DefaultNamespace, "scrape", "collector_success"),
 			"success",
-			[]string{LabelHost, LabelRegion, "collector"},
+			[]string{observation.FieldHostname, observation.FieldRegion, "collector"},
 			nil,
 		),
 	}

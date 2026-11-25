@@ -17,6 +17,7 @@ package java
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,10 +34,10 @@ func TestCollapsedFileCollectorConsumesEachFileOnce(t *testing.T) {
 		t.Fatalf("write collapsed output: %v", err)
 	}
 
-	samples, collector := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
+	samples, collector, enqueue := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
 		1234: filepath.Join(dir, "profile-*.collapsed"),
 	})
-	if err := collector.scanOutputFiles(false); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), false, enqueue); err != nil {
 		t.Fatalf("first scan: %v", err)
 	}
 
@@ -44,7 +45,7 @@ func TestCollapsedFileCollectorConsumesEachFileOnce(t *testing.T) {
 		t.Fatalf("first observation enqueued samples=%d", len(*samples))
 	}
 
-	if err := collector.scanOutputFiles(false); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), false, enqueue); err != nil {
 		t.Fatalf("stable scan: %v", err)
 	}
 
@@ -56,7 +57,7 @@ func TestCollapsedFileCollectorConsumesEachFileOnce(t *testing.T) {
 		t.Fatalf("consumed output stat error=%v, want not exist", err)
 	}
 
-	if err := collector.scanOutputFiles(false); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), false, enqueue); err != nil {
 		t.Fatalf("scan removed output: %v", err)
 	}
 
@@ -84,10 +85,10 @@ func TestCollapsedFileCollectorRetriesRemovalWithoutDuplicateSample(t *testing.T
 		}
 	})
 
-	samples, collector := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
+	samples, collector, enqueue := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
 		1234: filepath.Join(dir, "profile-*.collapsed"),
 	})
-	if err := collector.scanOutputFiles(true); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), true, enqueue); err != nil {
 		t.Fatalf("scan output with removal failure: %v", err)
 	}
 
@@ -95,7 +96,7 @@ func TestCollapsedFileCollectorRetriesRemovalWithoutDuplicateSample(t *testing.T
 		t.Fatalf("enqueued samples=%d, want 1", len(*samples))
 	}
 
-	if err := collector.scanOutputFiles(true); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), true, enqueue); err != nil {
 		t.Fatalf("rescan retained output: %v", err)
 	}
 
@@ -111,7 +112,7 @@ func TestCollapsedFileCollectorRetriesRemovalWithoutDuplicateSample(t *testing.T
 		t.Fatalf("replace collapsed output: %v", err)
 	}
 
-	if err := collector.scanOutputFiles(true); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), true, enqueue); err != nil {
 		t.Fatalf("scan replacement output: %v", err)
 	}
 
@@ -141,11 +142,11 @@ func TestCollapsedFileCollectorReadsFinalSequenceWithLoopFiles(t *testing.T) {
 		}
 	}
 
-	samples, collector := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
+	samples, collector, enqueue := newTestCollapsedFileCollector(t, []int{1234}, map[int]string{
 		1234: filepath.Join(dir, "profile-*.collapsed"),
 	})
 
-	if err := collector.scanOutputFiles(true); err != nil {
+	if err := collector.scanOutputFiles(t.Context(), true, enqueue); err != nil {
 		t.Fatalf("scan output files: %v", err)
 	}
 
@@ -227,7 +228,7 @@ func newTestCollapsedFileCollector(
 	t *testing.T,
 	pids []int,
 	pidsToFilePath map[int]string,
-) (*[]profile.SampleOutput, *collapsedFileCollector) {
+) (*[]profile.SampleOutput, *CollapsedFileCollector, func(profile.SampleOutput) error) {
 	t.Helper()
 	if pidsToFilePath == nil {
 		pidsToFilePath = make(map[int]string, len(pids))
@@ -236,60 +237,83 @@ func newTestCollapsedFileCollector(
 		}
 	}
 
-	samples := &[]profile.SampleOutput{}
-	collector := newCollapsedFileCollector(
-		pids,
-		pidsToFilePath,
-		func(sample profile.SampleOutput) error { *samples = append(*samples, sample); return nil },
-	)
+	var samples []profile.SampleOutput
+	enqueue := func(sample profile.SampleOutput) error {
+		samples = append(samples, sample)
+		return nil
+	}
 
-	return samples, collector
+	return &samples, NewCollapsedFileCollector(pids, pidsToFilePath), enqueue
 }
 
-func TestReadAsprofDataLoopStopContract(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		cause       error
-		wantSamples int
-	}{
-		{
-			name:        "duration",
-			cause:       profile.ErrCollectionDurationElapsed,
-			wantSamples: 1,
-		},
-		{
-			name:        "requested",
-			cause:       profile.ErrStopRequested,
-			wantSamples: 1,
-		},
-		{
-			name:  "failure",
-			cause: context.Canceled,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestCollapsedFileCollectorFinalization(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "profile-0.collapsed")
 			if err := os.WriteFile(path, []byte("root;leaf 7\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithCancelCause(t.Context())
-			cancel(tc.cause)
 			count := 0
-			err := ReadAsprofDataLoop(ctx, &AsprofSamplingOption{
-				Pids:       []int{123},
-				activePIDs: map[int]bool{},
-			}, map[int]string{123: filepath.Join(filepath.Dir(path), "profile-*.collapsed")}, func(profile.SampleOutput) error { count++; return nil })
-			// No active external profiler needs stopping; only the final file is consumed.
-			if tc.wantSamples == 0 {
-				if !errors.Is(err, tc.cause) {
-					t.Fatalf("error=%v", err)
-				}
-			} else if err != nil {
+			enqueue := func(profile.SampleOutput) error { count++; return nil }
+			c := NewCollapsedFileCollector([]int{123}, map[int]string{123: path})
+			collectCtx, stop := context.WithCancel(t.Context())
+			stop()
+			if err := c.ReadDataLoop(collectCtx, enqueue); err != nil {
 				t.Fatal(err)
 			}
-			if count != tc.wantSamples {
-				t.Fatalf("samples=%d want=%d", count, tc.wantSamples)
+
+			if count != 0 {
+				t.Fatal("final file consumed during stopped read loop")
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if canceled {
+				cancel()
+			}
+
+			err := c.Finalize(ctx, &AsprofSamplingOption{Pids: []int{123}}, enqueue)
+			if canceled {
+				if !errors.Is(err, context.Canceled) || count != 0 {
+					t.Fatalf("error=%v samples=%d", err, count)
+				}
+			} else if err != nil || count != 1 {
+				t.Fatalf("error=%v samples=%d", err, count)
 			}
 		})
+	}
+}
+
+func TestCollapsedFileCollectorOwnsTargets(t *testing.T) {
+	original := filepath.Join(t.TempDir(), "profile-0.collapsed")
+	replacement := filepath.Join(t.TempDir(), "profile-1.collapsed")
+	if err := os.WriteFile(original, []byte("original 7\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(replacement, []byte("replacement 9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pids := []int{123}
+	paths := map[int]string{123: original}
+	c := NewCollapsedFileCollector(pids, paths)
+	pids[0] = 456
+	paths[123] = replacement
+	var samples []profile.SampleOutput
+	err := c.Finalize(t.Context(), &AsprofSamplingOption{}, func(sample profile.SampleOutput) error {
+		samples = append(samples, sample)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(samples) != 1 || samples[0].PID != 123 || samples[0].Output != "original 7\n" {
+		t.Fatalf("final samples=%+v, want original target PID 123", samples)
+	}
+
+	if _, err := os.Stat(replacement); err != nil {
+		t.Fatalf("caller-owned replacement was consumed: %v", err)
 	}
 }

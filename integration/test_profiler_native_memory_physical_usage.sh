@@ -17,14 +17,21 @@
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
+
+require_native_pid_profiling
 
 bpf_tool_setup profiler native_physical_usage profiler-physical-usage
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_physical_usage.user.c"
-readonly PROFILER_DURATION=6
+readonly PROFILER_DURATION=15
 readonly PROFILER_AGGR_INTERVAL=2
 readonly PROFILER_READY_TIMEOUT=15
 readonly PROFILER_READY_INTERVAL=1
 readonly PHYSICAL_MARKER_SYMBOL="test_physical_usage_touch_pages"
+readonly PHYSICAL_COMPACTION_SYSCTL=/proc/sys/vm/compact_unevictable_allowed
+
+require_readable "${PHYSICAL_COMPACTION_SYSCTL}"
+require_writable "${PHYSICAL_COMPACTION_SYSCTL}"
 
 if kprobe_available folio_add_new_anon_rmap && kprobe_available folio_remove_rmap_ptes; then
 	log_info "using folio rmap kprobes"
@@ -40,12 +47,31 @@ WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/physical_usage_workload"
 TARGET_PID=""
 PROFILER_PID=""
+physical_compaction_original=""
 
 cleanup() {
+	local status=$?
+	trap - EXIT
+	trap '' INT TERM
+	# Restore host state before child waits can exhaust the runner's grace period.
+	if [[ -n ${physical_compaction_original} ]]; then
+		if ! printf '%s\n' "${physical_compaction_original}" > "${PHYSICAL_COMPACTION_SYSCTL}" \
+			|| ! assert_eq "$(< "${PHYSICAL_COMPACTION_SYSCTL}")" "${physical_compaction_original}" "restored unevictable compaction"; then
+			log_error "failed to restore ${PHYSICAL_COMPACTION_SYSCTL} to ${physical_compaction_original}"
+			status=1
+		fi
+	fi
 	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5 || true
 	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
+	exit "${status}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+fixture_or_profiler_exited() {
+	process_exited "$TARGET_PID" || process_exited "$PROFILER_PID"
+}
 
 run_profile_case() {
 	local mode=$1 out_dir=$2
@@ -60,7 +86,7 @@ run_profile_case() {
 	kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately for mode=${mode}"
 
 	log_info "running profiler mode=${mode} pid=${TARGET_PID}"
-	("${TOOL_BIN}" \
+	"${TOOL_BIN}" \
 		--type memory \
 		--language c \
 		--memory-mode "${mode}" \
@@ -71,7 +97,7 @@ run_profile_case() {
 		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
 		--physical-memory-probability 100 \
 		--verbose \
-		> "${profiler_out}" 2> "${profiler_err}") &
+		> "${profiler_out}" 2> "${profiler_err}" &
 	PROFILER_PID=$!
 	kill -0 "${PROFILER_PID}" 2> /dev/null || fatal "failed to launch profiler mode=${mode}"
 
@@ -80,17 +106,21 @@ run_profile_case() {
 
 	kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture mode=${mode}"
 
-	if ! wait "${PROFILER_PID}"; then
-		PROFILER_PID=""
-		fatal "profiler exited non-zero mode=${mode}"
+	wait_until "${PROFILER_DURATION}" 0.2 fixture_or_profiler_exited \
+		|| fatal "fixture did not finish for mode=${mode}"
+	if process_exited "${PROFILER_PID}"; then
+		fatal "profiler exited before fixture completion for mode=${mode}"
 	fi
-	PROFILER_PID=""
-
 	if ! wait "${TARGET_PID}"; then
 		TARGET_PID=""
-		fatal "fixture exited non-zero mode=${mode}"
+		fatal "fixture exited non-zero for mode=${mode}"
 	fi
 	TARGET_PID=""
+
+	# End collection after the fixture has released its pages.
+	assert_process_shutdown_by_pid "${PROFILER_PID}" 35 INT \
+		|| fatal "profiler shutdown failed for mode=${mode}, see ${profiler_err}"
+	PROFILER_PID=""
 }
 
 folded_line_count() {
@@ -120,6 +150,15 @@ folded_value_sum() {
 
 compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
+# The runner schedules this test exclusively because the sysctl is host-wide.
+physical_compaction_original=$(< "${PHYSICAL_COMPACTION_SYSCTL}")
+[[ ${physical_compaction_original} == 0 || ${physical_compaction_original} == 1 ]] \
+	|| fatal "unexpected ${PHYSICAL_COMPACTION_SYSCTL} value: ${physical_compaction_original}"
+printf '0\n' > "${PHYSICAL_COMPACTION_SYSCTL}" \
+	|| fatal "cannot disable compaction of locked test pages"
+assert_eq "$(< "${PHYSICAL_COMPACTION_SYSCTL}")" 0 "disabled unevictable compaction" \
+	|| fatal "kernel did not disable compaction of locked test pages"
+
 ALLOC_DIR="${WORK_DIR}/physical_alloc"
 run_profile_case physical_alloc "${ALLOC_DIR}"
 ALLOC_CAPTURED_BYTES=$(folded_value_sum "${ALLOC_DIR}" "${PHYSICAL_MARKER_SYMBOL}")
@@ -140,9 +179,16 @@ log_info "physical_alloc captured ${ALLOC_CAPTURED_BYTES} bytes without overcoun
 USAGE_DIR="${WORK_DIR}/physical_usage"
 run_profile_case physical_usage "${USAGE_DIR}"
 assert_usage_zero_result() {
-	local lines file_count
+	local lines file_count file
 	lines=$(folded_line_count "${USAGE_DIR}")
 	file_count=$(find "${USAGE_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f | wc -l)
+	if [[ ${lines} -ne 0 ]]; then
+		while IFS= read -r file; do
+			log_error "physical_usage residual stacks: ${file}"
+			cat "${file}" >&2
+			awk 'NF { total += $NF } END { printf "physical_usage residual_bytes=%.0f\n", total }' "${file}" >&2
+		done < <(find "${USAGE_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
+	fi
 	assert_eq "${lines}" 0 "balanced physical usage folded symbols" \
 		|| fatal "physical_usage balance verification failed"
 	assert_eq "${file_count}" 1 "balanced physical usage output files" \

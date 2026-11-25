@@ -18,8 +18,27 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 )
+
+// Launcher options that consume the next argument as their value. Options
+// whose value names the entry point (-jar, -m/--module) are excluded.
+var javaValueOptions = map[string]struct{}{
+	"-cp":                    {},
+	"-classpath":             {},
+	"--class-path":           {},
+	"-p":                     {},
+	"--module-path":          {},
+	"--upgrade-module-path":  {},
+	"--add-modules":          {},
+	"--limit-modules":        {},
+	"--enable-native-access": {},
+	"--source":               {},
+	"--add-opens":            {},
+	"--add-exports":          {},
+	"--add-reads":            {},
+	"--patch-module":         {},
+}
 
 func javaProcessName(pid int) (string, error) {
 	p, err := process.NewProcess(int32(pid))
@@ -56,7 +75,7 @@ func javaProcessName(pid int) (string, error) {
 			continue
 		}
 
-		if arg == "-cp" || arg == "-classpath" || arg == "--module-path" || arg == "-p" || arg == "--add-opens" {
+		if _, ok := javaValueOptions[arg]; ok {
 			skipNext = true
 			continue
 		}

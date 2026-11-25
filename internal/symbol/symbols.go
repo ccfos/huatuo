@@ -705,14 +705,15 @@ func countXfsMounts() (int, error) {
 	return len(mounts), nil
 }
 
-func matchXfsMount(path string, xfsMounts []string) (string, error) {
+func matchXfsMount(path string, xfsMounts []string) string {
 	for _, mount := range xfsMounts {
 		if path == mount || strings.HasPrefix(path, strings.TrimRight(mount, "/")+"/") {
-			return mount, nil
+			return mount
 		}
 	}
 
-	return "", fmt.Errorf("no xfs mount found for path %q", path)
+	// Paths outside known XFS mounts need no XFS discriminator in the ELF cache key.
+	return ""
 }
 
 func lowerDirFromMountInfo(pid uint32) (string, error) {

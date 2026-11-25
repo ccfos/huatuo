@@ -94,6 +94,8 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 
 	mutex.Lock()
 
+	pruneDeletedContainerOOMCounters(containers)
+
 	metrics = append(metrics, metric.NewCounterData("host_total", outOfMemoryCounterHost, "host oom counter", nil))
 	for _, container := range containers {
 		if val, exists := outOfMemoryCounterContainer[container.ID]; exists {
@@ -108,7 +110,7 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func (c *oomCollector) Start(ctx context.Context) error {
+func (c *oomCollector) Start(ctx context.Context) (retErr error) {
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
@@ -124,7 +126,10 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	for {
 		select {
@@ -224,4 +229,15 @@ func containerCounterUpdate(containerID, comm string) {
 	}
 
 	outOfMemoryCounterContainer[containerID] = &oomMetric{count: 1, latestVictimComm: comm}
+}
+
+// pruneDeletedContainerOOMCounters drops counters for containers that are no longer
+// present in containers, so IDs of exited containers do not accumulate.
+// The caller must hold mutex.
+func pruneDeletedContainerOOMCounters(containers map[string]*pod.Container) {
+	for containerID := range outOfMemoryCounterContainer {
+		if _, exists := containers[containerID]; !exists {
+			delete(outOfMemoryCounterContainer, containerID)
+		}
+	}
 }

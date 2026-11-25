@@ -78,7 +78,7 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *netRecvLatTracing) Start(ctx context.Context) error {
+func (c *netRecvLatTracing) Start(ctx context.Context) (retErr error) {
 	cfg := configSnapshot()
 	rxlatThreshNetif := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
 	rxlatThreshTcpv4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
@@ -129,7 +129,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	// save host netns
 	hostNetNamespaceInum, err := netutil.NetNamespaceInumByPID(1)

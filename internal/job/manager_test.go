@@ -199,7 +199,7 @@ func testJob(id string, status Status, now time.Time) *Job {
 		UserID:   "user-1",
 		Hostname: "node-1",
 		Duration: time.Minute,
-		Scope:    observation.ScopeHost,
+		Scope:    observation.ScopeTypeHost,
 		Spec: Spec{Profiling: &profiling.Spec{
 			Type:     profiling.TypeCPU,
 			Language: profiling.LanguageGo,
@@ -236,7 +236,7 @@ func testCreateRequest() *CreateRequest {
 		UserID:   "user-1",
 		Hostname: "node-1",
 		Duration: time.Minute,
-		Scope:    observation.ScopeHost,
+		Scope:    observation.ScopeTypeHost,
 		Spec: Spec{Profiling: &profiling.Spec{
 			Type:     profiling.TypeCPU,
 			Language: profiling.LanguageGo,

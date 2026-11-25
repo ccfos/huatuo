@@ -113,6 +113,12 @@ func validateLoggingOptions(opts loggingOptions, logSizeSet bool) error {
 }
 
 func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
+	// Native CPU intersects PID and cgroup filters; other providers select one target.
+	if ctx.String("pid") != "" && ctx.String("container-id") != "" &&
+		(typ == profiling.TypeMemory || lang == profiling.LanguageJava || lang == profiling.LanguagePython) {
+		return fmt.Errorf("--pid and --container-id are mutually exclusive")
+	}
+
 	switch lang {
 	case profiling.LanguageGo, profiling.LanguageC, profiling.LanguageCPP:
 		if err := validateSinglePID(ctx, "native"); err != nil {
@@ -230,7 +236,7 @@ func validateCommonOptions(ctx *cli.Context) error {
 	if ctx.String("output-format") == "remote-store" && ctx.String("task-id") == "" {
 		return fmt.Errorf("--task-id must not be empty when --output-format=remote-store")
 	}
-	if err := validateOutputFormat(ctx.String("output-format")); err != nil {
+	if err := validateOutputFormat(ctx.String("output-format"), profiling.Type(ctx.String("type"))); err != nil {
 		return err
 	}
 
@@ -314,9 +320,17 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	return nil
 }
 
-func validateOutputFormat(format string) error {
+func validateOutputFormat(format string, profileType profiling.Type) error {
 	switch format {
-	case "collapsed", "flamegraph", "svg", "json", "remote-store":
+	case "collapsed", "flamegraph", "svg", "json", "speedscope", "remote-store":
+		return nil
+	case "chrometrace":
+		// The trace formatter derives event durations from the sample unit, and
+		// memory profiles carry bytes rather than a time unit.
+		if profileType == profiling.TypeMemory {
+			return fmt.Errorf("--output-format=chrometrace needs a time-based profile and is not supported by --type=memory")
+		}
+
 		return nil
 	default:
 		return fmt.Errorf("unsupported output format %q", format)

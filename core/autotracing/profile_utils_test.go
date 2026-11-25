@@ -33,7 +33,9 @@ import (
 
 func TestRunProfileCommand(t *testing.T) {
 	originalCoreBinDir := internalconfig.CoreBinDir
-	t.Cleanup(func() { internalconfig.CoreBinDir = originalCoreBinDir })
+	t.Cleanup(func() {
+		internalconfig.CoreBinDir = originalCoreBinDir
+	})
 
 	tests := []struct {
 		name             string
@@ -173,7 +175,9 @@ exit 2`,
 
 			var wantArgs []string
 			if tt.tool == cpuToolPerf {
-				wantArgs = []string{"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"), "--duration", "3"}
+				wantArgs = []string{
+					"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "perf.o"), "--duration", "3",
+				}
 				wantFrames := []flamegraph.FrameData{
 					{
 						Level: 0,

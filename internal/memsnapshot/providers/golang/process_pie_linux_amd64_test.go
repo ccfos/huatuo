@@ -1,3 +1,5 @@
+//go:build integration && linux && amd64
+
 // Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");

@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 
 struct trace_entry_ctx {
+	/* Caller-owned identity, such as a thread ID or starting CSS. */
 	u64 id;
 	u64 start_ns;
 	u64 duration_ns;
@@ -16,21 +17,22 @@ struct {
 	__uint(max_entries, 10240);
 } func_trace_map SEC(".maps");
 
-static __always_inline void func_trace_begin(u64 id)
+static __always_inline void func_trace_begin(u64 key, u64 id)
 {
 	struct trace_entry_ctx entry = {
 		.start_ns = bpf_ktime_get_ns(),
 		.id	  = id,
 	};
 
-	bpf_map_update_elem(&func_trace_map, &id, &entry, COMPAT_BPF_ANY);
+	bpf_map_update_elem(&func_trace_map, &key, &entry, COMPAT_BPF_ANY);
 }
 
-static __always_inline struct trace_entry_ctx *func_trace_end(u64 id)
+static __always_inline struct trace_entry_ctx *
+func_trace_end(u64 key)
 {
 	struct trace_entry_ctx *entry;
 
-	entry = bpf_map_lookup_elem(&func_trace_map, &id);
+	entry = bpf_map_lookup_elem(&func_trace_map, &key);
 	if (!entry) {
 		return NULL;
 	}
@@ -39,9 +41,9 @@ static __always_inline struct trace_entry_ctx *func_trace_end(u64 id)
 	return entry;
 }
 
-static __always_inline void func_trace_destroy(u64 id)
+static __always_inline void func_trace_destroy(u64 key)
 {
-	bpf_map_delete_elem(&func_trace_map, &id);
+	bpf_map_delete_elem(&func_trace_map, &key);
 }
 
 #endif

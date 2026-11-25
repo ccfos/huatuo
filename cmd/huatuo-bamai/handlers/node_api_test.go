@@ -69,7 +69,6 @@ func newTestNodeServices(
 	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
 		ProfilerPath:            profilerPath,
 		ToolstreamSocketPath:    socketPath,
-		NodeAPIAddress:          "http://127.0.0.1",
 		AggregationInterval:     time.Second,
 		MaxConcurrentProcesses:  1,
 		CommandOutputLimitBytes: 1024,

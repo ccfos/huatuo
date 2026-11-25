@@ -74,7 +74,7 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
   使用 Docker Compose 一键启动 Elasticsearch、Prometheus、Grafana 和 huatuo 全栈服务：
     ```bash
-    $ docker compose --project-directory ./build/docker up
+    $ make compose-dev-up
     ```
   服务启动后，通过浏览器访问 http://localhost:3000 即可查看监控大盘。
 
@@ -86,10 +86,55 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
     </small>
     </div>
 
+    ![](/docs/img/quickstart-continuous-profiling.png)
+
     ![](/docs/img/quickstart-autotracing-event.png)
 
 - **注意**
   请勿将 latest 标签的镜像部署至生产环境，此为开发测试分支。请使用正式发版的镜像或二进制文件。
+
+## 内核版本
+
+支持 4.18 及之后的所有内核版本。以下为主要测试过的内核与操作系统发行版。
+
+| HUATUO | Kernel | OS |
+| :--- | :--- | :--- |
+| 1.0.0 | 4.18.x | CentOS 8.x |
+| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
+| 1.0.0 | 5.4.x | OpenCloudOS V8 |
+| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
+| 1.0.0 | 5.10.x | Anolis OS 8.10 |
+| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
+| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
+| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
+| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
+| 1.0.0 | 6.6.x | Anolis OS 23.3 |
+| 1.0.0 | 6.6.x | OpenCloudOS V9 |
+| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
+| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
+| 2.4.0 | 6.12.x | Debian 13 (trixie) |
+| 1.0.0 | 6.14.x | Fedora 42 |
+| 2.4.0 | 6.19.x | Fedora Linux 44 |
+| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
+
+
+## 社区维护者
+
+| 姓名 | 社区角色 | 技术方向 |
+| :--- | :--- | :--- |
+| [Tonghao Zhang](https://x.com/hao_0022) | 维护者 | Linux 内核开发者，eBPF、网络、OVS 和 DPDK 贡献者。 |
+| [Jason Xing](https://www.linkedin.com/in/jasonxing/) | TOC 成员 | Linux 内核 Netdev 审阅者、Netdev Conf 程序委员会成员、LPC Observability 微型会议组织者、IETF TCP RST Diagnostic Payload 发起人。 |
+| [Lance Yang](https://github.com/ioworker0) | TOC 成员 | Linux 内核开发者、THP 与 RMAP 审阅者、hung task detector 维护者。 |
+| [Leon Hwang](https://github.com/Asphaltt) | TOC 成员 | Linux 内核开发者、eBPF 子系统贡献者、bpfsnoop 作者。 |
+| [Menglong Dong](https://www.linkedin.com/in/menglong-dong) | TOC 成员 | Linux 内核开发者、eBPF 与网络子系统贡献者、nettrace 作者。 |
+| [Nan Li](https://github.com/lanenson) | 维护者 | Linux 内核开发者、RAID 子系统审阅者。 |
+
+## 社区共建
+- ❇️ 真诚欢迎每一位用户、开发者、公司以及组织，使用华佗监控、积极反馈 Bug、提交功能需求、分享最佳实践，共建专业、活跃的华佗开源社区。
+- ❤️ 贡献者
+<a href="https://github.com/ccfos/huatuo/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
+</a>
 
 ## Go 客户端
 
@@ -121,41 +166,9 @@ func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
 }
 ```
 
-## 内核版本
-
-支持 4.18 及之后的所有内核版本。以下为主要测试过的内核与操作系统发行版。
-
-| HUATUO | Kernel | OS |
-| :--- | :--- | :--- |
-| 1.0.0 | 4.18.x | CentOS 8.x |
-| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
-| 1.0.0 | 5.4.x | OpenCloudOS V8 |
-| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
-| 1.0.0 | 5.10.x | Anolis OS 8.10 |
-| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
-| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
-| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
-| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
-| 1.0.0 | 6.6.x | Anolis OS 23.3 |
-| 1.0.0 | 6.6.x | OpenCloudOS V9 |
-| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
-| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
-| 2.4.0 | 6.12.x | Debian 13 (trixie) |
-| 1.0.0 | 6.14.x | Fedora 42 |
-| 2.4.0 | 6.19.x | Fedora Linux 44 |
-| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
-
-
 ## 文档
 
 完整文档请访问: [https://docs.huatuo.tech/](https://docs.huatuo.tech/)
-
-## 社区共建
-- ❇️ 真诚欢迎每一位用户、开发者、公司以及组织，使用华佗监控、积极反馈 Bug、提交功能需求、分享最佳实践，共建专业、活跃的华佗开源社区。
-- ❤️ 贡献者
-<a href="https://github.com/ccfos/huatuo/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
-</a>
 
 ## 联系我们
 - 微信群（备注姓名+单位）和公众号：

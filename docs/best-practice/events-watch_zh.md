@@ -64,8 +64,11 @@ Content-Type: application/json
   "filters": {
     "tracer_name": "<regex>",
     "hostname": "<regex>",
+    "container_id": "<regex>",
+    "container_type": "<regex>",
+    "container_name": "<regex>",
     "container_hostname": "<regex>",
-    "container_host_namespace": "<regex>",
+    "container_namespace": "<regex>",
     "container_qos": "<regex>",
     "region": "<regex>"
   }
@@ -78,12 +81,16 @@ Content-Type: application/json
 |----------------------------|------|--------|----------------------------------------------|
 | `tracer_name`              | string | 否     | 按采集器名称过滤，支持正则表达式               |
 | `hostname`                 | string | 否     | 按节点主机名过滤，支持正则表达式               |
+| `container_id`             | string | 否     | 按完整容器运行时 ID 过滤，支持正则表达式 |
+| `container_type`           | string | 否     | 按容器分类过滤，例如 `normal`、`sidecar`、`daemonSet`，支持正则表达式 |
+| `container_name`           | string | 否     | 按容器名称过滤，支持正则表达式 |
 | `container_hostname`       | string | 否     | 按容器主机名过滤，支持正则表达式               |
-| `container_host_namespace` | string | 否     | 按容器命名空间过滤，支持正则表达式             |
+| `container_namespace` | string | 否     | 按容器命名空间过滤，支持正则表达式             |
 | `container_qos`            | string | 否     | 按容器 QoS 过滤，支持正则表达式                |
 | `region`                   | string | 否     | 按地域过滤，支持正则表达式                     |
 
 - 所有过滤字段均为可选；省略或留空表示匹配所有值。
+- 正则表达式默认可以匹配字段值的子串；精确匹配请加上 `^` 和 `$`。例如，按运行实例和分类订阅可使用 `"container_id": "^<full-container-id>$"`、`"container_type": "^normal$"`，其中 `<full-container-id>` 替换为完整容器 ID。
 - 多个字段同时指定时，所有条件须**同时满足**（AND 语义）。
 - 过滤器在服务端生效，仅匹配的事件才会推送到客户端。
 
@@ -155,7 +162,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
   -H "Connection: keep-alive" \
   -d '{
     "filters": {
-      "container_host_namespace": "^prod$"
+      "container_namespace": "^prod$"
     }
   }'
 ```
@@ -197,10 +204,11 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
     "tracer_name": "memory_oom_kill",
     "tracer_id": "abc123",
     "tracer_run_type": "auto",
-    "container_id": "d3f1a2b4c5e6",
+    "container_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "container_name": "app",
     "container_hostname": "app-pod",
-    "container_host_namespace": "prod",
-    "container_type": "docker",
+    "container_namespace": "prod",
+    "container_type": "normal",
     "container_qos": "guaranteed"
   }
 }
@@ -218,9 +226,10 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 | `tracer_id`                | string | 事件实例唯一 ID                             |
 | `tracer_run_type`          | string | 采集模式，`auto`（自动触发）或 `manual`     |
 | `container_id`             | string | 容器 ID（容器级事件时存在）                 |
+| `container_name`           | string | 容器名称 |
 | `container_hostname`       | string | 容器主机名                                  |
-| `container_host_namespace` | string | 容器所在命名空间                            |
-| `container_type`           | string | 容器运行时类型（docker / containerd 等）    |
+| `container_namespace` | string | 容器所在命名空间                            |
+| `container_type`           | string | 容器分类，例如 `normal`、`sidecar`、`daemonSet`    |
 | `container_qos`            | string | 容器 QoS 等级                              |
 
 ## 事件类型
@@ -242,6 +251,7 @@ curl -s -N -X POST http://<node-ip>:19704/v1/events/watch \
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
 | `dload`                  | 系统负载异常（AutoTracing 自动触发）           |
 | `iotracing`              | I/O 延迟异常（AutoTracing 自动触发）           |
+| `blk_device_health`      | Block、NVMe、SCSI 和 MD 健康事件               |
 | `memburst`               | 内存突增异常（AutoTracing 自动触发）           |
 
 ## Go 客户端

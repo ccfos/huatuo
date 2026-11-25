@@ -16,6 +16,7 @@ package memsnapshot
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -97,6 +98,7 @@ func ReadProcMapsContext(ctx context.Context, path string,
 	limited := &io.LimitedReader{R: file, N: maxProcMapsBytes + 1}
 	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 4096), maxProcMapsLine)
+	scanner.Split(scanProcMapsLines)
 	var result []ProcMap
 	for lineNumber := 0; scanner.Scan(); lineNumber++ {
 		if lineNumber&127 == 0 {
@@ -105,8 +107,18 @@ func ReadProcMapsContext(ctx context.Context, path string,
 			}
 		}
 		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
+		// Split only the metadata; whitespace inside the pathname is significant.
+		var fields [5]string
+		for i := range fields {
+			line = strings.TrimLeft(line, " \t")
+			end := strings.IndexAny(line, " \t")
+			if end < 0 {
+				fields[i], line = line, ""
+			} else {
+				fields[i], line = line[:end], line[end:]
+			}
+		}
+		if fields[4] == "" {
 			continue
 		}
 		device := strings.SplitN(fields[3], ":", 2)
@@ -127,10 +139,7 @@ func ReadProcMapsContext(ctx context.Context, path string,
 			offsetErr != nil || inodeErr != nil || majorErr != nil || minorErr != nil {
 			continue
 		}
-		mappedPath := ""
-		if len(fields) > 5 {
-			mappedPath = strings.Join(fields[5:], " ")
-		}
+		mappedPath := strings.TrimLeft(line, " \t")
 		result = append(result, ProcMap{
 			Start: start, End: end, Offset: offset, Inode: inode,
 			DevMajor: uint32(major), DevMinor: uint32(minor),
@@ -151,4 +160,16 @@ func ReadProcMapsContext(ctx context.Context, path string,
 		return nil, err
 	}
 	return result, nil
+}
+
+// A carriage return can be part of a pathname; procfs terminates lines with LF.
+func scanProcMapsLines(data []byte, atEOF bool) (int, []byte, error) {
+	if end := bytes.IndexByte(data, '\n'); end >= 0 {
+		return end + 1, data[:end], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+
+	return 0, nil, nil
 }

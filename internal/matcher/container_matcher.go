@@ -16,12 +16,7 @@ package matcher
 
 import (
 	"github.com/ccfos/huatuo/internal/pod"
-)
-
-const (
-	FieldTypeContainerHostNamespace = "container_host_namespace"
-	FieldTypeContainerHostname      = "container_hostname"
-	FieldTypeContainerQos           = "container_qos"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 // ContainerMatcher filters *pod.Container instances using pre-compiled FieldMatcher
@@ -76,11 +71,11 @@ func rulesAsContainerSpecs(rules []*Rule) []FieldSpec[*pod.Container] {
 
 func containerFieldExtractor(field string) func(*pod.Container) string {
 	switch field {
-	case FieldTypeContainerHostNamespace:
-		return func(c *pod.Container) string { return c.LabelHostNamespace() }
-	case FieldTypeContainerHostname:
+	case observation.FieldContainerNamespace:
+		return func(c *pod.Container) string { return c.LabelNamespace() }
+	case observation.FieldContainerHostname:
 		return func(c *pod.Container) string { return c.Hostname }
-	case FieldTypeContainerQos:
+	case observation.FieldContainerQoS:
 		return func(c *pod.Container) string { return c.Qos.String() }
 	default:
 		return func(*pod.Container) string { return "" }

@@ -59,46 +59,42 @@ type dictEntry struct {
 	value uint64
 }
 
-func (c *scanner) typeDictStrings(address uint64) (string, string) {
+func (c *scanner) typeDictModule(address uint64) string {
 	if !plausiblePtr(address) {
-		return "", ""
+		return ""
 	}
 	raw, err := c.memory.read(address, 48)
 	if err != nil {
-		return "", ""
+		return ""
 	}
 	keys := c.image.order.Uint64(raw[32:40])
 	values := c.image.order.Uint64(raw[40:48])
 	entries, err := c.dictEntries(keys)
 	if err != nil || len(entries) == 0 || len(entries) > maxInstanceFields {
-		return "", ""
+		return ""
 	}
 	var valueRaw []byte
 	if values != 0 {
 		valueRaw, err = c.memory.read(values, len(entries)*8)
 		if err != nil {
-			return "", ""
+			return ""
 		}
 	}
-	var moduleAddress, qualnameAddress uint64
 	for index, entry := range entries {
+		if entry.name != "__module__" {
+			continue
+		}
 		value := entry.value
 		if values != 0 {
 			value = c.image.order.Uint64(valueRaw[index*8 : index*8+8])
 		}
 		if !plausiblePtr(value) {
-			continue
+			return ""
 		}
-		switch entry.name {
-		case "__module__":
-			moduleAddress = value
-		case "__qualname__":
-			qualnameAddress = value
-		}
+		module, _ := c.readASCIIUnicode(value, 256)
+		return module
 	}
-	module, _ := c.readASCIIUnicode(moduleAddress, 256)
-	qualname, _ := c.readASCIIUnicode(qualnameAddress, 256)
-	return module, qualname
+	return ""
 }
 
 func (c *scanner) dictEntries(address uint64) ([]dictEntry,
@@ -282,9 +278,15 @@ func (c *scanner) cacheInvalidType(address uint64) {
 }
 
 func (c *scanner) heapTypeName(typeInfo typeInfo) string {
-	module, qualname := c.typeDictStrings(typeInfo.dict)
+	module := c.typeDictModule(typeInfo.dict)
 	if module == "" {
 		return typeInfo.name
+	}
+	// CPython stores __qualname__ in PyHeapTypeObject, not tp_dict.
+	offset := c.image.layout.typeQualnameOffset + c.image.layout.typeNameOffset - pyTypeNameOffset
+	var qualname string
+	if raw, err := c.memory.read(typeInfo.address+offset, 8); err == nil {
+		qualname, _ = c.readASCIIUnicode(c.image.order.Uint64(raw), 256)
 	}
 	if qualname == "" {
 		qualname = strings.TrimPrefix(typeInfo.name, module+".")

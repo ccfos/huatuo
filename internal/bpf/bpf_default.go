@@ -125,10 +125,19 @@ func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (B
 }
 
 func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
-	// RewriteConstants
-	if consts != nil {
-		if err := specs.RewriteConstants(consts); err != nil {
-			return nil, fmt.Errorf("rewrite constants: %w", err)
+	for name, value := range consts {
+		variable, ok := specs.Variables[name]
+		if !ok {
+			return nil, fmt.Errorf("rewrite constant %q: %w", name, ErrVariableNotFound)
+		}
+
+		dataMap, hasDataMap := specs.Maps[variable.SectionName]
+		if !variable.Constant() || !hasDataMap || dataMap.Flags&unix.BPF_F_RDONLY_PROG == 0 {
+			return nil, fmt.Errorf("rewrite constant %q: variable is not read-only", name)
+		}
+
+		if err := variable.Set(value); err != nil {
+			return nil, fmt.Errorf("rewrite constant %q: %w", name, err)
 		}
 	}
 
@@ -296,8 +305,9 @@ func (b *defaultBPF) Info() (*Info, error) {
 	// maps
 	for id, m := range b.mapsByID {
 		info.MapsInfo = append(info.MapsInfo, MapInfo{
-			ID:   id,
-			Name: m.name,
+			ID:        id,
+			Name:      m.name,
+			ValueSize: m.handle.ValueSize(),
 		})
 	}
 
@@ -326,14 +336,8 @@ func (b *defaultBPF) Close() error {
 
 	var closeErrs []error
 
-	for _, p := range b.programsByID {
-		for linkKey, l := range p.links {
-			if l != nil {
-				if err := l.Close(); err != nil {
-					closeErrs = append(closeErrs, fmt.Errorf("close link %s in program %s: %w", linkKey, p.name, err))
-				}
-			}
-		}
+	if err := b.detach(); err != nil {
+		closeErrs = append(closeErrs, err)
 	}
 
 	for _, p := range b.programsByID {
@@ -350,13 +354,6 @@ func (b *defaultBPF) Close() error {
 				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
 			}
 		}
-	}
-
-	if b.perfEvent != nil {
-		if err := b.perfEvent.detach(); err != nil {
-			closeErrs = append(closeErrs, fmt.Errorf("detach perf event: %w", err))
-		}
-		b.perfEvent = nil
 	}
 
 	return errors.Join(closeErrs...)
@@ -413,6 +410,64 @@ func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPU
 	log.WithField("map_name", mapName).
 		WithField("per_cpu_buffer_size", perCPUBufSize).
 		Debug("created BPF event pipe")
+	return reader, nil
+}
+
+// RawEventPipe gets an optioned event-pipe for variable-size raw records.
+func (b *defaultBPF) RawEventPipe(
+	ctx context.Context,
+	mapID uint32,
+	opts PerfEventReaderOptions,
+) (PerfEventRawReader, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := newPerfEventRawReader(ctx, m, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("map_id", mapID).
+		WithField("requested_per_cpu_buffer_bytes", opts.PerCPUBufferBytes).
+		WithField("effective_per_cpu_buffer_bytes", reader.PerCPUBufferSize()).
+		WithField("watermark_bytes", opts.WatermarkBytes).
+		Debug("created raw BPF event pipe")
+	return reader, nil
+}
+
+// RawEventPipeByName gets an optioned raw event-pipe by map name.
+func (b *defaultBPF) RawEventPipeByName(
+	ctx context.Context,
+	mapName string,
+	opts PerfEventReaderOptions,
+) (PerfEventRawReader, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	m, err := b.mapByName(mapName)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := newPerfEventRawReader(ctx, m, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("map_name", mapName).
+		WithField("requested_per_cpu_buffer_bytes", opts.PerCPUBufferBytes).
+		WithField("effective_per_cpu_buffer_bytes", reader.PerCPUBufferSize()).
+		WithField("watermark_bytes", opts.WatermarkBytes).
+		Debug("created raw BPF event pipe")
 	return reader, nil
 }
 
@@ -607,9 +662,4 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 	}
 
 	return items, nil
-}
-
-// DetachOnContextDone is a hook for context-driven detach handling.
-func (b *defaultBPF) DetachOnContextDone(ctx context.Context, cancel context.CancelFunc) {
-	// TODO: implement
 }

@@ -14,6 +14,11 @@
 
 // Package localfile implements a storage backend that appends records to local
 // files with rotation support.
+//
+// Writers are opened lazily, one per tracer name, and shared by every
+// concurrent Save for that name. The backend is a process-wide singleton
+// reached from one goroutine per toolstream connection, so all writer
+// bookkeeping is guarded by a single lock.
 package localfile
 
 import (
@@ -32,9 +37,13 @@ import (
 
 // Storage appends records to local files. It is bound to one collection by Init.
 type Storage struct {
-	lock         sync.Mutex
-	files        map[string]io.Writer
-	writerCache  sync.Map
+	// mu guards writers. Every access to writers must happen while holding mu:
+	// Save runs on one goroutine per toolstream connection, and an
+	// unsynchronized map read that races with a map write makes the Go runtime
+	// abort the whole agent process with "concurrent map read and map write".
+	mu      sync.RWMutex
+	writers map[string]io.Writer
+
 	path         string
 	rotationSize int
 	maxRotation  int
@@ -56,7 +65,7 @@ func NewBackend(path string, rotationSize, maxRotation int) *Storage {
 		path:         path,
 		rotationSize: rotationSize,
 		maxRotation:  maxRotation,
-		files:        make(map[string]io.Writer),
+		writers:      make(map[string]io.Writer),
 	}
 }
 
@@ -120,30 +129,28 @@ func (b *Storage) Close(_ context.Context) error {
 	return nil
 }
 
-func (b *Storage) newFileWriter(filename string) io.Writer {
-	fp := path.Join(b.path, filename)
-
-	fileWriter, ok := b.writerCache.Load(fp)
-	if !ok {
-		fileWriter = filerotate.NewFileRotator(fp, b.maxRotation, b.rotationSize)
-		b.writerCache.Store(fp, fileWriter)
-	}
-
-	b.files[filename] = fileWriter.(io.Writer)
-	return b.files[filename]
-}
-
+// writerByName returns the rotator for name, creating it on first use.
+//
+// The fast path takes only the read lock so Saves for different tracer names do
+// not serialize, but it must still hold a lock: an unlocked read of the writers
+// map races with the insert below and crashes the process. The write lock is
+// taken only on a cache miss, where the double-check keeps the common case from
+// opening the same file twice.
 func (b *Storage) writerByName(name string) (io.Writer, error) {
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
+	b.mu.RLock()
+	w, ok := b.writers[name]
+	b.mu.RUnlock()
+	if ok {
+		return w, nil
 	}
 
-	b.lock.Lock()
-	defer b.lock.Unlock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	// Double-check after acquiring lock
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
+	// Re-check under the write lock: another goroutine may have created the
+	// rotator while this one waited for the lock.
+	if existing, ok := b.writers[name]; ok {
+		return existing, nil
 	}
 
 	if _, err := os.Stat(b.path); os.IsNotExist(err) {
@@ -152,7 +159,9 @@ func (b *Storage) writerByName(name string) (io.Writer, error) {
 		}
 	}
 
-	return b.newFileWriter(name), nil
+	w = filerotate.NewFileRotator(path.Join(b.path, name), b.maxRotation, b.rotationSize)
+	b.writers[name] = w
+	return w, nil
 }
 
 func tracerFilename(rec driver.Record) string {
@@ -166,7 +175,7 @@ func tracerFilename(rec driver.Record) string {
 
 func formatDocumentJSON(data []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := json.Indent(&buf, data, "", "\t"); err != nil {
+	if err := json.Indent(&buf, data, "", "	"); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

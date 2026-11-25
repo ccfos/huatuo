@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/rs/xid"
@@ -55,35 +56,32 @@ func (mapper) Fields(document *Document) (map[string]any, error) {
 	if err := document.validate(); err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		types.DocumentFieldHostname:               document.Hostname,
-		types.DocumentFieldRegion:                 document.Region,
-		types.DocumentFieldUploadedTimestamp:      document.UploadedTimestamp,
-		types.DocumentFieldStartedTimestamp:       *document.StartedTimestamp,
-		types.DocumentFieldContainerID:            document.ContainerID,
-		types.DocumentFieldContainerHostname:      document.ContainerHostname,
-		types.DocumentFieldContainerHostNamespace: document.ContainerHostNamespace,
-		types.DocumentFieldContainerType:          document.ContainerType,
-		types.DocumentFieldContainerQoS:           document.ContainerQoS,
-		types.DocumentFieldTracerName:             document.TracerName,
-		types.DocumentFieldTracerID:               document.TracerID,
-		types.DocumentFieldTracerType:             document.TracerRunType,
-		fieldProfileType:                          document.ProfileData.ProfileType,
-	}, nil
+	fields := map[string]any{
+		types.DocumentFieldUploadedTimestamp: document.UploadedTimestamp,
+		types.DocumentFieldStartedTimestamp:  *document.StartedTimestamp,
+		types.DocumentFieldTracerName:        document.TracerName,
+		types.DocumentFieldTracerID:          document.TracerID,
+		types.DocumentFieldTracerType:        document.TracerRunType,
+		fieldProfileType:                     document.ProfileData.ProfileType,
+	}
+	document.Metadata.AddFields(fields)
+
+	return fields, nil
 }
 
 func (mapper) Indexes() []driver.Index {
 	return []driver.Index{
 		{Field: types.DocumentFieldTracerID},
-		{Field: types.DocumentFieldHostname},
-		{Field: types.DocumentFieldRegion},
+		{Field: observation.FieldHostname},
+		{Field: observation.FieldRegion},
 		{Field: types.DocumentFieldUploadedTimestamp},
 		{Field: types.DocumentFieldStartedTimestamp},
-		{Field: types.DocumentFieldContainerID},
-		{Field: types.DocumentFieldContainerHostname},
-		{Field: types.DocumentFieldContainerHostNamespace},
-		{Field: types.DocumentFieldContainerType},
-		{Field: types.DocumentFieldContainerQoS},
+		{Field: observation.FieldContainerID},
+		{Field: observation.FieldContainerName},
+		{Field: observation.FieldContainerHostname},
+		{Field: observation.FieldContainerNamespace},
+		{Field: observation.FieldContainerType},
+		{Field: observation.FieldContainerQoS},
 		{Field: types.DocumentFieldTracerName},
 		{Field: types.DocumentFieldTracerType},
 		{Field: fieldProfileType},

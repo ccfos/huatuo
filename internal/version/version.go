@@ -54,6 +54,20 @@ type Info struct {
 	Platform     string `json:"platform"`
 }
 
+// Labels returns an independent set of build identity labels using the JSON keys.
+func (i *Info) Labels() map[string]string {
+	return map[string]string{
+		"name":           i.Name,
+		"version":        i.Version,
+		"git_commit":     i.GitCommit,
+		"git_tree_state": i.GitTreeState,
+		"build_time":     i.BuildTime,
+		"go_version":     i.GoVersion,
+		"compiler":       i.Compiler,
+		"platform":       i.Platform,
+	}
+}
+
 // Seed carries values injected by the Makefile via -ldflags -X. Empty
 // fields are backfilled from runtime/debug.ReadBuildInfo when available.
 type Seed struct {

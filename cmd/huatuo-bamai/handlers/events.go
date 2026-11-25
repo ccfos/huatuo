@@ -117,11 +117,14 @@ func cloudEventFilters(filters *nodeapi.WatchEventFilters) nodecloudevents.Filte
 		return nodecloudevents.Filters{}
 	}
 	return nodecloudevents.Filters{
-		TracerName:             optionalString(filters.TracerName),
-		Hostname:               optionalString(filters.Hostname),
-		ContainerHostname:      optionalString(filters.ContainerHostname),
-		ContainerHostNamespace: optionalString(filters.ContainerHostNamespace),
-		ContainerQoS:           optionalString(filters.ContainerQos),
-		Region:                 optionalString(filters.Region),
+		TracerName:         optionalString(filters.TracerName),
+		Hostname:           optionalString(filters.Hostname),
+		ContainerID:        optionalString(filters.ContainerID),
+		ContainerType:      optionalString(filters.ContainerType),
+		ContainerName:      optionalString(filters.ContainerName),
+		ContainerHostname:  optionalString(filters.ContainerHostname),
+		ContainerNamespace: optionalString(filters.ContainerNamespace),
+		ContainerQoS:       optionalString(filters.ContainerQoS),
+		Region:             optionalString(filters.Region),
 	}
 }

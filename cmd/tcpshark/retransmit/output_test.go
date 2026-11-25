@@ -16,12 +16,20 @@ package retransmit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"capnproto.org/go/capnp/v3"
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/ccfos/huatuo/internal/toolstream/transport"
 
 	"github.com/ccfos/huatuo/internal/timeutil"
 
@@ -330,8 +338,16 @@ func TestNewWriterUsesInjectedOutput(t *testing.T) {
 		outputFormat string
 		wantType     string
 	}{
-		{name: "text", outputFormat: OutputText, wantType: "text"},
-		{name: "json", outputFormat: OutputJSON, wantType: "json"},
+		{
+			name:         "text",
+			outputFormat: OutputText,
+			wantType:     "text",
+		},
+		{
+			name:         "json",
+			outputFormat: OutputJSON,
+			wantType:     "json",
+		},
 	}
 
 	for _, tt := range tests {
@@ -339,7 +355,7 @@ func TestNewWriterUsesInjectedOutput(t *testing.T) {
 			t.Parallel()
 
 			var output bytes.Buffer
-			got, cleanup, err := newWriter(&output, &writerOptions{outputFormat: tt.outputFormat})
+			got, cleanup, err := newWriter(t.Context(), &output, &writerOptions{outputFormat: tt.outputFormat})
 			if err != nil {
 				t.Fatalf("newWriter() error = %v", err)
 			}
@@ -387,7 +403,7 @@ func TestNewWriterRejectsInvalidOutput(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, _, err := newWriter(tt.output, &tt.options)
+			_, _, err := newWriter(t.Context(), tt.output, &tt.options)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("newWriter() error = %v, want containing %q", err, tt.wantErr)
 			}
@@ -476,5 +492,248 @@ func TestWritersPreserveDropMetadata(t *testing.T) {
 	}
 	if got.DropSource != event.DropSource || got.DropReason != event.DropReason || got.DropReasonGroup != event.DropReasonGroup {
 		t.Fatalf("JSON drop metadata = %+v", got)
+	}
+}
+
+func TestSocketOutputCancellation(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "test",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sink.(*socketWriter).client.Close() }()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	message, err := capnp.NewDecoder(peer).Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.Release()
+	done := make(chan error, 1)
+	go func() { done <- sink.Write(&types.TCPRetransmitTracing{DropStack: strings.Repeat("x", 1<<20)}) }()
+	var first [1]byte
+	if _, err := io.ReadFull(peer, first[:]); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, toolstream.ErrOutputTimeout) || errors.Is(err, toolstream.ErrOutputCanceled) {
+			t.Fatalf("Write = %v, want send timeout", err)
+		}
+	case <-time.After(toolstream.DefaultSendTimeout + time.Second):
+		_ = peer.Close()
+		<-done
+		t.Fatal("blocked output exceeded send timeout")
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup after cancellation: %v", err)
+	}
+}
+
+func TestSocketOutputCancellationKeepsFinalFrames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	sink, cleanup, err := newWriter(ctx, nil, &writerOptions{
+		socketPath: path,
+		toolName:   "test",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sink.(*socketWriter).client.Close() }()
+	peer, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	if err := peer.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	decoder := capnp.NewDecoder(peer)
+	message, err := decoder.Decode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.Release()
+	done := make(chan error, 1)
+	go func() { done <- sink.Write(&types.TCPRetransmitTracing{DropStack: strings.Repeat("x", 1<<20)}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("large write completed without a reader: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	message, err = decoder.Decode()
+	if err != nil {
+		_ = peer.Close()
+		<-done
+		t.Fatal(err)
+	}
+	message.Release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Write(&types.TCPRetransmitTracing{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	for _, wantEnd := range []bool{false, true} {
+		message, err := decoder.Decode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err := transport.ReadRootMessage(message)
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+		chunk, err := root.Chunk()
+		if err != nil {
+			message.Release()
+			t.Fatal(err)
+		}
+		gotEnd := chunk.End()
+		message.Release()
+		if gotEnd != wantEnd {
+			t.Fatalf("End = %v, want %v", gotEnd, wantEnd)
+		}
+	}
+	if _, err := decoder.Decode(); !errors.Is(err, io.EOF) {
+		t.Fatalf("after End = %v, want EOF", err)
+	}
+}
+
+func TestSocketWriterPreservesCorrelationResult(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	socketPath := t.TempDir() + "/events.sock"
+	server, err := toolstream.NewServer(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	received := make(chan *types.TCPRetransmitTracing, 1)
+	toolstream.Register(server, "tcpshark", func(_ context.Context, request *toolstream.Request[types.TCPRetransmitTracing]) error {
+		if request.Data == nil {
+			return nil
+		}
+		event := request.Data
+		select {
+		case received <- event:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	sink, closeSink, err := newWriter(t.Context(), nil, &writerOptions{
+		socketPath: socketPath,
+		toolName:   "tcpshark",
+		version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := closeSink(); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, event := range []*types.TCPRetransmitTracing{
+		{
+			CorrelationReason: types.CorrelationWarmup,
+			DropLocation:      "unknown",
+			NetNamespace:      true,
+			DropPerfStatus: &types.DropwatchStatus{
+				HasMapCounters: true,
+				PerfLost:       2,
+				LostSamples:    3,
+				RateLimited:    4,
+			},
+		},
+		{
+			CorrelationReason: types.CorrelationInterrupted,
+			DropLocation:      "unknown",
+			DropPerfStatus:    &types.DropwatchStatus{LostSamples: 3},
+		},
+		{
+			CorrelationReason: types.CorrelationWaitTimeout,
+			DropLocation:      "unknown",
+		},
+		{
+			CorrelationReason: types.CorrelationQueueFull,
+			DropLocation:      "unknown",
+		},
+		{
+			CorrelationReason: types.CorrelationUnsupported,
+			DropLocation:      "unknown",
+		},
+		{
+			CorrelationReason: types.CorrelationMatched,
+			DropLocation:      "software",
+			NetNamespace:      true,
+			DropSource:        "software",
+			DropReason:        "SKB_DROP_REASON_TCP_CSUM",
+		},
+		{
+			CorrelationReason: types.CorrelationMatched,
+			DropLocation:      "hardware",
+			NetNamespace:      true,
+			DropSource:        "hardware",
+			DropReason:        "ingress_vlan_filter",
+			DropReasonGroup:   "l2_drops",
+		},
+		{
+			CorrelationReason: types.CorrelationMatched,
+			DropLocation:      "unknown",
+			DropSource:        "unknown",
+			NetNamespace:      true,
+		},
+	} {
+		if err := sink.Write(event); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case got := <-received:
+			if diff := cmp.Diff(event, got); diff != "" {
+				t.Fatalf("socket event differs (-want +got):\n%s", diff)
+			}
+		case <-ctx.Done():
+			t.Fatal("timed out receiving drop metadata through toolstream")
+		}
 	}
 }

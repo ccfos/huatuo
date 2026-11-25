@@ -14,7 +14,7 @@
  */
 
 /*
- * iolatency_tracing: bio::bi_issue (struct bio_issue with packed
+ * blk_iotrace_tracing: bio::bi_issue (struct bio_issue with packed
  * timestamp) was replaced by a plain bio::issue_time_ns on 7.0+.
  */
 struct bio___7_0 {

@@ -19,12 +19,16 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	startedTimestamp := time.Date(2026, 8, 28, 10, 30, 0, 0, time.FixedZone("CST", 8*60*60))
-	builder := &Builder{region: "cn-north", hostname: "node-1"}
+	builder := &Builder{metadata: observation.Metadata{
+		Region:   "cn-north",
+		Hostname: "node-1",
+	}}
 	document, err := builder.Build(&Input{
 		TracerName:       "profiler",
 		TracerID:         "job-1",
@@ -63,7 +67,10 @@ func TestNilBuilderIsRejected(t *testing.T) {
 func TestBuilderKeepsObservationClocksSeparate(t *testing.T) {
 	observed := time.Date(2026, 9, 15, 10, 0, 1, 0, time.FixedZone("CST", 8*60*60))
 	kernel := observed.Add(-time.Second)
-	builder := &Builder{region: "test", hostname: "node"}
+	builder := &Builder{metadata: observation.Metadata{
+		Region:   "test",
+		Hostname: "node",
+	}}
 	for _, available := range []bool{false, true} {
 		name := "without kernel observation"
 		if available {

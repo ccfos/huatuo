@@ -15,10 +15,13 @@
 package trace
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"testing"
 
+	"github.com/ccfos/huatuo/internal/httpserver/auth"
+	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 )
@@ -27,7 +30,7 @@ func TestValidateCreateInput(t *testing.T) {
 	valid := CreateInput{
 		Hostname:        "node-1",
 		DurationSeconds: 60,
-		Scope:           observation.ScopeHost,
+		Scope:           observation.ScopeTypeHost,
 		Spec:            tracingdomain.Spec{Type: tracingdomain.TypeNetworkingDrop},
 	}
 	tests := []struct {
@@ -40,6 +43,28 @@ func TestValidateCreateInput(t *testing.T) {
 			name: "overflowing duration",
 			mutate: func(input *CreateInput) {
 				input.DurationSeconds = math.MaxInt64
+			},
+			wantErr: "duration_seconds",
+		},
+		{name: "minimum positive duration", mutate: func(input *CreateInput) { input.DurationSeconds = 1 }},
+		{
+			name: "zero duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = 0
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "negative duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = -1
+			},
+			wantErr: "duration_seconds",
+		},
+		{
+			name: "non-positive duration",
+			mutate: func(input *CreateInput) {
+				input.DurationSeconds = -1
 			},
 			wantErr: "duration_seconds",
 		},
@@ -61,15 +86,31 @@ func TestValidateCreateInput(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidDurationAtServiceBoundary(t *testing.T) {
+	service, err := NewService(&job.Manager{})
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+	_, err = service.Create(t.Context(), auth.Principal{}, CreateInput{
+		Hostname:        "node-1",
+		DurationSeconds: 0,
+		Scope:           observation.ScopeTypeHost,
+		Spec:            tracingdomain.Spec{Type: tracingdomain.TypeNetworkingDrop},
+	})
+	if !errors.Is(err, job.ErrInvalidQuery) {
+		t.Fatalf("Create() error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 func TestCapabilitiesRemainStatic(t *testing.T) {
 	service := &Service{}
 	first := service.Capabilities()
 	if len(first) != 3 {
 		t.Fatalf("Capabilities() count = %d, want 3", len(first))
 	}
-	first[0].SupportedScopes[0] = observation.ScopeContainer
+	first[0].SupportedScopes[0] = observation.ScopeTypeContainer
 	second := service.Capabilities()
-	if second[0].SupportedScopes[0] != observation.ScopeHost {
+	if second[0].SupportedScopes[0] != observation.ScopeTypeHost {
 		t.Fatalf("Capabilities() retained caller mutation: %+v", second[0])
 	}
 }
