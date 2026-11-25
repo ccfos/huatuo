@@ -23,6 +23,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/core/autotracing"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 type standaloneConfig struct {
@@ -31,9 +32,11 @@ type standaloneConfig struct {
 		File  string
 	}
 	Pod struct {
+		KubeletHost           string
 		KubeletReadOnlyPort   uint32 `default:"10255"`
 		KubeletAuthorizedPort uint32 `default:"10250"`
 		KubeletClientCertPath string
+		KubeletCAPath         string
 		DockerAPIVersion      string `default:"1.24"`
 	}
 	AutoTracing autotracing.Config
@@ -60,6 +63,9 @@ func loadStandaloneConfig(cliCtx *cli.Context) (*standaloneConfig, error) {
 	}
 	if _, err := logrus.ParseLevel(config.Log.Level); err != nil {
 		return nil, fmt.Errorf("invalid log level: %w", err)
+	}
+	if err := pod.ValidateKubeletHost(config.Pod.KubeletHost); err != nil {
+		return nil, err
 	}
 	if config.Pod.KubeletReadOnlyPort > 65535 ||
 		config.Pod.KubeletAuthorizedPort > 65535 {

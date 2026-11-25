@@ -30,11 +30,15 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
    [Pod]
        KubeletReadOnlyPort = 0
        KubeletClientCertPath = ""
+       # 可选：若 kubelet 服务端证书并非由 /var/run/secrets/kubernetes.io/serviceaccount/ca.crt 签发，请显式指定 kubelet CA 路径
+       # KubeletCAPath = "/etc/kubernetes/pki/ca.crt"
    ```
-   此时 `huatuo-bamai` 每次请求都会重读 `/var/run/secrets/kubernetes.io/serviceaccount/token`（兼容 token 轮转），并使用 `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` 校验 kubelet 服务端证书。`build/huatuo-daemonset.minimal.yaml` 与 Helm Chart 均已通过 Downward API 注入 `KUBELET_HOST`（`status.hostIP`），使请求地址与节点证书 SAN 一致。
-2. 授予最小 RBAC 权限（访问 kubelet `/pods` 与 `/configz` 所需 `nodes/proxy` 的 `get` 权限）：
-   - **Helm 部署**：在 2.5 节追加 `--set serviceAccount.create=true --set rbac.create=true`。
-   - **清单部署**：创建 `ServiceAccount`、授予 `nodes/proxy` `get` 权限的 `ClusterRole` 与 `ClusterRoleBinding`，并在 DaemonSet 的 `spec.template.spec.serviceAccountName` 中引用该 `ServiceAccount`。
+   此时 `huatuo-bamai` 每次请求都会重读 `/var/run/secrets/kubernetes.io/serviceaccount/token`（兼容 token 轮转），并使用 `KubeletCAPath`（未配置时默认 `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`）校验 kubelet 服务端证书。`build/huatuo-daemonset.minimal.yaml` 与 Helm Chart 均已通过 Downward API 注入 `KUBELET_HOST`（`status.hostIP`），使请求地址与节点证书 SAN 一致。部署前建议在节点上用 `openssl s_client -connect <node-ip>:10250 -CAfile <ca-path> </dev/null` 核对 kubelet 服务端证书的签发 CA 与 SAN。
+2. 授予访问 kubelet `/pods` 与 `/configz` 的 RBAC 权限：
+   - **推荐（Kubernetes 1.33+，启用 `KubeletFineGrainedAuthz`）**：授予最小只读权限 `nodes/pods` 与 `nodes/configz` 的 `get`。
+     - **Helm 部署**：在 2.5 节追加 `--set serviceAccount.create=true --set rbac.create=true`。
+     - **清单部署**：创建 `ServiceAccount`、授予 `nodes/pods` 与 `nodes/configz` `get` 权限的 `ClusterRole` 与 `ClusterRoleBinding`，并在 DaemonSet 的 `spec.template.spec.serviceAccountName` 中引用该 `ServiceAccount`。
+   - **旧版集群（未启用 `KubeletFineGrainedAuthz`）**：旧版 Kubernetes 不支持细粒度子资源授权，需改用 `nodes/proxy` 的 `get` 权限（Helm 部署需额外显式传入 `--set rbac.allowLegacyNodesProxy=true`）。**安全提示**：`nodes/proxy` 的 `get` 并非纯只读权限，同时允许通过 kubelet 的 WebSocket `GET` API 对节点容器执行 `exec`/`attach`/`portForward`，仅应在旧集群中按需开启并尽早迁移到细粒度授权。
 
 ### 1.3 创建 ConfigMap
 

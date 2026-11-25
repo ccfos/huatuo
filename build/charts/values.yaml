@@ -13,6 +13,12 @@ serviceAccount:
 
 rbac:
   create: false
+  # Kubernetes 1.33+ (KubeletFineGrainedAuthz) supports least-privilege
+  # nodes/pods and nodes/configz get permissions. Set allowLegacyNodesProxy
+  # to true only on older clusters without fine-grained kubelet authorization;
+  # note that nodes/proxy get also allows WebSocket GET operations
+  # (exec/attach/portForward) against containers on nodes.
+  allowLegacyNodesProxy: false
 
 config:
   name: huatuo-bamai-config

@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/urfave/cli/v2"
@@ -160,10 +161,16 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		return fmt.Errorf("initialize BPF: %w", err)
 	}
 	defer bpf.Shutdown()
+	podHost := strings.TrimSpace(config.Pod.KubeletHost)
+	if podHost == "" {
+		podHost = strings.TrimSpace(os.Getenv("KUBELET_HOST"))
+	}
 	if err := pod.InitManager(&pod.ManagerCtx{
+		PodHost:           podHost,
 		PodReadOnlyPort:   config.Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort: config.Pod.KubeletAuthorizedPort,
 		PodClientCertPath: config.Pod.KubeletClientCertPath,
+		PodCAPath:         config.Pod.KubeletCAPath,
 		DockerAPIVersion:  config.Pod.DockerAPIVersion,
 	}); err != nil {
 		return fmt.Errorf("initialize container discovery: %w", err)

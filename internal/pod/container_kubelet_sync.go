@@ -84,6 +84,7 @@ type ManagerCtx struct {
 	PodReadOnlyPort   uint32
 	PodAuthorizedPort uint32
 	PodClientCertPath string
+	PodCAPath         string
 	DockerAPIVersion  string
 
 	// this is used internally.
@@ -112,7 +113,7 @@ func ValidateKubeletHost(host string) error {
 		return fmt.Errorf("invalid kubelet host %q", host)
 	}
 	for _, label := range strings.Split(trimmed, ".") {
-		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
 			return fmt.Errorf("invalid kubelet host %q", host)
 		}
 		for i := range len(label) {
@@ -152,6 +153,7 @@ func kubeletPodListHttpRequest(requestCtx context.Context, ctx *ManagerCtx) (*ht
 }
 
 var (
+	// #nosec G101 -- well-known Kubernetes ServiceAccount token mount path
 	serviceAccountTokenPath  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	serviceAccountCACertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
@@ -184,21 +186,30 @@ func readServiceAccountToken(path string) (string, error) {
 	return token, nil
 }
 
-func loadServiceAccountCAPool(path string) (*x509.CertPool, error) {
+func kubeletCAPath(ctx *ManagerCtx) string {
+	if ctx != nil {
+		if caPath := strings.TrimSpace(ctx.PodCAPath); caPath != "" {
+			return caPath
+		}
+	}
+	return serviceAccountCACertPath
+}
+
+func loadKubeletCAPool(path string) (*x509.CertPool, error) {
 	pemData, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read service account CA certificate: %w", err)
+		return nil, fmt.Errorf("read kubelet CA certificate: %w", err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pemData) {
-		return nil, fmt.Errorf("parse service account CA certificate %s: no valid PEM certificates", path)
+		return nil, fmt.Errorf("parse kubelet CA certificate %s: no valid PEM certificates", path)
 	}
 	return pool, nil
 }
 
 // kubeletAuthorizedClient builds the HTTPS kubelet client: a client certificate
 // when one is configured, otherwise the Pod's ServiceAccount token verified
-// against the cluster CA certificate.
+// against the configured kubelet serving CA (or the ServiceAccount CA by default).
 func kubeletAuthorizedClient(ctx *ManagerCtx) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
@@ -223,7 +234,7 @@ func kubeletAuthorizedClient(ctx *ManagerCtx) (*http.Client, error) {
 	if _, err := readServiceAccountToken(serviceAccountTokenPath); err != nil {
 		return nil, fmt.Errorf("no client certificate configured and %w", err)
 	}
-	caPool, err := loadServiceAccountCAPool(serviceAccountCACertPath)
+	caPool, err := loadKubeletCAPool(kubeletCAPath(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("no client certificate configured and %w", err)
 	}

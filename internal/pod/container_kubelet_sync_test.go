@@ -763,6 +763,7 @@ func TestKubeletTokenClientVerifiesNodeSANForPodsAndConfigz(t *testing.T) {
 		}
 	}))
 	srv.TLS = &tls.Config{
+		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{{Certificate: [][]byte{srvDER}, PrivateKey: srvKey}},
 	}
 	srv.StartTLS()
@@ -824,4 +825,142 @@ func TestKubeletTokenClientVerifiesNodeSANForPodsAndConfigz(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestKubeletTokenClientUsesCustomKubeletCA(t *testing.T) {
+	newCA := func(cn string, serial int64) (*x509.Certificate, *ecdsa.PrivateKey) {
+		t.Helper()
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpl := &x509.Certificate{
+			SerialNumber:          big.NewInt(serial),
+			Subject:               pkix.Name{CommonName: cn},
+			NotBefore:             time.Now().Add(-time.Hour),
+			NotAfter:              time.Now().Add(time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign,
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert, key
+	}
+
+	apiServerCA, _ := newCA("test-apiserver-ca", 1)
+	kubeletCA, kubeletCAKey := newCA("test-kubelet-serving-ca", 2)
+
+	srvKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srvTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject:      pkix.Name{CommonName: "worker-2.cluster.local"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("10.20.30.40")},
+	}
+	srvDER, err := x509.CreateCertificate(rand.Reader, srvTmpl, kubeletCA, &srvKey.PublicKey, kubeletCAKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var hits atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") != "Bearer separate-ca-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/pods":
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		case "/configz":
+			_, _ = w.Write([]byte(`{"kubeletconfig":{"cgroupDriver":"systemd","containerRuntimeEndpoint":"unix:///run/containerd/containerd.sock"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	srv.TLS = &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{{Certificate: [][]byte{srvDER}, PrivateKey: srvKey}},
+	}
+	srv.StartTLS()
+	defer srv.Close()
+
+	// Mount API server CA at the default ServiceAccount CA path, and write the
+	// separate kubelet serving CA to an explicit file configured via PodCAPath.
+	setupServiceAccountFilesForTest(t, "separate-ca-token\n", apiServerCA)
+	kubeletCAPath := filepath.Join(t.TempDir(), "kubelet-ca.crt")
+	if err := os.WriteFile(kubeletCAPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: kubeletCA.Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	port := uint32(srv.Listener.Addr().(*net.TCPAddr).Port)
+	podsURL := kubeletPodListAuthorizedURL("10.20.30.40", port)
+	configzURL := kubeletConfigAuthorizedURL("10.20.30.40", port)
+
+	newClient := func(t *testing.T, caPath string) *http.Client {
+		t.Helper()
+		client, err := kubeletAuthorizedClient(&ManagerCtx{PodCAPath: caPath})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokTransport := client.Transport.(*kubeletTokenTransport)
+		base := tokTransport.base.(*http.Transport)
+		base.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, srv.Listener.Addr().String())
+		}
+		return client
+	}
+
+	t.Run("default_sa_ca_rejects_separate_kubelet_ca", func(t *testing.T) {
+		hits.Store(0)
+		client := newClient(t, "")
+		if _, err := kubeletFetchPodList(context.Background(), client, podsURL); err == nil {
+			t.Fatal("expected TLS failure when kubelet cert is signed by a CA different from serviceaccount/ca.crt")
+		}
+		if _, err := kubeletConfigDoRequest(client, configzURL); err == nil {
+			t.Fatal("expected TLS failure on /configz when kubelet cert is signed by a CA different from serviceaccount/ca.crt")
+		}
+		if got := hits.Load(); got != 0 {
+			t.Fatalf("separate-CA server received %d request(s), want 0", got)
+		}
+	})
+
+	t.Run("custom_kubelet_ca_accepts_separate_kubelet_ca", func(t *testing.T) {
+		hits.Store(0)
+		client := newClient(t, kubeletCAPath)
+		if _, err := kubeletFetchPodList(context.Background(), client, podsURL); err != nil {
+			t.Fatalf("kubeletFetchPodList error = %v", err)
+		}
+		cfg, err := kubeletConfigDoRequest(client, configzURL)
+		if err != nil {
+			t.Fatalf("kubeletConfigDoRequest error = %v", err)
+		}
+		if cfg.CgroupDriver != "systemd" {
+			t.Fatalf("cgroupDriver = %q, want systemd", cfg.CgroupDriver)
+		}
+		if got := hits.Load(); got != 2 {
+			t.Fatalf("hits = %d, want 2 (/pods and /configz)", got)
+		}
+	})
+
+	t.Run("missing_custom_kubelet_ca_fails_init", func(t *testing.T) {
+		if err := InitManager(&ManagerCtx{PodAuthorizedPort: 10250, PodCAPath: filepath.Join(t.TempDir(), "missing.crt")}); err == nil {
+			ReleaseManager()
+			t.Fatal("started with a nonexistent PodCAPath")
+		}
+	})
 }

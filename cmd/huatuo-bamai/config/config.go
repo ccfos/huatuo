@@ -93,6 +93,7 @@ type PodConfig struct {
 	KubeletReadOnlyPort   uint32 `default:"10255"`
 	KubeletAuthorizedPort uint32 `default:"10250"`
 	KubeletClientCertPath string
+	KubeletCAPath         string
 	DockerAPIVersion      string `default:"1.24"`
 }
 
