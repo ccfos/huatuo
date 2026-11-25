@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 )
 
@@ -30,9 +31,12 @@ func TestEnableDocumentWriterRequiresDependencies(t *testing.T) {
 		want      string
 	}{
 		{
-			name:      "missing store",
-			documents: document.New(""),
-			want:      "store is required",
+			name: "missing store",
+			documents: document.New(&observation.Metadata{
+				Region:   "",
+				Hostname: "test-node",
+			}),
+			want: "store is required",
 		},
 		{
 			name:  "missing document builder",
@@ -58,7 +62,10 @@ func TestDisableDocumentWriter(t *testing.T) {
 	DisableDocumentWriter()
 	t.Cleanup(DisableDocumentWriter)
 
-	if err := EnableDocumentWriter(newTracingStore(t), document.New("")); err != nil {
+	if err := EnableDocumentWriter(newTracingStore(t), document.New(&observation.Metadata{
+		Region:   "",
+		Hostname: "test-node",
+	})); err != nil {
 		t.Fatalf("EnableDocumentWriter() error = %v", err)
 	}
 	if configuredWriter.Load() == nil {

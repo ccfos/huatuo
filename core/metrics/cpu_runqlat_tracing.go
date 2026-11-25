@@ -78,7 +78,10 @@ func (c *runqlatCollector) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.DetachOnContextDone(childCtx, cancel)
+	cleanup := object.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	// wait stop
 	<-childCtx.Done()

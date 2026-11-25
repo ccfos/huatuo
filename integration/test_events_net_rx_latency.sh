@@ -26,6 +26,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
+source "${ROOT_DIR}/integration/lib_network_capture.sh"
 
 SERVER_IP="10.200.1.2"
 CLIENT_IP="10.200.1.1"
@@ -43,10 +44,16 @@ namespace_setup_with_pair rxlat "${SERVER_IP}" "${CLIENT_IP}"
 sleep 0.5
 
 integration_huatuo_bamai_start \
-	write_net_rx_latency_config \
+	write_config_bamai_net_rx_latency \
 	--region dev \
 	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
-	--disable-kubelet
+	--disable-kubelet --log-debug
+
+# HTTP readiness precedes the asynchronous network probe attachment.
+wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
+	grep -q 'attached BPF and created event pipe.*map_name="net_recv_lat_event_map"' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
+	|| fatal "net_rx_latency BPF did not attach; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 
 SLOW_TCP_SERVER="${WORK_DIR}/slow-tcp-server"
 compile_user_fixture \
@@ -61,33 +68,13 @@ sleep 0.5
 
 for i in $(seq 1 5); do
 	log_info "curl request #${i} to ${NETNS_SERVER_ADDR}:${TEST_PORT}"
-	ip netns exec "${NETNS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
+	ip netns exec "${NETNS_CLIENT}" curl -fsS --connect-timeout 1 --max-time 2 \
 		http://${NETNS_SERVER_ADDR}:${TEST_PORT}/ \
-		>> "${WORK_DIR}/curl.log" 2>&1 || true
+		>> "${WORK_DIR}/curl.log" 2>&1 || fatal "curl request #${i} failed; see ${WORK_DIR}/curl.log"
 done
 
-sleep 5
-
 EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
-[[ -f "${EVENTS_FILE}" ]] || fatal "no events file: ${EVENTS_FILE}"
-
-# Filter events matching our veth IP pair, then validate.
-MATCHED=$(jq -s --arg saddr "${NETNS_CLIENT_ADDR}" --arg daddr "${NETNS_SERVER_ADDR}" \
-	'[.[] | select(
-		(.tracer_data.tcp_saddr == $saddr)
-		and (.tracer_data.tcp_daddr == $daddr)
-		and (.tracer_data.latency_stage | type == "string")
-		and (.tracer_data.latency_ms | type == "number")
-		and (.tracer_data.latency_threshold_ms | type == "number")
-		and (.tracer_data.packet_len_bytes | type == "number")
-		and (.tracer_data.net_namespace_inum | type == "number")
-		and (.tracer_data.net_namespace_cookie | type == "number")
-		and (.tracer_data | has("lat_stage") | not)
-		and (.tracer_data | has("lat_ms") | not)
-		and (.tracer_data | has("lat_thresholds") | not)
-		and (.tracer_data | has("pkt_len") | not)
-	)]' \
-	"${EVENTS_FILE}" 2> /dev/null)
+wait_until 5 0.1 net_rx_latency_event_is_stored || fatal "no matching net_rx_latency event persisted"
 
 event_count=$(echo "${MATCHED}" | jq 'length' 2> /dev/null || echo 0)
 event_count=$(echo "${event_count}" | tr -d '[:space:]')

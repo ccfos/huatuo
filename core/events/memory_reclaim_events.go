@@ -57,7 +57,7 @@ const cssCacheTTL = 5 * time.Second
 // Start detect work, load bpf and wait data form perfevent
 //
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
-func (c *memoryReclaimTracing) Start(ctx context.Context) error {
+func (c *memoryReclaimTracing) Start(ctx context.Context) (retErr error) {
 	cfg := configSnapshot()
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{
 		"reclaim_duration_threshold_ns": cfg.MemoryReclaim.BlockedThreshold,
@@ -76,7 +76,10 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.DetachOnContextDone(childCtx, cancel)
+	cleanup := b.DetachOnContextDone(childCtx)
+	defer func() {
+		retErr = errors.Join(retErr, cleanup())
+	}()
 
 	var (
 		cssToContainer map[uint64]*pod.Container
@@ -107,26 +110,24 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
-			if cssToContainer == nil || time.Since(cacheTime) > cssCacheTTL {
-				if err := refreshContainerCache(); err != nil {
-					log.Errorf("refresh container cache: %v", err)
-					continue
-				}
-			}
-
-			container := cssToContainer[data.CPUCSSAddr]
-			if container == nil {
-				if err := refreshContainerCache(); err != nil {
-					log.Errorf("refresh container cache: %v", err)
-					continue
+			var container *pod.Container
+			// Zero CSS needs no container lookup; unresolved events still persist.
+			if data.CPUCSSAddr != 0 {
+				refreshFailed := false
+				if cssToContainer == nil || time.Since(cacheTime) > cssCacheTTL {
+					if err := refreshContainerCache(); err != nil {
+						log.Errorf("refresh container cache: %v", err)
+						cssToContainer = nil
+						refreshFailed = true
+					}
 				}
 				container = cssToContainer[data.CPUCSSAddr]
-				if container == nil {
-					// We only care about the container and nothing else.
-					// Though it may be unfair, that's just how life is.
-					//
-					// -- Tonghao Zhang, tonghao@bamaicloud.com
-					continue
+				if container == nil && !refreshFailed {
+					if err := refreshContainerCache(); err != nil {
+						log.Errorf("refresh container cache: %v", err)
+					} else {
+						container = cssToContainer[data.CPUCSSAddr]
+					}
 				}
 			}
 
@@ -138,10 +139,15 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				ReclaimDurationNS: data.ReclaimDurationNS,
 			}
 
+			containerID := ""
+			if container != nil {
+				containerID = container.ID
+			}
+
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:        "memory_reclaim",
-				ContainerID:       container.ID,
+				ContainerID:       containerID,
 				ObservedTimestamp: timeutil.Now(),
 				TracerData:        tracingData,
 			}); err != nil {

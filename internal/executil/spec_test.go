@@ -47,7 +47,22 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 			spec:    Spec{Path: "/bin/true", Args: []string{"bad\x00arg"}},
 			wantErr: "argument 0 contains a null byte",
 		},
-		{name: "unsupported stop signal", spec: Spec{Path: "/bin/true", StopSignal: syscall.SIGKILL}, wantErr: "stop signal must be SIGTERM or SIGINT"},
+		{
+			name: "unsupported stop signal",
+			spec: Spec{
+				Path:       "/bin/true",
+				StopSignal: syscall.SIGKILL,
+			},
+			wantErr: "stop signal must be SIGTERM or SIGINT",
+		},
+		{
+			name: "unsupported hangup signal",
+			spec: Spec{
+				Path:       "/bin/true",
+				StopSignal: syscall.SIGHUP,
+			},
+			wantErr: "stop signal must be SIGTERM or SIGINT",
+		},
 		{
 			name:    "negative stop grace period",
 			spec:    Spec{Path: "/bin/true", StopGracePeriod: -time.Second},
@@ -72,6 +87,20 @@ func TestNewValidatesAndSnapshotsSpec(t *testing.T) {
 				t.Errorf("New() error = %v, want substring %q", err, test.wantErr)
 			}
 		})
+	}
+
+	for _, signal := range []syscall.Signal{0, syscall.SIGTERM, syscall.SIGINT} {
+		process, err := New(Spec{
+			Path:       "/bin/true",
+			StopSignal: signal,
+		})
+		if err != nil {
+			t.Fatalf("New() rejected stop signal %v: %v", signal, err)
+		}
+
+		if err := process.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	args := []string{"first"}

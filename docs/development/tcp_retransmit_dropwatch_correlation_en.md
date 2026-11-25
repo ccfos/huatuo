@@ -173,12 +173,16 @@ The command layer manages process-wide `bpf.Init/Shutdown` and runtime timeouts.
 
 `retransmit.Tracer` and `internal/dropwatch.Tracer` each own their BPF objects, readers, and rate-limit alert workers. Failed `Open` rolls back acquired resources. Callers must still call `Close` after session context cancellation. An alert-worker failure cancels its collector, and `Close` returns the original error.
 
+When a startup cancellation check stops setup and rollback succeeds, `internal/dropwatch.Open` returns `dropwatch.ErrOpenCanceled` directly. Callers compare this marker directly to identify an expected stop. Operation and rollback failures retain their causes and do not wrap this marker.
+
 ### Read and Close Contracts
 
-`ReadInto` checks closure or cancellation before reading. Once a low-level read starts, its result is preserved rather than replaced by later closure or cancellation. `Close` can interrupt reads; callers must serialize `Close` calls on an instance.
+`retransmit.Tracer.ReadInto` checks closure or cancellation before reading. Once a low-level read starts, its result is preserved rather than replaced by later closure or cancellation. `Close` can interrupt reads for both tracer types; callers must serialize `Close` calls on each instance.
 
-`internal/dropwatch.Tracer` also has these constraints:
+`internal/dropwatch.Tracer` has the following read and lifecycle contracts:
 
+- `ReadInto` returns `types.ErrExitByCancelCtx` directly for caller cancellation, deadline expiry, signal termination, and normal closure. Callers compare this marker directly. Successful reads and independent read errors remain unchanged even when cancellation happens concurrently.
+- An alert-worker failure interrupts reads with the worker error instead of the stop marker.
 - Its context derives from `groupCtx`. Each instance allows one `ReadInto` caller; status reads and closure can run concurrently.
 - `ReadStatus` can read final counters after context cancellation. The status type is `types.DropwatchStatus`; output uses `drop_perf_status`, including map-counter availability.
 - `Close` cancels the instance, detaches and closes event and alert readers, waits for the alert worker, then releases the BPF object. Closing the alert reader wakes idle reads without waiting for the polling deadline.

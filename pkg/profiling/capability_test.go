@@ -145,8 +145,8 @@ func TestCapabilitiesReturnsDeepCopy(t *testing.T) {
 }
 
 func TestCapabilitiesExposeSupportedScopeAndBinaryMatch(t *testing.T) {
-	containerOnly := []observation.Scope{observation.ScopeContainer}
-	hostAndContainer := []observation.Scope{observation.ScopeHost, observation.ScopeContainer}
+	containerOnly := []observation.Scope{observation.ScopeTypeContainer}
+	hostAndContainer := []observation.Scope{observation.ScopeTypeHost, observation.ScopeTypeContainer}
 
 	for _, capability := range Capabilities() {
 		switch {

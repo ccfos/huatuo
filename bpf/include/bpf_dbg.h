@@ -9,8 +9,8 @@
 /*
  * bpf_dbg_enabled is intentionally defined OUTSIDE the DEBUG_BPF guard so the
  * symbol is *always* present in .rodata, regardless of build mode. The Go
- * loader unconditionally rewrites it via RewriteConstants (see WithBpfDbg);
- * if it were compiled out, RewriteConstants would fail with a missing-constant
+ * loader sets this read-only global before loading (see WithBpfDbg);
+ * if it were compiled out, the loader would report a missing-constant
  * error and abort program loading. Keeping it public makes the load path
  * identical in both modes and removes the need for fragile error-handling
  * fallbacks. In non-debug builds nothing references it, so the verifier simply

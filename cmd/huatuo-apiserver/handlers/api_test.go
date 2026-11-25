@@ -57,7 +57,7 @@ func TestMapCommonJobMapsTerminalFailure(t *testing.T) {
 		ID:        "job-1",
 		Hostname:  "node-1",
 		Duration:  time.Minute,
-		Scope:     observation.ScopeHost,
+		Scope:     observation.ScopeTypeHost,
 		Status:    job.StatusTerminal,
 		CreatedAt: base,
 		UpdatedAt: base.Add(time.Second),
@@ -88,7 +88,7 @@ func TestMapTracingJobUsesIndependentDomainState(t *testing.T) {
 		Kind:     job.KindTracing,
 		Hostname: "node-1",
 		Duration: time.Minute,
-		Scope:    observation.ScopeHost,
+		Scope:    observation.ScopeTypeHost,
 		Status:   job.StatusTerminal,
 		Terminal: &job.TerminalResult{Outcome: job.OutcomeUnknown},
 		Spec: job.Spec{Tracing: &tracingdomain.Spec{

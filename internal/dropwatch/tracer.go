@@ -25,7 +25,20 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
+	"github.com/ccfos/huatuo/pkg/types"
 )
+
+// ErrOpenCanceled reports startup cancellation or deadline expiry after all
+// acquired resources were released successfully. Open returns it directly;
+// errors containing cleanup failures never wrap it.
+var ErrOpenCanceled = errors.New("dropwatch: open canceled")
+
+// An alert failure must remain distinguishable from caller cancellation,
+// including signal-specific causes propagated by NotifyContext.
+type alertError struct{ err error }
+
+func (e *alertError) Error() string { return e.err.Error() }
+func (e *alertError) Unwrap() error { return e.err }
 
 // Tracer owns one active dropwatch instance. Open must initialize it; it must
 // not be copied. ReadInto permits one reader. Close may run concurrently with
@@ -49,6 +62,9 @@ type Tracer struct {
 // entire tracing session, not just initialization. Cancellation stops event
 // reading but does not release BPF resources; the caller must still Close the
 // tracer. The caller owns bpf.Init/Shutdown.
+// Cancellation detected by startup checks returns ErrOpenCanceled directly
+// after successful rollback. Operation failures retain their causes, including
+// rollback errors, even if the context is also canceled.
 func Open(ctx context.Context, cfg *Config) (*Tracer, error) {
 	if cfg == nil {
 		return nil, errors.New("open dropwatch: nil config")
@@ -57,7 +73,7 @@ func Open(ctx context.Context, cfg *Config) (*Tracer, error) {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, ErrOpenCanceled
 	}
 
 	filter, err := resolveNetdevOptions(cfg.IncludeDevices, cfg.ExcludeDevices)
@@ -97,8 +113,17 @@ func newTracer(
 		hardwareEnabled: hardwareEnabled,
 	}
 	defer func() {
-		if returnErr != nil {
-			returnErr = errors.Join(returnErr, tracer.Close())
+		if returnErr == nil {
+			return
+		}
+		if closeErr := tracer.Close(); closeErr != nil {
+			returnErr = errors.Join(returnErr, closeErr)
+			return
+		}
+		// Only the direct result of a startup cancellation check is an
+		// expected stop; operation failures can contain independent errors.
+		if ctx.Err() != nil && returnErr == ctx.Err() { //nolint:errorlint // Preserve wrapped or joined operation failures.
+			returnErr = ErrOpenCanceled
 		}
 	}()
 
@@ -109,7 +134,7 @@ func newTracer(
 		tracer.workers.Go(func() error {
 			err := limiter.ReadEvents(runCtx)
 			if err != nil {
-				cancel(err)
+				cancel(&alertError{err: err})
 			}
 			return err
 		})
@@ -124,29 +149,37 @@ func (t *Tracer) HardwareEnabled() bool { return t.hardwareEnabled }
 // ReadInto reads one event into caller-owned memory. Only a nil error makes dst
 // usable. Sample loss is counted before returning bpf.PerfEventSamplesLostError
 // and may be retried. Cancellation interrupts idle reads within the reader's
-// polling interval; Close interrupts them. Before reading, closure returns
-// bpf.ErrClosed and cancellation returns its cause. Once reading starts, the
-// underlying result is returned unchanged, including types.ErrExitByCancelCtx
-// on cancellation or closure. Alert worker errors remain available from Close.
+// polling interval; Close interrupts them. Caller cancellation, deadline expiry
+// and closure return types.ErrExitByCancelCtx directly. Alert worker failures
+// interrupt reads with the worker error and remain available from Close.
+// Successful reads and independent read errors survive concurrent cancellation.
 func (t *Tracer) ReadInto(dst *abi.DropwatchPacketEvent) error {
 	if dst == nil {
 		return errors.New("read dropwatch event: nil destination")
 	}
-	if t.isClosed.Load() {
-		return bpf.ErrClosed
-	}
-	if err := context.Cause(t.ctx); err != nil {
-		return err
+	if t.isClosed.Load() || t.ctx.Err() != nil {
+		return t.stopError()
 	}
 	err := t.reader.ReadInto(dst)
 	if err == nil {
 		return nil
+	}
+	if err == types.ErrExitByCancelCtx { //nolint:errorlint // Only the direct reader marker indicates an interrupted read.
+		return t.stopError()
 	}
 	var lostErr *bpf.PerfEventSamplesLostError
 	if errors.As(err, &lostErr) {
 		t.lostSamples.Add(lostErr.Count)
 	}
 	return err
+}
+
+func (t *Tracer) stopError() error {
+	var alertErr *alertError
+	if errors.As(context.Cause(t.ctx), &alertErr) {
+		return alertErr.err
+	}
+	return types.ErrExitByCancelCtx
 }
 
 // Close interrupts reads and releases all owned resources. The owner must

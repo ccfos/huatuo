@@ -34,6 +34,7 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -256,7 +257,8 @@ func TestActionRunnerMergedInvalidationsCancelSnapshot(t *testing.T) {
 			}
 			ctx := waitActionContextForTest(t, started)
 			update := applyContainerEventsForTest(t, tracker, pod.ContainerEvent{
-				Kind: pod.ContainerDeleted, Container: containerRefForTest(first),
+				Kind:      pod.ContainerDeleted,
+				Container: containerRefForTest(first),
 			})
 			invalidated := append([]memoryWatchRegistrationID(nil), update.Invalidated...)
 			update, err := tracker.ProcessMemoryEvents(t.Context(), []memoryWatchEvent{
@@ -477,7 +479,9 @@ func TestActionBatchSnapshotsFirstAndLogsRemaining(t *testing.T) {
 			third := "/" + strings.Repeat("c", 64)
 			createMemoryCgroupForTest(t, batch.source.root, third, 80)
 			batch.targets = append(batch.targets, memoryEventObservation{
-				RegistrationID: 3, Cgroup: cgroupRefForTest(t, batch.source, third), Container: containerRefForTest(third),
+				RegistrationID: 3,
+				Cgroup:         cgroupRefForTest(t, batch.source, third),
+				Container:      containerRefForTest(third),
 			})
 			var selected []string
 			snapshotCalls := 0
@@ -600,7 +604,9 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 			outputDir := t.TempDir()
 			store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
 				LocalFile: &tracingstore.LocalFileConfig{
-					Path: outputDir, RotationSizeMiB: 1, MaxRotatedFiles: 1,
+					Path:            outputDir,
+					RotationSizeMiB: 1,
+					MaxRotatedFiles: 1,
 				},
 			})
 			if err != nil {
@@ -611,7 +617,10 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			if err := tracing.EnableDocumentWriter(store, document.New("test")); err != nil {
+			if err := tracing.EnableDocumentWriter(store, document.New(&observation.Metadata{
+				Region:   "test",
+				Hostname: "test-node",
+			})); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(tracing.DisableDocumentWriter)
@@ -625,7 +634,8 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 			process := memsnapshot.ProcessInstanceID{TGID: 42, StartTimeTicks: 100}
 			rssBytes := uint64(4096)
 			result := &collector.Result{
-				Process: process, Language: memsnapshot.LanguageGo,
+				Process:       process,
+				Language:      memsnapshot.LanguageGo,
 				Snapshot:      &memsnapshot.Snapshot{Status: test.status},
 				ProcessMemory: &memsnapshot.ProcessMemory{Status: memsnapshot.SnapshotStatusComplete, RSSBytes: &rssBytes},
 			}

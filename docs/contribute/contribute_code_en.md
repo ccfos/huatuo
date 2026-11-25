@@ -25,7 +25,6 @@ You can contribute to HUATUO in several ways:
 | **Go** | As specified in `go.mod` (currently 1.24.3) | Main implementation language |
 | **Linux** | Kernel 4.18+ | Required for eBPF programs |
 | **Clang/LLVM** | A recent version | Compile eBPF C programs |
-| **Kernel headers** | linux-headers | Required for BPF compilation |
 | **Docker** | Optional | Containerized development environment |
 | **Git** | A recent version | Version control |
 

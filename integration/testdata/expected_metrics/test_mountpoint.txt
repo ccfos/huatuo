@@ -1,5 +1,5 @@
 # HELP huatuo_bamai_mountpoint_perm_ro whether mountpoint is readonly or not
 # TYPE huatuo_bamai_mountpoint_perm_ro gauge
-huatuo_bamai_mountpoint_perm_ro{host="huatuo-dev",mountpoint="/boot",region="dev"} 0
-huatuo_bamai_mountpoint_perm_ro{host="huatuo-dev",mountpoint="/home/root/containers/addaadada1123832892383287238787/mounts/shm",region="dev"} 0
-huatuo_bamai_mountpoint_perm_ro{host="huatuo-dev",mountpoint="/sys/fs/cgroup",region="dev"} 0
+huatuo_bamai_mountpoint_perm_ro{hostname="huatuo-dev",mountpoint="/boot",region="dev"} 0
+huatuo_bamai_mountpoint_perm_ro{hostname="huatuo-dev",mountpoint="/home/root/containers/addaadada1123832892383287238787/mounts/shm",region="dev"} 0
+huatuo_bamai_mountpoint_perm_ro{hostname="huatuo-dev",mountpoint="/sys/fs/cgroup",region="dev"} 0

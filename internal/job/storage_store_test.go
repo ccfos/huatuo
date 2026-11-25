@@ -49,7 +49,7 @@ func storedTestJob(id, userID, host string, status Status, createdAt time.Time) 
 		UserID:   userID,
 		Hostname: host,
 		Duration: time.Minute,
-		Scope:    observation.ScopeHost,
+		Scope:    observation.ScopeTypeHost,
 		Spec: Spec{Profiling: &profiling.Spec{
 			Type:     profiling.TypeCPU,
 			Language: profiling.LanguageGo,

@@ -70,7 +70,7 @@ var capabilities = []Capability{
 		Language:            LanguageJava,
 		Modes:               []Mode{ModeOnCPU},
 		SupportsBinaryMatch: true,
-		SupportedScopes:     []observation.Scope{observation.ScopeContainer},
+		SupportedScopes:     []observation.Scope{observation.ScopeTypeContainer},
 		implementation:      ImplementationJava,
 	},
 	{
@@ -78,7 +78,7 @@ var capabilities = []Capability{
 		Language:            LanguagePython,
 		Modes:               []Mode{ModeOnCPU},
 		SupportsBinaryMatch: true,
-		SupportedScopes:     []observation.Scope{observation.ScopeContainer},
+		SupportedScopes:     []observation.Scope{observation.ScopeTypeContainer},
 		implementation:      ImplementationPython,
 	},
 	newNativeCapability(LanguageC, TypeMemory),
@@ -88,21 +88,21 @@ var capabilities = []Capability{
 		Type:            TypeMemory,
 		Language:        LanguageJava,
 		Modes:           []Mode{ModeObjectAlloc, ModeObjectUsage},
-		SupportedScopes: []observation.Scope{observation.ScopeContainer},
+		SupportedScopes: []observation.Scope{observation.ScopeTypeContainer},
 		implementation:  ImplementationJava,
 	},
 }
 
 func newNativeCapability(language Language, typ Type) Capability {
 	modes := []Mode{ModeOnCPU, ModeOffCPU}
-	scopes := []observation.Scope{observation.ScopeHost, observation.ScopeContainer}
+	scopes := []observation.Scope{observation.ScopeTypeHost, observation.ScopeTypeContainer}
 	if typ == TypeMemory {
 		modes = []Mode{
 			ModeVirtualAlloc,
 			ModePhysicalAlloc,
 			ModePhysicalUsage,
 		}
-		scopes = []observation.Scope{observation.ScopeContainer}
+		scopes = []observation.Scope{observation.ScopeTypeContainer}
 	}
 
 	return Capability{

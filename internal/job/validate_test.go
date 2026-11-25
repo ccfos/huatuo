@@ -87,7 +87,7 @@ func TestCreateRequestValidate(t *testing.T) {
 			UserID:   "user-1",
 			Hostname: "node-1",
 			Duration: time.Minute,
-			Scope:    observation.ScopeHost,
+			Scope:    observation.ScopeTypeHost,
 			Spec: Spec{Profiling: &profiling.Spec{
 				Type:     profiling.TypeCPU,
 				Language: profiling.LanguageGo,
@@ -133,7 +133,7 @@ func TestCreateRequestValidate(t *testing.T) {
 			name: "invalid scope",
 			input: func() *CreateRequest {
 				request := validRequest()
-				request.Scope = observation.ScopeUnknown
+				request.Scope = observation.ScopeTypeUnknown
 				return request
 			},
 			wantErr: "scope",
@@ -183,7 +183,7 @@ func TestJobValidateStateRequiresTerminalResultForTerminalStatus(t *testing.T) {
 				UserID:   "user-1",
 				Hostname: "node-1",
 				Duration: time.Minute,
-				Scope:    observation.ScopeHost,
+				Scope:    observation.ScopeTypeHost,
 				Spec: Spec{Profiling: &profiling.Spec{
 					Type:     profiling.TypeCPU,
 					Language: profiling.LanguageGo,

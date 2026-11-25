@@ -15,11 +15,15 @@
 package metric
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"sync"
 	"testing"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestDefaultHostnameAndRegion(t *testing.T) {
@@ -114,10 +118,10 @@ func TestNewGaugeData(t *testing.T) {
 					t.Errorf("labels length=%d/%d, want 4/4", len(d.labelKey), len(d.labelValue))
 					return
 				}
-				if d.labelKey[0] != LabelRegion || d.labelValue[0] != "huatuo-region" {
-					t.Errorf("label[0]=%q:%q, want %q:%q", d.labelKey[0], d.labelValue[0], LabelRegion, "huatuo-region")
+				if d.labelKey[0] != observation.FieldRegion || d.labelValue[0] != "huatuo-region" {
+					t.Errorf("label[0]=%q:%q, want %q:%q", d.labelKey[0], d.labelValue[0], observation.FieldRegion, "huatuo-region")
 				}
-				if d.labelKey[1] != LabelHost || d.labelValue[1] == "" {
+				if d.labelKey[1] != observation.FieldHostname || d.labelValue[1] == "" {
 					t.Errorf("label[1]=%q:%q, want host with non-empty value", d.labelKey[1], d.labelValue[1])
 				}
 				if d.labelKey[2] != "a" || d.labelKey[3] != "z" {
@@ -195,7 +199,7 @@ func TestNewCounterData_DiffPoint(t *testing.T) {
 	}
 }
 
-func TestDataLabelsAllowDefaultOverrides(t *testing.T) {
+func TestDataLabelsKeepTargetMetadata(t *testing.T) {
 	defaultRegion = "huatuo-region"
 	defaultHostname = "huatuo-dev"
 
@@ -208,15 +212,15 @@ func TestDataLabelsAllowDefaultOverrides(t *testing.T) {
 			name: "host metric",
 			build: func() *Data {
 				return NewGaugeData("cpu_usage", 1, "cpu usage", map[string]string{
-					LabelRegion:        "custom-region",
-					LabelHost:          "custom-host",
-					LabelContainerName: "custom-container",
+					observation.FieldRegion:   "custom-region",
+					observation.FieldHostname: "custom-host",
+					"device":                  "sda",
 				})
 			},
 			want: map[string]string{
-				LabelRegion:        "custom-region",
-				LabelHost:          "custom-host",
-				LabelContainerName: "custom-container",
+				observation.FieldRegion:   "huatuo-region",
+				observation.FieldHostname: "huatuo-dev",
+				"device":                  "sda",
 			},
 		},
 		{
@@ -226,13 +230,14 @@ func TestDataLabelsAllowDefaultOverrides(t *testing.T) {
 					Name:     "container",
 					Hostname: "node",
 					Type:     pod.ContainerTypeNormal,
-					Labels:   map[string]any{"HostNamespace": "host-ns"},
+					Labels:   map[string]any{observation.FieldContainerNamespace: "host-ns"},
 				}, "latency", 1, "latency", map[string]string{
-					LabelContainerName: "custom-container",
-					LabelHost:          "custom-host",
+					observation.FieldContainerName: "custom-container",
+					"device":                       "sda",
+					observation.FieldHostname:      "custom-host",
 				})
 			},
-			want: map[string]string{LabelContainerName: "custom-container", LabelHost: "custom-host"},
+			want: map[string]string{observation.FieldContainerName: "container", observation.FieldHostname: "huatuo-dev"},
 		},
 	}
 
@@ -267,7 +272,7 @@ func TestNewContainerGaugeData(t *testing.T) {
 		Hostname: "huatuo-dev",
 		Type:     pod.ContainerTypeNormal,
 		Labels: map[string]any{
-			"HostNamespace": "host-ns-1001",
+			observation.FieldContainerNamespace: "host-ns-1001",
 		},
 	}
 
@@ -308,7 +313,7 @@ func TestPrometheusMetric(t *testing.T) {
 					valueType:  MetricTypeGauge,
 					Value:      1,
 					help:       "help",
-					labelKey:   []string{LabelRegion, LabelHost},
+					labelKey:   []string{observation.FieldRegion, observation.FieldHostname},
 					labelValue: []string{"huatuo-region", "huatuo-dev"},
 				}
 			},
@@ -334,7 +339,7 @@ func TestPrometheusMetric(t *testing.T) {
 					valueType:  MetricTypeCounter,
 					Value:      1,
 					help:       "help",
-					labelKey:   []string{LabelRegion, LabelHost},
+					labelKey:   []string{observation.FieldRegion, observation.FieldHostname},
 					labelValue: []string{"huatuo-region", "huatuo-dev"},
 				}
 			},
@@ -360,7 +365,7 @@ func TestPrometheusMetric(t *testing.T) {
 					valueType:  MetricTypeGauge,
 					Value:      1,
 					help:       "help",
-					labelKey:   []string{LabelRegion, LabelHost},
+					labelKey:   []string{observation.FieldRegion, observation.FieldHostname},
 					labelValue: []string{"huatuo-region", "huatuo-dev"},
 				}
 			},
@@ -386,7 +391,7 @@ func TestPrometheusMetric(t *testing.T) {
 					valueType:  -1,
 					Value:      1,
 					help:       "help",
-					labelKey:   []string{LabelRegion, LabelHost},
+					labelKey:   []string{observation.FieldRegion, observation.FieldHostname},
 					labelValue: []string{"huatuo-region", "huatuo-dev"},
 				}
 			},
@@ -410,5 +415,89 @@ func TestPrometheusMetric(t *testing.T) {
 		t.Run(tests[i].name, func(t *testing.T) {
 			tests[i].validate(t, tests[i].build().prometheusMetric("collector"))
 		})
+	}
+}
+
+func BenchmarkDataMetadata(b *testing.B) {
+	container := &pod.Container{
+		ID:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Name:     "worker",
+		Hostname: "worker-pod",
+		Type:     pod.ContainerTypeNormal,
+		Labels:   map[string]any{observation.FieldContainerNamespace: "production"},
+	}
+	labels := map[string]string{"device": "sda", "operation": "read"}
+	b.Run("host", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = NewGaugeData("test", 1, "test", labels)
+		}
+	})
+	b.Run("container", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = NewContainerGaugeData(container, "test", 1, "test", labels)
+		}
+	})
+}
+
+func TestPublicMetadataMatchesDocumentJSON(t *testing.T) {
+	defaultRegion = "region-a"
+	defaultHostname = "node-a"
+	container := &pod.Container{
+		ID:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Name:     "worker",
+		Hostname: "worker-pod",
+		Type:     pod.ContainerTypeNormal,
+		Labels:   map[string]any{observation.FieldContainerNamespace: "production"},
+	}
+	metadata := container.ObservationMetadata()
+	metadata.Region = defaultRegion
+	metadata.Hostname = defaultHostname
+	data := NewContainerGaugeData(container, "metadata_contract", 1, "Metadata contract.", nil)
+	labels := data.Labels()
+	expected := map[string]string{
+		"region":              "region-a",
+		"hostname":            "node-a",
+		"container_id":        container.ID,
+		"container_name":      "worker",
+		"container_hostname":  "worker-pod",
+		"container_namespace": "production",
+		"container_type":      "normal",
+		"container_qos":       container.Qos.String(),
+	}
+	if !maps.Equal(labels, expected) {
+		t.Fatalf("metric metadata = %v, want %v", labels, expected)
+	}
+	encoded, err := json.Marshal(&types.Document{Metadata: metadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for key, expectedValue := range expected {
+		var value string
+		if err := json.Unmarshal(fields[key], &value); err != nil {
+			t.Fatalf("document field %q: %v", key, err)
+		}
+		if value != expectedValue {
+			t.Fatalf("document %s = %q, want %q", key, value, expectedValue)
+		}
+	}
+}
+
+func TestHostMetricOmitsContainerMetadata(t *testing.T) {
+	defaultRegion = "region-a"
+	defaultHostname = "node-a"
+	data := NewGaugeData("host_metadata", 1, "Host metadata.", map[string]string{
+		observation.FieldContainerID:   "unrelated-container",
+		observation.FieldContainerName: "unrelated-name",
+		"device":                       "sda",
+	})
+	expected := map[string]string{"region": "region-a", "hostname": "node-a", "device": "sda"}
+	if !maps.Equal(data.Labels(), expected) {
+		t.Fatalf("host metadata = %v, want %v", data.Labels(), expected)
 	}
 }

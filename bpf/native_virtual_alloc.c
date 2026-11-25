@@ -23,7 +23,7 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
 	u64 mem_css = 0;
-	if (profiler_filter_css != 0)
+	if (profiler_filter_css_addr != 0)
 		mem_css = current_task_memory_css_addr();
 	if (!profiler_should_trace(pid_tgid, mem_css))
 		return 0;

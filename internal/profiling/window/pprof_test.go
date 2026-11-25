@@ -87,3 +87,55 @@ func TestBuildProfilePreservesUserAndKernelFrames(t *testing.T) {
 		t.Fatal("BuildProfile modified the input frame dictionary")
 	}
 }
+
+func TestBuildProfilePreservesOffCPUReasons(t *testing.T) {
+	t.Parallel()
+	w := &types.AggregationWindow{
+		ProfileType: profiling.ProfileTypeOffCpuSample,
+		Aggregated: types.AggregatedProfile{
+			TimeNanos: 1,
+			LabelSets: [][]types.ProfileLabel{
+				{types.ProfileStringLabel("offcpu_reason", "blocked")},
+				{types.ProfileStringLabel("offcpu_reason", "runqueue")},
+			},
+			Samples: []types.AggregatedSample{
+				{
+					LabelSet: 1,
+					Value:    7,
+				},
+				{
+					LabelSet: 2,
+					Value:    11,
+				},
+			},
+		},
+	}
+	p, err := window.BuildProfile(t.Context(), w)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if p.StringTable[p.SampleType[0].Type] != "offcpu" || p.StringTable[p.SampleType[0].Unit] != "nanoseconds" {
+		t.Fatalf("unexpected off-CPU sample type: %v", p.SampleType)
+	}
+
+	if len(p.Sample) != 2 {
+		t.Fatalf("samples = %d, want 2", len(p.Sample))
+	}
+
+	for i, sample := range p.Sample {
+		if len(sample.Label) != 1 {
+			t.Fatalf("sample %d labels = %v, want one reason", i, sample.Label)
+		}
+
+		label := sample.Label[0]
+		if p.StringTable[label.Key] != "offcpu_reason" ||
+			p.StringTable[label.Str] != w.Aggregated.LabelSets[i][0].StringValue {
+			t.Errorf("sample %d lost its off-CPU reason", i)
+		}
+
+		if !reflect.DeepEqual(sample.Value, []int64{w.Aggregated.Samples[i].Value}) {
+			t.Errorf("sample %d value = %v, want unchanged nanoseconds", i, sample.Value)
+		}
+	}
+}

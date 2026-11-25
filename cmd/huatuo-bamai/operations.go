@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"path/filepath"
 	"time"
 
@@ -30,11 +29,6 @@ import (
 
 func startOperations(d *Daemon) (func(context.Context) error, error) {
 	cfg := config.Get()
-	nodeAPIAddress, err := localAPIAddress(cfg.HTTPServer.ListenAddress)
-	if err != nil {
-		return nil, err
-	}
-
 	manager, err := operation.NewManager(operation.Config{
 		MaxConcurrent: cfg.Operations.MaxConcurrent,
 		Lifecycle: operation.LifecyclePolicy{
@@ -61,7 +55,6 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
 		ProfilerPath:         filepath.Join(d.opts.ToolBinDir, "profiler"),
 		ToolstreamSocketPath: toolstream.DefaultSockPath,
-		NodeAPIAddress:       nodeAPIAddress,
 		ToolDir:              cfg.Profiling.ToolDir,
 		AggregationInterval: time.Duration(cfg.Profiling.AggregationIntervalSeconds) *
 			time.Second,
@@ -81,16 +74,4 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 	d.tracingService = tracingService
 	initialized = true
 	return manager.Shutdown, nil
-}
-
-func localAPIAddress(listenAddress string) (string, error) {
-	host, port, err := net.SplitHostPort(listenAddress)
-	if err != nil {
-		return "", fmt.Errorf("derive local Node API address from %q: %w", listenAddress, err)
-	}
-	switch host {
-	case "", "0.0.0.0", "::":
-		host = "127.0.0.1"
-	}
-	return net.JoinHostPort(host, port), nil
 }

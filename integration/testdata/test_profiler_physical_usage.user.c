@@ -20,7 +20,8 @@
 #include <unistd.h>
 
 #define KEEP_FRAME __attribute__((noinline, noclone))
-#define PAGES_PER_ITERATION 64
+/* Keep all alloc/free records below one perf ring while spanning A/B swaps. */
+#define PAGES_PER_ITERATION 16
 #define ITERATIONS 300
 #define ITERATION_DELAY_US 10000
 
@@ -98,6 +99,12 @@ int main(int argc, char **argv) {
 		}
 		test_physical_usage_alloc_free_loop(size);
 		return 0;
+	}
+
+	/* Keep test pages out of compaction without faulting them before the marker. */
+	if (mlockall(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT) != 0) {
+		perror("mlockall (requires sufficient RLIMIT_MEMLOCK or CAP_IPC_LOCK)");
+		return 1;
 	}
 
 	wait_for_start_signal();

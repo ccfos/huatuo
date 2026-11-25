@@ -26,7 +26,7 @@ func TestParseNodeContainerResponseRejectsMismatchedID(t *testing.T) {
 	response := nodeJSONResponse(
 		http.StatusOK,
 		fmt.Sprintf(
-			`{"data":{"id":%q,"cgroup_css":{}}}`,
+			`{"data":{"id":%q,"cgroup_css_refs":{}}}`,
 			strings.Repeat("b", 64),
 		),
 	)
@@ -39,5 +39,22 @@ func TestParseNodeContainerResponseRejectsMismatchedID(t *testing.T) {
 	}
 	if nodeErr.Code != NodeErrorCodeProtocol {
 		t.Fatalf("Node client error = %+v", nodeErr)
+	}
+}
+
+func TestParseNodeContainerResponseRejectsLegacyCSS(t *testing.T) {
+	response := nodeJSONResponse(
+		http.StatusOK,
+		fmt.Sprintf(
+			`{"data":{"id":%q,"cgroup_css":{"cpu":"0xffff888012345678"}}}`,
+			nodeTestContainerID,
+		),
+	)
+	defer response.Body.Close()
+
+	_, err := parseNodeContainerResponse(response, nodeTestContainerID)
+	var nodeErr *NodeError
+	if !errors.As(err, &nodeErr) || nodeErr.Code != NodeErrorCodeProtocol {
+		t.Fatalf("parseNodeContainerResponse() error = %v, want protocol error", err)
 	}
 }

@@ -87,6 +87,10 @@ Use `--output-format json --output-path irqtracing.json` to save the same window
 
 `dropped_samples.collection` counts samples dropped because the kernel sampling budget or counts map is full; the current counter cannot distinguish these causes. A nonzero value means the profile is incomplete and produces a stderr warning. Failure to read the counter fails collection. A full profiler user-space queue waits for aggregation to make space or for the processing context to be canceled; `dropped_samples.aggregation_queue` is retained only for historical data compatibility.
 
+## Profile the tool's Go runtime
+
+`--enable-pprof` defaults to false. Enable it to listen on `127.0.0.1:6000`; an occupied port fails startup. These profiles describe the irqtracing process itself, not IRQ/softIRQ stacks or huatuo-bamai. Keep the tool running throughout collection.
+
 ## Invocation by huatuo-bamai
 
 When its rules detect a spike or sustained high irq/softirq utilization on a CPU, the daemon's `AutoTracing.IRQTracing` tracer invokes the `irqtracing` binary beside the daemon executable. `CoreBinDir` is derived from the daemon's path; in a source build, the tool is `_output/bin/irqtracing`.

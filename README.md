@@ -70,17 +70,62 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   To launch the full stack (Elasticsearch, Prometheus, Grafana, and huatuo) using Docker Compose:
 
-        $ docker compose --project-directory ./build/docker up
+        $ make compose-dev-up
 
   Once running, access the monitoring dashboard at http://localhost:3000.
 
   ![](/docs/img/quickstart-components.png)  
   
+  ![](/docs/img/quickstart-continuous-profiling.png)
+
   ![](/docs/img/quickstart-autotracing-event.png)
 
 - **NOTE**
 
   Do not deploy images with the latest tag to production environments, as this is a development and testing image. Use a formal release image or binary.
+
+## Kernel Versions
+
+The project supports kernel version 4.18 and later. The following kernel and OS distribution are primarily tested.
+
+| HUATUO | Kernel | OS |
+| :--- | :--- | :--- |
+| 1.0.0 | 4.18.x | CentOS 8.x |
+| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
+| 1.0.0 | 5.4.x | OpenCloudOS V8 |
+| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
+| 1.0.0 | 5.10.x | Anolis OS 8.10 |
+| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
+| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
+| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
+| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
+| 1.0.0 | 6.6.x | Anolis OS 23.3 |
+| 1.0.0 | 6.6.x | OpenCloudOS V9 |
+| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
+| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
+| 2.4.0 | 6.12.x | Debian 13 (trixie) |
+| 1.0.0 | 6.14.x | Fedora 42 |
+| 2.4.0 | 6.19.x | Fedora Linux 44 |
+| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
+
+## Community Maintainers
+
+| Name | Role | Focus |
+| :--- | :--- | :--- |
+| [Tonghao Zhang](https://x.com/hao_0022) | Founder & Maintainer | Linux kernel developer and contributor to eBPF, networking, OVS, and DPDK. |
+| [Jason Xing](https://www.linkedin.com/in/jasonxing/) | TOC Member | Linux kernel Netdev reviewer, Netdev Conf program committee member, LPC Observability microconference organizer, and IETF TCP RST Diagnostic Payload founder. |
+| [Lance Yang](https://github.com/ioworker0) | TOC Member | Linux kernel developer, THP and RMAP reviewer, and hung task detector maintainer. |
+| [Leon Hwang](https://github.com/Asphaltt) | TOC Member | Linux kernel developer, eBPF subsystem contributor, and author of bpfsnoop. |
+| [Menglong Dong](https://www.linkedin.com/in/menglong-dong) | TOC Member | Linux kernel developer, eBPF and networking subsystem contributor, and author of nettrace. |
+| [Nan Li](https://github.com/lanenson) | Maintainer | Linux kernel developer and RAID subsystem reviewer. |
+
+## Co-Building
+
+- ❇️ We welcome all users, developers, companies, and organizations to use Huatuo, report bugs, submit feature requests, share best practices, and help us build a professional and vibrant open-source community.
+- ❤️ Contributors
+<a href="https://github.com/ccfos/huatuo/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
+</a>
 
 ## Go Client
 
@@ -112,41 +157,9 @@ func updateNodeConfig(ctx context.Context, address client.NodeAddress) error {
 }
 ```
 
-## Kernel Versions
-
-The project supports kernel version 4.18 and later. The following kernel and OS distribution are primarily tested.
-
-| HUATUO | Kernel | OS |
-| :--- | :--- | :--- |
-| 1.0.0 | 4.18.x | CentOS 8.x |
-| 2.4.0 | 4.18.x | Rocky Linux 8.10 |
-| 1.0.0 | 5.4.x | OpenCloudOS V8 |
-| 1.0.0 | 5.4.x | Ubuntu 20.04.6 LTS |
-| 1.0.0 | 5.10.x | Anolis OS 8.10 |
-| 1.0.0 | 5.10.x | openEuler 22.03 LTS-SP4 |
-| 2.4.0 | 5.14.x | Rocky Linux 9.8 |
-| 1.0.0 | 5.15.x | Ubuntu 22.04.5 LTS |
-| 2.4.0 | 6.1.x | Debian 12 (bookworm) |
-| 1.0.0 | 6.6.x | Anolis OS 23.3 |
-| 1.0.0 | 6.6.x | OpenCloudOS V9 |
-| 1.0.0 | 6.6.x | openEuler 24.03 LTS-SP4 |
-| 1.0.0 | 6.8.x | Ubuntu 24.04.4 LTS |
-| 2.4.0 | 6.12.x | Debian 13 (trixie) |
-| 1.0.0 | 6.14.x | Fedora 42 |
-| 2.4.0 | 6.19.x | Fedora Linux 44 |
-| 2.3.0 | 7.0.x | Ubuntu 26.04 LTS |
-
 ## Documentation
 
 For more information, visit [https://docs.huatuo.tech](https://docs.huatuo.tech/)
-
-## Co-Building
-
-- ❇️ We welcome all users, developers, companies, and organizations to use Huatuo, report bugs, submit feature requests, share best practices, and help us build a professional and vibrant open-source community.
-- ❤️ Contributors
-<a href="https://github.com/ccfos/huatuo/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
-</a>
 
 ## Contact Us
 - WeChat Group and Official Account:

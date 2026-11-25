@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/version"
@@ -42,11 +44,24 @@ var (
 	AppBuildTime string
 )
 
-func mainAction(cliCtx *cli.Context) error {
+func mainAction(cliCtx *cli.Context) (returnErr error) {
 	cfg, err := loadConfig(cliCtx)
 	if err != nil {
 		return err
 	}
+
+	if cliCtx.Bool(cliFlagEnablePProf) {
+		server, err := serverpprof.StartDefault(cliCtx.Context)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := server.Close(); err != nil {
+				returnErr = errors.Join(returnErr, fmt.Errorf("close pprof server: %w", err))
+			}
+		}()
+	}
+
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: cfg.duration}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}

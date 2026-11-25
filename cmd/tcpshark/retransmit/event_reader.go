@@ -24,6 +24,8 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 // readRetransmitEvent retries sample loss without transferring ownership of dst.
@@ -72,6 +74,10 @@ func writeRetransmitEvents(
 			return err
 		}
 		if err := sink.Write(tracing); err != nil {
+			if ctx.Err() != nil && errors.Is(err, toolstream.ErrOutputTimeout) {
+				return nil
+			}
+
 			return fmt.Errorf("write event: %w", err)
 		}
 	}
@@ -111,7 +117,7 @@ func readDropwatchEvents(
 			return nil
 		}
 		if err := read(&record); err != nil {
-			if ctx.Err() != nil {
+			if err == types.ErrExitByCancelCtx { //nolint:errorlint // Only the direct stop marker is expected; joined failures must propagate.
 				return nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {

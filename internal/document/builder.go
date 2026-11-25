@@ -18,14 +18,12 @@ package document
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	"github.com/ccfos/huatuo/pkg/types"
 )
-
-const defaultHostname = "huatuo-dev"
 
 // Input contains fields supplied by an observation producer.
 type Input struct {
@@ -40,17 +38,15 @@ type Input struct {
 
 // Builder enriches observation metadata with Node and container fields.
 type Builder struct {
-	region   string
-	hostname string
+	metadata observation.Metadata
 }
 
-// New binds Node-local metadata used by every generated document.
-func New(region string) *Builder {
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = defaultHostname
-	}
-	return &Builder{region: region, hostname: hostname}
+// New binds node metadata shared with metric collection.
+func New(metadata *observation.Metadata) *Builder {
+	return &Builder{metadata: observation.Metadata{
+		Region:   metadata.Region,
+		Hostname: metadata.Hostname,
+	}}
 }
 
 // Build creates shared document metadata and resolves optional container fields.
@@ -62,8 +58,7 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 		return types.Document{}, errors.New("document input is required")
 	}
 	metadata := types.Document{
-		Hostname:      b.hostname,
-		Region:        b.region,
+		Metadata:      b.metadata,
 		TracerName:    input.TracerName,
 		TracerID:      input.TracerID,
 		TracerRunType: input.TracerRunType,
@@ -90,10 +85,9 @@ func (b *Builder) Build(input *Input) (types.Document, error) {
 	if container == nil {
 		return types.Document{}, fmt.Errorf("container %q not found", input.ContainerID)
 	}
-	metadata.ContainerID = container.ID
-	metadata.ContainerHostname = container.Hostname
-	metadata.ContainerHostNamespace = container.LabelHostNamespace()
-	metadata.ContainerType = container.Type.String()
-	metadata.ContainerQoS = container.Qos.String()
+	metadata.Metadata = container.ObservationMetadata()
+	metadata.Region = b.metadata.Region
+	metadata.Hostname = b.metadata.Hostname
+
 	return metadata, nil
 }

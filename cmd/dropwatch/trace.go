@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/dropwatch"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type dropwatchOptions struct {
@@ -44,6 +45,10 @@ type dropwatchOptions struct {
 }
 
 func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
+	if ctx.Err() != nil {
+		return nil
+	}
+
 	names, err := dropwatch.LoadReasonNames()
 	if err != nil {
 		log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
@@ -81,16 +86,24 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		HardwareMode:       dropwatch.HardwareAuto,
 	})
 	if err != nil {
+		if err == dropwatch.ErrOpenCanceled { //nolint:errorlint // Only the direct marker guarantees successful rollback.
+			return nil
+		}
 		return err
 	}
 	defer func() {
-		returnErr = errors.Join(returnErr, tracer.Close())
+		if err := tracer.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close dropwatch tracer: %w", err))
+		}
 	}()
+	if runCtx.Err() != nil {
+		return nil
+	}
 	if !tracer.HardwareEnabled() {
 		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
 	}
 
-	sink, sinkCleanup, err := newWriter(options.output, &writerOptions{
+	sink, sinkCleanup, err := newWriter(runCtx, options.output, &writerOptions{
 		outputFormat: options.outputFormat,
 		socketPath:   options.outputStorage,
 		toolName:     dropwatchToolName,
@@ -101,8 +114,8 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		return err
 	}
 
-	streamErr := streamDropwatchEvents(runCtx, tracer, sink, names, options.sourceType)
-	if err := sinkCleanup(); err != nil {
+	streamErr := streamDropwatchEvents(runCtx, tracer.ReadInto, sink, names, options.sourceType)
+	if err := sinkCleanup(); err != nil && !errors.Is(streamErr, err) {
 		streamErr = errors.Join(streamErr, fmt.Errorf("close event sink: %w", err))
 	}
 	return streamErr
@@ -110,7 +123,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 
 func streamDropwatchEvents(
 	ctx context.Context,
-	tracer *dropwatch.Tracer,
+	readInto func(*abi.DropwatchPacketEvent) error,
 	sink writer,
 	names dropwatch.ReasonNames,
 	sourceType string,
@@ -121,8 +134,8 @@ func streamDropwatchEvents(
 		}
 
 		var ev abi.DropwatchPacketEvent
-		if err := tracer.ReadInto(&ev); err != nil {
-			if ctx.Err() != nil {
+		if err := readInto(&ev); err != nil {
+			if err == types.ErrExitByCancelCtx { //nolint:errorlint // Only the direct stop marker is expected; joined failures must propagate.
 				return nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {

@@ -29,6 +29,7 @@ import (
 	"github.com/ccfos/huatuo/internal/httpserver/response"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -56,7 +57,10 @@ func TestWatchEventsWritesHeartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WatchEvents() error = %v", err)
 	}
-	writer := &cancelingResponseWriter{header: make(http.Header), cancel: cancel}
+	writer := &cancelingResponseWriter{
+		header: make(http.Header),
+		cancel: cancel,
+	}
 	if err := stream.VisitWatchEventsResponse(writer); err != nil {
 		t.Fatalf("VisitWatchEventsResponse() error = %v", err)
 	}
@@ -91,10 +95,18 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 		cloudEvents:       cloudEvents,
 		keepAliveInterval: time.Hour,
 	}
+	containerID, containerName, containerType, containerNamespace := "^container-a$", "^worker$", "^normal$", "^production$"
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	stream, err := handler.WatchEvents(ctx, nodeapi.WatchEventsRequestObject{
-		Body: &nodeapi.WatchEventsJSONRequestBody{},
+		Body: &nodeapi.WatchEventsJSONRequestBody{
+			Filters: &nodeapi.WatchEventFilters{
+				ContainerID:        &containerID,
+				ContainerName:      &containerName,
+				ContainerType:      &containerType,
+				ContainerNamespace: &containerNamespace,
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("WatchEvents() error = %v", err)
@@ -103,8 +115,16 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 	observedTimestamp := time.Unix(1_700_000_000, 0).UTC()
 	kernelObservedTimestamp := observedTimestamp.Add(-time.Second)
 	if err := store.Save(&tracingstore.Document{Document: types.Document{
-		Hostname:                "node-1",
-		Region:                  "cn",
+		Metadata: observation.Metadata{
+			Hostname:           "node-1",
+			Region:             "cn",
+			ContainerID:        "container-a",
+			ContainerName:      "worker",
+			ContainerHostname:  "pod-a",
+			ContainerNamespace: "production",
+			ContainerType:      "normal",
+			ContainerQoS:       "guaranteed",
+		},
 		ObservedTimestamp:       &timeutil.Timestamp{Time: observedTimestamp},
 		KernelObservedTimestamp: &timeutil.Timestamp{Time: kernelObservedTimestamp},
 		TracerName:              "cpu",
@@ -113,7 +133,10 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 		t.Fatalf("Store.Save() error = %v", err)
 	}
 
-	writer := &cancelingResponseWriter{header: make(http.Header), cancel: cancel}
+	writer := &cancelingResponseWriter{
+		header: make(http.Header),
+		cancel: cancel,
+	}
 	if err := stream.VisitWatchEventsResponse(writer); err != nil {
 		t.Fatalf("VisitWatchEventsResponse() error = %v", err)
 	}
@@ -142,6 +165,13 @@ func TestWatchEventsWritesCloudEvent(t *testing.T) {
 	if event.Data.Hostname != "node-1" || event.Data.TracerName == nil ||
 		*event.Data.TracerName != "cpu" {
 		t.Errorf("CloudEvent data = %+v", event.Data)
+	}
+	if optionalString(event.Data.ContainerID) != "container-a" ||
+		optionalString(event.Data.ContainerName) != "worker" ||
+		optionalString(event.Data.ContainerNamespace) != "production" ||
+		optionalString(event.Data.ContainerType) != "normal" ||
+		optionalString(event.Data.ContainerQoS) != "guaranteed" {
+		t.Fatalf("CloudEvent metadata = %+v", event.Data)
 	}
 }
 

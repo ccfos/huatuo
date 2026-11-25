@@ -30,7 +30,6 @@ func testProfilingConfig(t *testing.T) *Config {
 	return &Config{
 		ProfilerPath:            "/opt/huatuo/profiler",
 		ToolstreamSocketPath:    "/var/run/huatuo-toolstream.sock",
-		NodeAPIAddress:          "127.0.0.1:19704",
 		ToolDir:                 "/opt/huatuo/tools",
 		AggregationInterval:     10 * time.Second,
 		MaxConcurrentProcesses:  4,
@@ -42,7 +41,7 @@ func testProfilingRequest() *StartRequest {
 	return &StartRequest{
 		RequestID: "job-1",
 		Duration:  time.Minute,
-		Scope:     observation.ScopeHost,
+		Scope:     observation.ScopeTypeHost,
 		Spec: profilingdomain.Spec{
 			Type:     profilingdomain.TypeCPU,
 			Language: profilingdomain.LanguageGo,
@@ -70,7 +69,6 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 		"--output-format", "remote-store",
 		"--output-path", "/var/run/huatuo-toolstream.sock",
 		"--task-id", "job-1",
-		"--huatuo-api-address", "127.0.0.1:19704",
 		"--tool-path", "/opt/huatuo/tools",
 		"--cpu-mode", "offcpu",
 		"--binary-match-path", "/usr/bin/service worker",
@@ -78,6 +76,10 @@ func TestBuildCommandUsesTypedRequestWithoutShellExpansion(t *testing.T) {
 	if spec.Path != config.ProfilerPath || !slices.Equal(spec.Args, want) {
 		t.Fatalf("command spec = %+v, want args %q", spec, want)
 	}
+	if spec.StopSignal != 0 {
+		t.Fatalf("StopSignal = %v, want default SIGTERM to abort without publishing", spec.StopSignal)
+	}
+
 	if spec.MaxStdoutBytes != config.CommandOutputLimitBytes {
 		t.Fatalf("MaxStdoutBytes = %d", spec.MaxStdoutBytes)
 	}
@@ -87,7 +89,7 @@ func TestBuildCommandUsesOnePythonAggregationWindow(t *testing.T) {
 	config := testProfilingConfig(t)
 	request := testProfilingRequest()
 	request.Duration = 45 * time.Second
-	request.Scope = observation.ScopeContainer
+	request.Scope = observation.ScopeTypeContainer
 	request.ContainerID = strings.Repeat("a", 64)
 	request.Spec.Language = profilingdomain.LanguagePython
 	request.Spec.BinaryMatchPath = "/usr/bin/python"

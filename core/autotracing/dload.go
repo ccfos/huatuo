@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
@@ -35,7 +36,7 @@ import (
 	cadvisorV1 "github.com/google/cadvisor/info/v1"
 	"github.com/google/cadvisor/utils/cpuload/netlink"
 	"github.com/prometheus/procfs"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 func init() {
@@ -352,7 +353,7 @@ func dumpUninterruptibleTaskStack(scope taskScope, path string, all bool) (strin
 			continue
 		}
 
-		if status != "D" && status != "U" && !all {
+		if !all && !slices.Contains(status, process.Blocked) {
 			continue
 		}
 		comm, err := proc.Name()

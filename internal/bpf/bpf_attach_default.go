@@ -17,6 +17,7 @@
 package bpf
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -154,7 +155,7 @@ func parsePerfEventAttachOptions(
 	if samplePeriod != 0 && sampleFreq != 0 {
 		return nil, fmt.Errorf(
 			"%w: sample period and frequency are mutually exclusive",
-			errInvalidPerfEventOption,
+			ErrInvalidPerfEventOption,
 		)
 	}
 
@@ -424,6 +425,25 @@ func (b *defaultBPF) Detach() error {
 	}
 
 	return b.detach()
+}
+
+func (b *defaultBPF) DetachOnContextDone(ctx context.Context) func() error {
+	watchCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	var detachErr error
+	go func() {
+		defer close(done)
+
+		<-watchCtx.Done()
+		detachErr = b.Detach()
+	}()
+
+	return func() error {
+		stop()
+		<-done
+
+		return detachErr
+	}
 }
 
 func (b *defaultBPF) detach() error {

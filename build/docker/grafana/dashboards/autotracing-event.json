@@ -573,10 +573,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -691,10 +691,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -811,10 +811,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -931,10 +931,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1131,10 +1131,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1251,10 +1251,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1371,10 +1371,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1491,10 +1491,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1611,10 +1611,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1731,10 +1731,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1851,10 +1851,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -1971,10 +1971,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2091,10 +2091,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2211,10 +2211,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2331,10 +2331,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2451,10 +2451,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2571,10 +2571,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2691,10 +2691,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -2811,10 +2811,10 @@
               "_id": 2,
               "_index": 3,
               "_type": 4,
-              "container_host_ns": 5,
+              "container_namespace": 5,
               "container_hostname": 6,
               "container_id": 7,
-              "container_level": 8,
+              "container_qos": 8,
               "container_type": 9,
               "es_index_time": 10,
               "highlight": 11,
@@ -3017,10 +3017,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -3165,10 +3165,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -3314,10 +3314,10 @@
                   "_id": false,
                   "_index": true,
                   "_type": true,
-                  "container_host_ns": true,
+                  "container_namespace": true,
                   "container_hostname": false,
                   "container_id": true,
-                  "container_level": true,
+                  "container_qos": true,
                   "container_type": true,
                   "es_index_time": true,
                   "highlight": true,
@@ -3552,10 +3552,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -3703,10 +3703,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -3876,10 +3876,10 @@
                   "_id": false,
                   "_index": true,
                   "_type": true,
-                  "container_host_ns": true,
+                  "container_namespace": true,
                   "container_hostname": false,
                   "container_id": true,
-                  "container_level": true,
+                  "container_qos": true,
                   "container_type": true,
                   "es_index_time": true,
                   "highlight": true,
@@ -3937,7 +3937,7 @@
                   "_index": 3,
                   "_source": 59,
                   "_type": 4,
-                  "container_host_namespace": 22,
+                  "container_namespace": 22,
                   "container_hostname": 5,
                   "container_id": 6,
                   "container_qos": 23,
@@ -3997,7 +3997,7 @@
                 "renameByName": {
                   "_id": "Click to view flame graph",
                   "_source": "",
-                  "container_host_namespace": "",
+                  "container_namespace": "",
                   "tracer_data.deltasys": "",
                   "tracer_data.deltasysth": "",
                   "tracer_data.deltausage": "",
@@ -4161,10 +4161,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -4309,10 +4309,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -4487,7 +4487,7 @@
                   "_index": 3,
                   "_source": 29,
                   "_type": 4,
-                  "container_host_namespace": 15,
+                  "container_namespace": 15,
                   "container_hostname": 5,
                   "container_id": 6,
                   "container_qos": 16,
@@ -4664,10 +4664,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -4812,10 +4812,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -4948,7 +4948,7 @@
                   "_index": 3,
                   "_source": 26,
                   "_type": 4,
-                  "container_host_namespace": 15,
+                  "container_namespace": 15,
                   "container_hostname": 5,
                   "container_id": 6,
                   "container_qos": 16,
@@ -5146,10 +5146,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -5294,10 +5294,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -5451,7 +5451,7 @@
                   "_index": true,
                   "_type": true,
                   "container_id": true,
-                  "container_level": true,
+                  "container_qos": true,
                   "container_type": true,
                   "es_index_time": true,
                   "highlight": true,
@@ -5467,7 +5467,7 @@
                   "_index": 3,
                   "_source": 22,
                   "_type": 4,
-                  "container_host_namespace": 19,
+                  "container_namespace": 19,
                   "container_hostname": 6,
                   "container_id": 7,
                   "container_qos": 20,
@@ -5630,10 +5630,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -5778,10 +5778,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -6094,10 +6094,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -6242,10 +6242,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -6571,10 +6571,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -6719,10 +6719,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -7097,10 +7097,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -7248,10 +7248,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -7584,10 +7584,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -7733,10 +7733,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -7876,7 +7876,7 @@
                   "_index": 3,
                   "_source": 31,
                   "_type": 4,
-                  "container_host_namespace": 27,
+                  "container_namespace": 27,
                   "container_hostname": 5,
                   "container_id": 6,
                   "container_qos": 28,
@@ -7907,7 +7907,7 @@
                 },
                 "renameByName": {
                   "_id": "",
-                  "container_host_ns": "",
+                  "container_namespace": "",
                   "container_hostname": "",
                   "tracer_data.tcp_ack_seq": "tcp_ack_seq",
                   "tracer_data.comm": "comm",
@@ -9206,10 +9206,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -9354,10 +9354,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -9719,10 +9719,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -9867,10 +9867,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -10179,10 +10179,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -10327,10 +10327,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -10639,10 +10639,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -10788,10 +10788,10 @@
                   "_index": 3,
                   "_source": 24,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -11105,10 +11105,10 @@
                   "_id": 2,
                   "_index": 3,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -11254,10 +11254,10 @@
                   "_index": 3,
                   "_source": 24,
                   "_type": 4,
-                  "container_host_ns": 5,
+                  "container_namespace": 5,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_level": 8,
+                  "container_qos": 8,
                   "container_type": 9,
                   "es_index_time": 10,
                   "highlight": 11,
@@ -11408,7 +11408,7 @@
                   "_index": 3,
                   "_source": 26,
                   "_type": 4,
-                  "container_host_namespace": 13,
+                  "container_namespace": 13,
                   "container_hostname": 14,
                   "container_id": 15,
                   "container_qos": 16,
@@ -11452,6 +11452,785 @@
           "type": "table"
         }
       ]
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 25
+      },
+      "id": 188,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "alias": "",
+          "bucketAggs": [
+            {
+              "field": "uploaded_timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "tracer_name:(blk_device_health OR io_health) AND region.keyword:$region AND hostname.keyword:$hostname",
+          "refId": "A",
+          "timeField": "uploaded_timestamp"
+        }
+      ],
+      "title": "blk_device_health",
+      "transparent": true,
+      "type": "stat"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 29
+      },
+      "id": 189,
+      "panels": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "description": "按 Block、NVMe、SCSI 和 MD 展示历史 blk_device_health 事件；无数据仅表示筛选范围内没有已保存事件。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 30
+          },
+          "id": 190,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "Block",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_timestamp",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:block_error AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            },
+            {
+              "alias": "NVMe",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_timestamp",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(nvme_timeout OR nvme_reset OR nvme_state_change) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "B",
+              "timeField": "uploaded_timestamp"
+            },
+            {
+              "alias": "SCSI",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_timestamp",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "C",
+              "timeField": "uploaded_timestamp"
+            },
+            {
+              "alias": "MD",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_timestamp",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(md_sync_action OR md_degraded OR md_member_state) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "D",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "blk_device_health 事件趋势",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "description": "Block 错误事件及其可用的 NVMe/SCSI 取证字段。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 38
+          },
+          "id": 191,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "observed_timestamp"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:block_error AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "Block 事件详情",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "container_namespace": true,
+                  "container_hostname": true,
+                  "container_id": true,
+                  "container_qos": true,
+                  "container_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "time": true,
+                  "tracer_name": true,
+                  "tracer_type": true,
+                  "uploaded_timestamp": true
+                },
+                "indexByName": {
+                  "hostname": 1,
+                  "region": 2,
+                  "tracer_data.collection_status": 9,
+                  "tracer_data.device": 5,
+                  "tracer_data.io_error_status": 7,
+                  "tracer_data.operation": 6,
+                  "tracer_data.sector": 8,
+                  "tracer_data.type": 4,
+                  "tracer_id": 3,
+                  "observed_timestamp": 0
+                },
+                "renameByName": {
+                  "tracer_data.collection_status": "collection_status",
+                  "tracer_data.device": "device",
+                  "tracer_data.io_error_status": "io_error_status",
+                  "tracer_data.operation": "operation",
+                  "tracer_data.sector": "sector",
+                  "tracer_data.type": "type"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "description": "NVMe timeout、reset 与 controller 状态变化；状态变化不等同于故障。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 46
+          },
+          "id": 192,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "observed_timestamp"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(nvme_timeout OR nvme_reset OR nvme_state_change) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "NVMe 事件详情",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "container_namespace": true,
+                  "container_hostname": true,
+                  "container_id": true,
+                  "container_qos": true,
+                  "container_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "time": true,
+                  "tracer_name": true,
+                  "tracer_type": true,
+                  "uploaded_timestamp": true
+                },
+                "indexByName": {
+                  "hostname": 1,
+                  "region": 2,
+                  "tracer_data.collection_status": 8,
+                  "tracer_data.device": 5,
+                  "tracer_data.new_state": 6,
+                  "tracer_data.new_state_raw": 7,
+                  "tracer_data.type": 4,
+                  "tracer_id": 3,
+                  "observed_timestamp": 0
+                },
+                "renameByName": {
+                  "tracer_data.collection_status": "collection_status",
+                  "tracer_data.device": "device",
+                  "tracer_data.new_state": "new_state",
+                  "tracer_data.new_state_raw": "new_state_raw",
+                  "tracer_data.type": "type"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "description": "SCSI timeout、dispatch error 及可用的 smartctl 白名单证据。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 54
+          },
+          "id": 193,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "observed_timestamp"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "SCSI 事件详情",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "container_namespace": true,
+                  "container_hostname": true,
+                  "container_id": true,
+                  "container_qos": true,
+                  "container_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "time": true,
+                  "tracer_name": true,
+                  "tracer_type": true,
+                  "uploaded_timestamp": true
+                },
+                "indexByName": {
+                  "hostname": 1,
+                  "region": 2,
+                  "tracer_data.collection_status": 7,
+                  "tracer_data.device": 5,
+                  "tracer_data.io_error_status": 6,
+                  "tracer_data.type": 4,
+                  "tracer_id": 3,
+                  "observed_timestamp": 0
+                },
+                "renameByName": {
+                  "tracer_data.collection_status": "collection_status",
+                  "tracer_data.device": "device",
+                  "tracer_data.io_error_status": "io_error_status",
+                  "tracer_data.type": "type"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "description": "MD 同步、degraded 与成员状态的变化历史；最后一条事件不代表当前状态。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 62
+          },
+          "id": 194,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "observed_timestamp"
+              }
+            ]
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(md_sync_action OR md_degraded OR md_member_state) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "MD 事件详情",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "container_namespace": true,
+                  "container_hostname": true,
+                  "container_id": true,
+                  "container_qos": true,
+                  "container_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "time": true,
+                  "tracer_name": true,
+                  "tracer_type": true,
+                  "uploaded_timestamp": true
+                },
+                "indexByName": {
+                  "hostname": 1,
+                  "region": 2,
+                  "tracer_data.array": 5,
+                  "tracer_data.collection_status": 10,
+                  "tracer_data.device": 9,
+                  "tracer_data.member": 6,
+                  "tracer_data.new_state": 8,
+                  "tracer_data.old_state": 7,
+                  "tracer_data.type": 4,
+                  "tracer_id": 3,
+                  "observed_timestamp": 0
+                },
+                "renameByName": {
+                  "tracer_data.array": "array",
+                  "tracer_data.collection_status": "collection_status",
+                  "tracer_data.device": "device",
+                  "tracer_data.member": "member",
+                  "tracer_data.new_state": "new_state",
+                  "tracer_data.old_state": "old_state",
+                  "tracer_data.type": "type"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        }
+      ],
+      "title": "blk_device_health",
+      "type": "row"
     }
   ],
   "refresh": "",
