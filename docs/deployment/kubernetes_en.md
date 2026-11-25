@@ -21,7 +21,20 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
 
 Adjust the configuration for your environment, including the storage backend and Pod information source. See the [configuration guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
-When the kubelet read-only port is disabled (`KubeletReadOnlyPort = 0`) and `KubeletClientCertPath` is empty, `huatuo-bamai` authenticates to the kubelet HTTPS port using the Pod's ServiceAccount token (`/var/run/secrets/kubernetes.io/serviceaccount/token`, re-read on every request to support token rotation) and verifies the kubelet server certificate against `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`. Set `KUBELET_HOST` from the Kubernetes Downward API (`status.hostIP` or `spec.nodeName`, as in `build/huatuo-daemonset.minimal.yaml`) or `KubeletHost` in `huatuo-bamai.conf` so the request host matches the node IP/DNS SAN in the kubelet serving certificate. Ensure the DaemonSet ServiceAccount has RBAC permission to read kubelet `/pods` and `/configz` (such as `nodes/proxy`), and that kubelet uses a cluster-CA-signed serving certificate (for example via `serverTLSBootstrap: true`).
+**Optional: ServiceAccount token authentication (when host kubelet client certificates are not mounted)**
+
+By default, `huatuo-bamai.conf` sets `KubeletClientCertPath` for client-certificate authentication. To opt into Pod ServiceAccount token authentication instead (for example on managed Kubernetes or K3s clusters with `serverTLSBootstrap: true`):
+
+1. Update `[Pod]` in `huatuo-bamai.conf`:
+   ```toml
+   [Pod]
+       KubeletReadOnlyPort = 0
+       KubeletClientCertPath = ""
+   ```
+   `huatuo-bamai` then reads `/var/run/secrets/kubernetes.io/serviceaccount/token` on every request (supporting token rotation) and verifies the kubelet serving certificate against `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`. Both `build/huatuo-daemonset.minimal.yaml` and the Helm chart inject `KUBELET_HOST` from Downward API `status.hostIP` so TLS verification matches the node IP SAN.
+2. Grant minimal RBAC (`nodes/proxy` `get` for `/pods` and `/configz`):
+   - **Helm**: pass `--set serviceAccount.create=true --set rbac.create=true` in section 2.5.
+   - **Manifest**: create a `ServiceAccount`, a `ClusterRole` granting `get` on `nodes/proxy`, and a `ClusterRoleBinding`, then set `spec.template.spec.serviceAccountName` on the DaemonSet.
 
 ### 1.3 Create a ConfigMap
 

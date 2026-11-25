@@ -21,7 +21,20 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
 
 根据实际部署环境修改配置文件，例如调整存储后端、Pod 信息获取方式等配置项，详见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
-当 kubelet 只读端口关闭（`KubeletReadOnlyPort = 0`）且未配置 `KubeletClientCertPath` 时，`huatuo-bamai` 会自动读取 Pod 挂载的 ServiceAccount token（`/var/run/secrets/kubernetes.io/serviceaccount/token`，每次请求重读以兼容 token 轮转）并使用 `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` 校验 kubelet 服务端证书。请通过 Downward API 注入 `KUBELET_HOST`（如 `status.hostIP` 或 `spec.nodeName`，参见 `build/huatuo-daemonset.minimal.yaml`）或在 `huatuo-bamai.conf` 中配置 `KubeletHost`，使请求地址与 kubelet 服务端证书中的节点 IP/DNS SAN 一致；同时确保 DaemonSet 对应的 ServiceAccount 具备访问 kubelet `/pods` 与 `/configz` 的 RBAC 权限（如 `nodes/proxy`），且 kubelet 服务端证书由集群 CA 签发（例如开启 `serverTLSBootstrap: true`）。
+**可选：使用 Pod ServiceAccount Token 认证（未挂载宿主机 kubelet 客户端证书时）**
+
+`huatuo-bamai.conf` 默认显式配置了 `KubeletClientCertPath` 以保持既有客户端证书模式。若需改用 ServiceAccount token 模式（如托管 Kubernetes 或开启 `serverTLSBootstrap: true` 的集群）：
+
+1. 修改 `huatuo-bamai.conf` 的 `[Pod]` 配置：
+   ```toml
+   [Pod]
+       KubeletReadOnlyPort = 0
+       KubeletClientCertPath = ""
+   ```
+   此时 `huatuo-bamai` 每次请求都会重读 `/var/run/secrets/kubernetes.io/serviceaccount/token`（兼容 token 轮转），并使用 `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` 校验 kubelet 服务端证书。`build/huatuo-daemonset.minimal.yaml` 与 Helm Chart 均已通过 Downward API 注入 `KUBELET_HOST`（`status.hostIP`），使请求地址与节点证书 SAN 一致。
+2. 授予最小 RBAC 权限（访问 kubelet `/pods` 与 `/configz` 所需 `nodes/proxy` 的 `get` 权限）：
+   - **Helm 部署**：在 2.5 节追加 `--set serviceAccount.create=true --set rbac.create=true`。
+   - **清单部署**：创建 `ServiceAccount`、授予 `nodes/proxy` `get` 权限的 `ClusterRole` 与 `ClusterRoleBinding`，并在 DaemonSet 的 `spec.template.spec.serviceAccountName` 中引用该 `ServiceAccount`。
 
 ### 1.3 创建 ConfigMap
 

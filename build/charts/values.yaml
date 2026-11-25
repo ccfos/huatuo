@@ -7,6 +7,13 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+serviceAccount:
+  create: false
+  name: ""
+
+rbac:
+  create: false
+
 config:
   name: huatuo-bamai-config
   fileName: huatuo-bamai.conf
