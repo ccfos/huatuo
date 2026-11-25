@@ -72,7 +72,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 	opt.activePIDs = make(map[int]bool, len(opt.Pids))
 	opt.outputFileCount = asprofOutputFileCount(opt.Duration, opt.AggrInterval)
 
-	opt.agentDirectories, err = prepareJavaAgents(opt.Pids, opt.ToolPath)
+	opt.agentDirectories, err = prepareJavaAgents(opt.Pids, opt.ToolPath, opt.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 	argsByPID := make(map[int][]string, len(opt.Pids))
 	argsFn := startAsprofCallback(
 		profileOutFile,
-		opt.BaseArgs,
+		append([]string{"--libpath", agentTargetPath(opt.SessionID)}, opt.BaseArgs...),
 		opt.OutFilePrefix,
 		opt.SessionID,
 		opt.AggrInterval,
@@ -213,7 +213,7 @@ func finalOutputPath(sessionID, outFilePrefix string, pid int, sequence uint64) 
 func stopWithOutputArgs(pid int, sessionID, outFilePrefix string, sequence uint64) []string {
 	args := []string{
 		"stop",
-		"--libpath", "/tmp/libasyncProfiler.so",
+		"--libpath", agentTargetPath(sessionID),
 		"-o", asprofOutputFormat,
 		"-f", finalOutputPath(
 			sessionID,
@@ -251,14 +251,14 @@ func stopActiveAsprofProcesses(opt *AsprofSamplingOption) error {
 		func(pid int) []string {
 			return []string{
 				"stop",
-				"--libpath", "/tmp/libasyncProfiler.so",
+				"--libpath", agentTargetPath(opt.SessionID),
 				strconv.Itoa(pid),
 			}
 		},
 	)
 	opt.markStopped(results)
 
-	cleanupErr := cleanupJavaAgents(opt.agentDirectories)
+	cleanupErr := cleanupJavaAgents(opt.agentDirectories, opt.SessionID)
 	opt.agentDirectories = nil
 	return errors.Join(profilerexec.Verify(results), cleanupErr)
 }
