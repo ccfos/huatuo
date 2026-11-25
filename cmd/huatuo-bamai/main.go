@@ -24,13 +24,14 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
+	"github.com/ccfos/huatuo/internal/httpserver"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/nodeagent/operation"
 	nodeprofiling "github.com/ccfos/huatuo/internal/nodeagent/profiling"
 	nodetracing "github.com/ccfos/huatuo/internal/nodeagent/tracing"
 	"github.com/ccfos/huatuo/internal/pidfile"
-	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/internal/version"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -71,13 +72,19 @@ func main() {
 }
 
 func mainAction(opts *Options) error {
-	return NewDaemon(opts).Run(context.Background())
+	daemon, err := NewDaemon(opts)
+	if err != nil {
+		return err
+	}
+
+	return daemon.Run(context.Background())
 }
 
 // Daemon owns handles that earlier setup steps write and later ones read
 // (e.g. cgr produced by setupCgroup, consumed by applyCgroupCPUQuota).
 type Daemon struct {
-	opts *Options
+	metadata observation.Metadata
+	opts     *Options
 
 	cgr              cgroups.Cgroup
 	metrics          *prometheus.Registry
@@ -85,11 +92,22 @@ type Daemon struct {
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
 	tracingStore     *tracingstore.Store
-	apiServer        *server.Server
+	apiServer        *httpserver.Server
 }
 
-func NewDaemon(opts *Options) *Daemon {
-	return &Daemon{opts: opts}
+func NewDaemon(opts *Options) (*Daemon, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("initialize observation metadata: read hostname: %w", err)
+	}
+
+	return &Daemon{
+		opts: opts,
+		metadata: observation.Metadata{
+			Region:   opts.Region,
+			Hostname: hostname,
+		},
+	}, nil
 }
 
 // Run brings the daemon up by calling each module's setup function in

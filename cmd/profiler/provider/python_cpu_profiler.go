@@ -21,7 +21,6 @@ import (
 	"io"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -37,9 +36,10 @@ import (
 )
 
 type pythonCPUProfiler struct {
-	config Config
-	pids   []int
-	labels map[int][]types.ProfileLabel
+	config  Config
+	pids    []int
+	labels  map[int][]types.ProfileLabel
+	results []*profilerexec.Result
 }
 
 func (p *pythonCPUProfiler) Start(_ context.Context) error {
@@ -104,49 +104,32 @@ func (p *pythonCPUProfiler) Start(_ context.Context) error {
 	return nil
 }
 
-func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
-	cmdResults := runPySpy(
+func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, _ func(*pipeline.SampleBatch) error) error {
+	p.results = runPySpy(
 		ctx,
 		p.pids,
 		p.config.Freq,
 		p.config.ToolDir,
 	)
 
-	deliveryCtx := ctx
-	if profile.IsNormalStop(ctx) {
-		var cancel context.CancelFunc
-		deliveryCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), profile.FinalizationTimeout)
-		defer cancel()
-	}
+	return profilerexec.Verify(p.results)
+}
+
+func (p *pythonCPUProfiler) Finalize(ctx context.Context, enqueue func(*pipeline.SampleBatch) error) error {
+	defer func() { p.results = nil }()
 	deliver := func(batch *pipeline.SampleBatch) error {
-		if err := deliveryCtx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		return enqueue(batch)
 	}
 
-	var errorMessages []string
-
-	for i := range cmdResults {
-		cmdRes := cmdResults[i]
+	for i := range p.results {
+		cmdRes := p.results[i]
 		targetPid := cmdRes.PID
 
-		if !cmdRes.Succeeded() {
-			errorMessages = append(errorMessages,
-				fmt.Sprintf(
-					"PID[%d] sampling failed: %v, diagnostics: %q",
-					targetPid,
-					cmdRes.Err,
-					string(cmdRes.Diagnostics),
-				))
-
-			continue
-		}
-
 		if len(bytes.TrimSpace(cmdRes.Output)) == 0 {
-			errorMessages = append(errorMessages,
-				fmt.Sprintf("PID[%d] sampling failed: no samples collected", targetPid))
-			continue
+			return fmt.Errorf("PID[%d] sampling failed: no samples collected", targetPid)
 		}
 
 		if err := enqueueFolded(
@@ -163,14 +146,11 @@ func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(*pipe
 		}
 	}
 
-	if len(errorMessages) > 0 {
-		return fmt.Errorf("sampling failed:\n%s", strings.Join(errorMessages, "\n"))
-	}
-
 	return nil
 }
 
 func (p *pythonCPUProfiler) Stop() error {
+	p.results = nil
 	return nil
 }
 

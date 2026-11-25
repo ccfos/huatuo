@@ -16,7 +16,6 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -33,9 +32,6 @@ const (
 	// Bound queued bursts to 16 batches; sample data is allocated by providers.
 	pipelineQueueCapacity = 16
 )
-
-// ErrQueueFull leaves ownership of the rejected batch with the caller.
-var ErrQueueFull = errors.New("profiling input queue is full")
 
 type queuedBatch struct {
 	batch      *SampleBatch
@@ -81,7 +77,9 @@ func NewPipeline(config *PipelineConfig) *Pipeline {
 }
 
 // Enqueue returning nil transfers ownership of the batch to the pipeline.
-// It never waits for queue space; errors leave the entire batch with the caller.
+// It waits for queue space or context cancellation so bursts do not lose samples.
+// Errors leave the entire batch with the caller. The caller must cancel ctx if
+// the consumer exits before input is closed.
 // The producer must finish all Enqueue calls before Close.
 func (p *Pipeline) Enqueue(ctx context.Context, batch *SampleBatch) error {
 	if err := validateBatch(batch); err != nil {
@@ -99,8 +97,8 @@ func (p *Pipeline) Enqueue(ctx context.Context, batch *SampleBatch) error {
 	select {
 	case p.queue <- item:
 		return nil
-	default:
-		return ErrQueueFull
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

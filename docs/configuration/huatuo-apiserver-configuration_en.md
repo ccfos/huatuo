@@ -1,5 +1,5 @@
 ---
-title: huatuo-apiserver Configuration
+title: API Server Configuration
 type: docs
 description:
 author: HUATUO Team
@@ -9,15 +9,15 @@ weight: 5
 
 ### 1. Overview
 
-`huatuo-apiserver` uses a strictly decoded TOML configuration file. Unknown
-or obsolete options prevent startup. Commented options use the built-in
-defaults shown below.
+`huatuo-apiserver.conf` configures the HTTP server, job management, node communication, authentication, and profiling data queries for huatuo-apiserver.
 
-### 2. Logging and Runtime Limits
+This document quotes the repository configuration file and describes its fields in tables. A default is the value supplied by the program when a field is omitted. Uncommented assignments override defaults. Assignments commented out with `#` are inactive examples and may differ from defaults.
 
-huatuo-apiserver does not create its own cgroup by default. The `[Runtime]` section
-applies only when `--enable-cgroup` is explicitly passed; Kubernetes and systemd
-deployments should use their native resource controls.
+Before startup, replace the `Agent.Auth.BearerToken` placeholder and configure at least one user in `Auth.Users`. Replace example addresses and credentials with values for your deployment.
+
+The configuration file uses strict TOML parsing. Unknown or obsolete fields prevent startup. Restart the service after editing the file.
+
+### 2. Logging
 
 ```toml
 # Log Configuration
@@ -27,7 +27,17 @@ deployments should use their native resource controls.
     # Default: Info
     #
     # Level = "Info"
+```
 
+| Field | Description |
+| --- | --- |
+| `Level` | String. Default: `"Info"`. Accepts `Debug`, `Info`, `Warn`, `Error`, and `Panic`, case-insensitively. The `--log-debug` flag overrides this setting. |
+
+### 3. Resource Limits
+
+The service does not create its own cgroup by default. The following limits apply only when `--enable-cgroup` is passed. Kubernetes and systemd deployments should use their native resource controls.
+
+```toml
 # Runtime limits for the huatuo-apiserver process.
 [Runtime]
     # - CPULimitCores
@@ -42,14 +52,12 @@ deployments should use their native resource controls.
     # MemoryLimitMiB = 4096
 ```
 
-- `Log.Level` supports `Debug`, `Info`, `Warn`, `Error`, and `Panic`.
-- `CPULimitCores` limits the API server process in CPU cores.
-- `MemoryLimitMiB` limits the API server process in MiB.
+| Field | Description |
+| --- | --- |
+| `CPULimitCores` | Integer. Default: `20` CPU cores. Must be greater than `0`. |
+| `MemoryLimitMiB` | Integer. Default: `4096` MiB. Must be greater than `0`. |
 
-All resource limits must be greater than zero. `--log-debug` overrides
-`Log.Level`.
-
-### 3. HTTP Server
+### 4. HTTP Server
 
 ```toml
 # HTTP server configuration.
@@ -74,12 +82,17 @@ All resource limits must be greater than zero. `--log-debug` overrides
         # Burst = 200
 ```
 
-`ListenAddress` uses `host:port` form. An empty host listens on all
-interfaces. `RateLimit` is a process-wide token bucket; both values must be
-positive. HTTP timeouts and request-size limits are fixed service safeguards
-and are not user configurable.
+| Field | Description |
+| --- | --- |
+| `ListenAddress` | String. Default: `":12740"`. Uses `host:port` format. An empty host listens on all network interfaces. |
+| `RateLimit.RequestsPerSecond` | Integer. Default: `200` requests per second. Must be greater than `0`. Limits the request rate across the entire service process. |
+| `RateLimit.Burst` | Integer. Default: `200`. Must be greater than `0`. Token bucket capacity, which limits request bursts. |
 
-### 4. Jobs and Agent Communication
+HTTP timeouts and request size limits use built-in values and are not configurable.
+
+### 5. Job Management
+
+#### 5.1 Job Storage
 
 ```toml
 # Job persistence.
@@ -89,11 +102,19 @@ and are not user configurable.
     # Default: "jobs.db"
     #
     # StoreDSN = "jobs.db"
+```
 
-    # Job records use an internal revision for concurrent updates. Only records
-    # written by this server version are supported; stop the old service and
-    # remove or replace an incompatible database before starting this version.
+| Field | Description |
+| --- | --- |
+| `StoreDSN` | String. Default: `"jobs.db"`. Must not be empty. Specifies the SQLite data source for persistent job state. Plain relative paths are resolved against the directory specified by `--config-dir`; `file:` URIs are passed through unchanged. |
 
+Job records must conform to the current storage format and include a valid revision number. Incompatible records cannot be read. Check database compatibility before upgrading.
+
+#### 5.2 Concurrency Quotas
+
+Profiling and Tracing jobs are counted separately and have independent limits. All quotas below are positive integers that limit the number of jobs that have not yet ended.
+
+```toml
     # Profiling and tracing retain independent quotas because their resource
     # costs and expected concurrency differ.
     [Jobs.Profiling]
@@ -119,15 +140,45 @@ and are not user configurable.
         #
         # MaxConcurrentPerHost = 5
         # MaxConcurrent = 1000
+```
 
-    # Apiserver-owned Job lifecycle policy.
+| Field | Description |
+| --- | --- |
+| `Jobs.Profiling.MaxConcurrentPerHost` | Maximum Profiling jobs per node. Default: `3`. |
+| `Jobs.Profiling.MaxConcurrent` | Maximum Profiling jobs across all nodes. Default: `500`. |
+| `Jobs.Tracing.MaxConcurrentPerHost` | Maximum Tracing jobs per node. Default: `5`. |
+| `Jobs.Tracing.MaxConcurrent` | Maximum Tracing jobs across all nodes. Default: `1000`. |
+
+#### 5.3 Lifecycle
+
+`Jobs.Controller` controls job status polling, timeout handling, and record cleanup in the API server, independently of the node's Operation lifecycle settings. All values below are positive integers.
+
+```toml
+    # Apiserver-owned Job supervision policy. These values are independent
+    # from the Node operation lifecycle settings.
     [Jobs.Controller]
         # StatusPollIntervalSeconds = 5
         # PendingTimeoutSeconds = 30
         # CompletionGracePeriodSeconds = 60
         # NodeUnavailableGracePeriodSeconds = 30
         # JobRetentionPeriodHours = 720
+```
 
+| Field | Description |
+| --- | --- |
+| `StatusPollIntervalSeconds` | Status polling interval. Default: `5` seconds. |
+| `PendingTimeoutSeconds` | Startup timeout, measured from just before the node Operation is initiated. Default: `30` seconds. A job still in Pending when the timeout expires enters the stop process. |
+| `CompletionGracePeriodSeconds` | Completion grace period. Default: `60` seconds. Once the job is confirmed running, its execution deadline is the current time plus the job duration and this grace period. The same period is used to wait for the node Operation to end after the stop process begins. |
+| `NodeUnavailableGracePeriodSeconds` | Recovery grace period for an unavailable node. Default: `30` seconds. Starts when the node is first found unavailable. The job fails if the node remains unavailable beyond this period. |
+| `JobRetentionPeriodHours` | Retention period for ended job records. Default: `720` hours (30 days). Measured from the time the job ends; expired records are removed by periodic cleanup. |
+
+Service shutdown does not stop active Operations on nodes. After restarting, the service recovers unfinished jobs from the database and resumes managing them. Operations already initiated are not started again.
+
+### 6. Node Communication
+
+These settings control API server access to huatuo-bamai nodes. They are separate from `Auth.Users`, which controls client access to the API server.
+
+```toml
 # huatuo-bamai Agent HTTP client configuration.
 [Agent]
     # - HTTPPort
@@ -137,62 +188,28 @@ and are not user configurable.
     # HTTPPort = 19704
 
     [Agent.Auth]
-        # Must match HTTPServer.Auth.BearerToken on every Node.
+        # Required service credential. It must match HTTPServer.Auth on every
+        # huatuo-bamai Node.
         BearerToken = "REPLACE_WITH_RANDOM_HEX"
 ```
 
-`StoreDSN` is the SQLite data source for durable job state. Relative paths are
-resolved from the configuration directory.
+| Field | Description |
+| --- | --- |
+| `HTTPPort` | Integer. Default: `19704`. Range: `1`–`65535`. Must match the node's HTTP server port. |
+| `Auth.BearerToken` | String. Required, with no built-in credential. Must not contain whitespace. Must match `HTTPServer.Auth.BearerToken` on every node. Replace the placeholder in the configuration file. |
 
-Profiling and tracing use the same quota model but retain independent values.
-Their resource cost and expected concurrency differ, so a shared limit would
-allow one workload to starve the other.
+Transport timeouts and other safeguards for node requests use built-in client values.
 
-Agent request transport safeguards use internal client defaults. Job polling,
-deadlines, unavailable grace, and retention are owned independently by
-`Jobs.Controller`; no runtime negotiation with the Node is performed.
+### 7. Authentication and Authorization
 
-During shutdown, the API server leaves active Node operations running. A
-replacement API server recovers active Jobs from durable state and resumes
-monitoring without replaying Start.
-
-### 5. Elasticsearch/OpenSearch
-
-```toml
-# Optional Elasticsearch/OpenSearch backend for querying profiling data.
-[Elasticsearch]
-    # Address, Username, and Password must be configured together to enable
-    # this backend.
-    #
-    # - Address
-    # Elasticsearch or OpenSearch HTTP address.
-    #
-    # - Username
-    # Elasticsearch or OpenSearch username.
-    #
-    # - Password
-    # Elasticsearch or OpenSearch password.
-    #
-    # - Index
-    # Index containing huatuo-bamai profiling data.
-    # Default: "huatuo_bamai"
-    #
-    # Address = "https://elasticsearch.example.com:9200"
-    # Username = "huatuo-apiserver"
-    # Password = "REPLACE_WITH_STRONG_PASSWORD"
-    # Index = "huatuo_bamai"
-```
-
-Storage is optional. `Address`, `Username`, and `Password` must either all be
-empty or all be configured. `Index` defaults to `huatuo_bamai` and must match
-the collector storage index. When disabled, raw-profile and flame graph query
-routes are not registered.
-
-### 6. Authentication and Authorization
+Configure at least one `[[Auth.Users]]` entry. The user configurations below are commented examples. Uncomment them and replace the credentials before use. Each user must have a distinct ID and BearerToken.
 
 ```toml
 # Authentication configuration.
 [Auth]
+    # /readyz, /metrics, and /version are public. Flame graph query
+    # endpoints and /debug/pprof/** are restricted to administrators.
+    #
     # - ID
     # Stable principal identifier stored with jobs.
     #
@@ -214,7 +231,7 @@ routes are not registered.
     # Restricted example:
     # [[Auth.Users]]
     #     ID = "huatuo-front"
-    #     BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
+    #     BearerToken = "REPLACE_WITH_RANDOM_HEX"
     #     Permissions = [
     #         "GET /v1/tracing",
     #         "GET /v1/tracing/**",
@@ -223,20 +240,58 @@ routes are not registered.
     #     ]
 ```
 
-- `ID` is the required stable principal identifier stored with jobs.
-- `BearerToken` is a required secret used only to authenticate requests.
-- `Admin` grants access to all routes and ignores `Permissions`.
-- `Permissions` is required for non-admin users. Entries may be path-only or
-  prefixed with an HTTP method. `*` matches one path segment and `**` matches a
-  suffix.
+| Field | Description |
+| --- | --- |
+| `ID` | String. Required and unique. Stable user identifier persisted with jobs. |
+| `BearerToken` | String. Required and unique. Used only for request authentication. Rotating the token does not change job ownership. |
+| `Admin` | Boolean. Default: `false`. When `true`, grants access to all APIs without restrictions from `Permissions`. |
+| `Permissions` | Array of strings. Empty by default; required for non-admin users. Each entry is a path or `HTTP method path`. A path without a method allows any method. |
 
-IDs and bearer tokens must each be unique. Rotating a bearer token does not
-change job ownership because tokens are never used as principal IDs.
+In paths, `*` matches one segment and `**` matches one or more subsequent segments. For example, `GET /v1/profiling/**` does not cover the collection path `GET /v1/profiling`; grant each permission separately.
 
-`/readyz`, `/metrics`, and `/version` are public.
-`/debug/pprof/**` and `/v1/profiling/flamegraph/**` require an administrator.
+`/readyz`, `/metrics`, `/version`, and `/openapi.json` require no authentication. `/debug/pprof/**` and `/v1/profiling/flamegraph/**` require administrator access. The pprof endpoints must also be enabled with `--enable-pprof`.
 
-### 7. Profiling
+### 8. Profiling
+
+#### 8.1 Data Queries
+
+Elasticsearch/OpenSearch provides queries for profiling data written by nodes. This data is stored separately from job records in `Jobs.StoreDSN`. `Address`, `Username`, and `Password` must either all be empty or all be configured.
+
+```toml
+# Optional Elasticsearch/OpenSearch backend for querying profiling data.
+[Elasticsearch]
+    # Address, Username, and Password must be configured together to enable
+    # this backend.
+    #
+    # - Address
+    # Elasticsearch or OpenSearch HTTP address.
+    #
+    # - Username
+    # Elasticsearch or OpenSearch username.
+    #
+    # - Password
+    # Elasticsearch or OpenSearch password.
+    #
+    # - Index
+    # Index containing huatuo-bamai profiling data.
+    # Default: "huatuo_bamai"
+    #
+    # Address = "http://127.0.0.1:9200"
+    # Username = "elastic"
+    # Password = "REPLACE_WITH_PASSWORD"
+    # Index = "huatuo_bamai"
+```
+
+| Field | Description |
+| --- | --- |
+| `Address` | String. Empty by default. HTTP/HTTPS address; separate multiple addresses with commas. |
+| `Username` | String. Empty by default. Required when the query backend is enabled. |
+| `Password` | String. Empty by default. Required when the query backend is enabled. Replace the example placeholder. |
+| `Index` | String. Default: `"huatuo_bamai"`. Must not be empty when the query backend is enabled. Must match the index to which nodes write profiling data. |
+
+When the backend is disabled, the endpoints remain registered, but raw Profile and flame graph data cannot be queried.
+
+#### 8.2 Result Links
 
 ```toml
 # Profiling result-link configuration.
@@ -245,10 +300,11 @@ change job ownership because tokens are never used as principal IDs.
     # Optional dashboard base URL. Result URLs are omitted when empty.
     # Default: empty
     #
-    # DashboardBaseURL = "https://grafana.example.com/d"
+    # DashboardBaseURL = "http://localhost:8006/d"
 ```
 
-- `DashboardBaseURL` is optional and must use HTTP or HTTPS when configured.
-  Result-capable jobs omit a dashboard URL when it is empty.
+| Field | Description |
+| --- | --- |
+| `DashboardBaseURL` | String. Empty by default, which omits Dashboard URLs. When set, must be an HTTP/HTTPS address with a host. The address in the configuration file is only an example. |
 
-Profiler execution and aggregation settings are Node-local configuration.
+Result links are generated only when a job has ended with a completed or unknown outcome and the query backend confirms that its data has been published. Profiler execution and aggregation settings are maintained in the node configuration.

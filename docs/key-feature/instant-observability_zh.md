@@ -7,580 +7,127 @@ date: 2026-01-11
 weight: 2
 ---
 
-{{% alert color="info" title="🎯 关于 HUATUO（华佗）" %}}
-<div style="text-align: center;">
-HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵化的操作系统深度观测项目，专注为云原生通用计算、AI 计算、云服务、基础服务等提供操作系统内核级深度观测能力。
-</div>
-{{% /alert %}}
+## 概述
 
-## 📖 概述
+异常事件诊断记录 Linux 内核上报的调度、内存和网络异常，并关联进程、容器及调用栈等上下文，供事后排查使用。采集主要通过 eBPF 探针完成，网卡状态变化通过 netlink 获取。
 
-HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统、网络协议栈、硬件错误等核心子系统实施实时异常事件观测。当内核触发 softlockup、OOM、硬件 MCE 等异常状态时，eBPF 程序通过挂钩（hook）内核函数（kprobe）或内核 tracepoint，在事件发生的第一时间采集进程信息、内核调用栈、网络上下文等现场数据，并经由 perf event 环形缓冲区传递至用户态处理程序，最终持久化至 Elasticsearch 或本地磁盘文件。
-
-相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如调度 tick 间隔过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
-
-当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（sched_tick、softlockup、hungtask）、内存压力（memory_oom_kill、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
-
-## 🎯 场景
-
-**Kubernetes 容器内存故障定位**：在容器频繁 OOM 重启场景下，memory_oom_kill 事件同时记录被 OOM Killer 终止的进程（victim）与触发 OOM 的进程（trigger）的 memcg cgroup 指针及容器 ID，结合时序数据可快速定位内存资源争抢的根因容器，降低人工排查容器日志的时间成本。
-
-**AI 训练集群硬件故障感知**：在 GPU 训练服务器上，ras 事件持续采集 MCE（Machine Check Exception）、EDAC 内存控制器错误和 PCIe AER（Advanced Error Reporting）错误，对错误进行严重程度分级（Corrected / UncorrectedRecoverable / UncorrectedFatal），在训练任务中断前提前感知硬件老化或单点故障，减少因硬件故障导致的训练任务损失。
-
-**网络性能毛刺分析**：dropwatch 观测内核网络协议栈丢包行为，tcp_retransmit 观测 TCP 重传活动，net_rx_latency 检测单个数据包从网卡驱动到用户态的完整接收路径延迟，按阶段（网卡到内核、内核到 TCP、TCP 到用户态）分别设置阈值（默认 5ms / 10ms / 115ms），精准定位造成业务超时的网络层位置，提升网络问题根因定位效率。
-
-**主机调度健康观测**：sched_tick（调度 tick 间隔，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
-
-## 🚀 使用
-
-### 配置参数
-
-各事件可通过以下参数进行调优，参数均提供默认值，无需配置即可运行：
-
-| 参数 | 默认值 | 说明 |
-| ---- | ------ | ---- |
-| `sched_tick.interval_threshold` | `10000000`（10ms，纳秒） | 调度 tick 间隔阈值 |
-| `memory_reclaim.blocked_threshold` | `900000000`（900ms，纳秒） | 直接内存回收时间触发阈值 |
-| `net_rx_latency.driver2net_rx` | `5`（ms） | 从网卡驱动到 `__netif_receive_skb` 的延迟阈值 |
-| `net_rx_latency.driver2tcp` | `10`（ms） | 从网卡驱动到 `tcp_v4_rcv` 的延迟阈值 |
-| `net_rx_latency.driver2userspace` | `115`（ms） | 从网卡驱动到用户态拷贝（`skb_copy_datagram_iovec`）的延迟阈值 |
-| `net_rx_latency.excluded_host_netnamespace` | `true` | 是否过滤宿主机网络命名空间（默认仅观测容器） |
-| `net_rx_latency.excluded_container_qos` | `[]` | 需要排除的容器 QoS 级别列表 |
-| `dropwatch.filter` | `tcp` | 在 dropwatch 事件输出前执行的 tcpdump 风格报文过滤表达式 |
-| `dropwatch.max_events_per_second` | `100` | 每秒最多输出的 dropwatch 事件数；`0` 表示不限速 |
-| `dropwatch.exclude_containers` | `[]` | 预留字段；当前 dropwatch 事件链路不会应用该配置 |
-| `netdev.device_list` | `[]` | 需要监控链路状态的网卡设备名称列表 |
-| `ras.mce_thr_backoff` | `1800`（秒） | MCE 阈值中断（THR）事件上报冷却时间，防止中断风暴 |
-| `issues_list` | `[]` | 已知问题抑制规则；分别匹配 net_rx_latency 事件标题和 dropwatch 内核调用栈 |
-
-### 事件列表
-
-| 事件名称（tracer_name） | 探针类型 | 触发条件 | 典型场景 |
-| ----------------------- | -------- | -------- | -------- |
-| `sched_tick` | kprobe | 调度 tick 间隔 >= 阈值（默认 10ms） | 系统卡顿、网络延迟、调度延迟 |
-| `softlockup` | kprobe | CPU 长时间无法调度（约 1 秒） | 系统软锁死、响应异常 |
-| `hungtask` | kprobe | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
-| `memory_oom_kill` | kprobe | OOM Killer 触发 | 容器/宿主机内存耗尽 |
-| `memory_reclaim_events` | kprobe | 容器进程直接回收时间 > 阈值（默认 900ms） | 内存压力导致业务卡顿 |
-| `ras` | tracepoint | CPU/MEM/PCIe 硬件错误 | 硬件故障感知 |
-| `dropwatch` | tracepoint | 内核网络协议栈丢包 | 协议栈丢包导致业务毛刺 |
-| `tcp_retransmit` | tracepoint；TLP 使用可选 kprobe | TCP 重传或 Tail Loss Probe | TCP 丢包、乱序、拥塞及延迟诊断 |
-| `net_rx_latency` | kprobe | 协议栈接收延迟超分段阈值 | 接收延迟引起业务超时 |
-| `netdev_events` | netlink | 网卡链路状态变化 | 网卡物理链路故障 |
-| `netdev_bonding_lacp` | kprobe | LACP 协议状态变化（仅 802.3ad 模式环境） | 物理机与交换机故障边界界定 |
-| `netdev_txqueue_timeout` | kprobe | 网卡发送队列超时 | 网卡发送队列硬件故障 |
-
-tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpshark 文档](/docs/best-practice/tcpshark_zh.md)。
-
-### 通用字段说明
-
-所有事件数据均包含以下通用字段：
-
-- **hostname**：物理机 hostname
-- **region**：物理机所在可用区
-- **uploaded_timestamp**：数据上传时间
-- **container_id**：如果事件关联容器，则记录的容器 ID
-- **container_hostname**：如果事件关联容器，则记录的容器 hostname
-- **container_host_namespace**：如果事件关联容器，则记录容器的 K8s 命名空间
-- **container_type**：容器类型，例如 `normal` 普通容器，`sidecar` 边车容器等
-- **container_qos**：容器 QoS 级别
-- **tracer_name**：事件名称（如 `sched_tick`、`memory_oom_kill` 等）
-- **tracer_id**：此次的 tracing ID
-- **observed_timestamp**：触发 tracing 时间
-- **tracer_type**：观测类型，即时事件记录固定为 `event`
-- **tracer_data**：特定事件私有数据（详见各事件说明）
-
-### 1. sched_tick 调度 tick 间隔
-
-**功能描述** 检测相邻调度 tick 的总间隔；间隔达到阈值时记录当前内核调用栈和进程信息。该事件可发现 IRQ 长时间关闭、CPU 停顿或虚拟化调度延迟等问题，但不能单独证明软中断被禁用。`comm` 和 `pid` 表示上报 tick 所中断的任务，不表示造成延迟的任务。
-
-**适用场景**
-
-- 内核或驱动长时间关闭本地中断，或 hardirq/NMI 长时间占用 CPU。
-- 虚拟机 vCPU 被宿主机长时间抢占，包括高 steal time 和调度停顿。
-- SMI、固件停顿、clockevent 延迟投递或丢失等底层异常。
-
-**使用边界** 成功进入 NO_HZ 的正常停 tick 会被过滤。普通 CPU 高负载或 softirq backlog 本身不等同于 tick 延迟。阈值应高于目标机器的正常 tick 周期；事件栈仅表示延迟结束后首个 tick 的现场，需要结合 IRQ、steal time 和硬件指标定位根因。
-
-**数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "uploaded_timestamp": "2025-06-11T16:05:16.251152703+08:00",
-    "hostname": "***",
-    "tracer_data": {
-        "tick_interval_ns": 237328905,
-        "tick_interval_threshold_ns": 10000000,
-        "comm": "***-agent",
-        "pid": 688073,
-        "cpu": 1,
-        "stack": "scheduler_tick/..."
-    },
-    "observed_timestamp": "2025-06-11T16:05:16.251+08:00",
-    "tracer_type": "event",
-    "region": "***",
-    "tracer_name": "sched_tick"
-}
-```
-
-**字段含义解释**
-
-- **comm**：触发事件的进程名称
-- **stack**：延迟结束后的首个调度 tick 上采集的内核调用栈
-- **tick_interval_ns**：相邻调度 tick 的总间隔（纳秒）
-- **cpu**：发生事件的 CPU 编号
-- **tick_interval_threshold_ns**：调度 tick 间隔阈值（纳秒），达到该值则记录事件
-- **pid**：上报 tick 所中断任务的进程 ID
-
-### 2. dropwatch 协议栈丢包
-
-**功能描述** 检测内核网络协议栈中的丢包行为，输出丢包时的内核调用栈、网络五元组、TCP 状态等信息。可通过可选的调用栈过滤器抑制经本机验证的噪声模式。`type` 字段为兼容 TCP 丢包类型而预留，当前未赋值。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
-    "tracer_data": {
-        "drop_reason": "SKB_DROP_REASON_NOT_SPECIFIED",
-        "source": "events",
-        "comm": "kubelet",
-        "pid": 1687046,
-        "net_namespace_cookie": 123456789,
-        "net_namespace_inum": 402653184,
-        "netdev_queue_mapping": 3,
-        "netdev_linkstatus": ["linkStatusUp"],
-        "netdev_name": "eth0",
-        "netdev_ifindex": 2,
-        "packet_eth_proto": "0x0800",
-        "packet_len_bytes": 1460,
-        "layers": {
-            "label": "IPv4/TCP",
-            "ipv4": {
-                "saddr": "10.79.68.62",
-                "daddr": "10.134.72.4",
-                "protocol": "TCP"
-            },
-            "tcp": {
-                "sport": 8080,
-                "dport": 49000,
-                "seq": 1009085774,
-                "ack_seq": 689410995,
-                "sk_state": "ESTABLISHED"
-            }
-        },
-        "stack": "kfree_skb/..."
-    }
-}
-```
-
-**字段含义解释**
-
-- **type**：预留丢包类型，当前未赋值且不会出现在 JSON 中；预留编码为 `1`（通用丢包）、`2`（SYN 洪泛）、`3`（半连接队列溢出）、`4`（全连接队列溢出）
-- **drop_reason**：内核数据包丢弃原因
-- **source**：事件来源（独立运行 dropwatch 时为 `tools`，由 huatuo-bamai 启动时为 `events`）
-- **comm**：触发丢包的进程名称
-- **pid**：进程 ID
-- **net_namespace_cookie / net_namespace_inum**：用于容器归属解析的网络命名空间值
-- **netdev_queue_mapping**：网卡队列索引
-- **netdev_linkstatus**：网卡链路状态标志列表
-- **netdev_name**：网卡设备名称
-- **netdev_ifindex**：网卡接口索引
-- **packet_len_bytes**：数据包长度（字节）
-- **layers.ipv4.saddr / layers.ipv4.daddr**：源 IP 和目的 IP 地址
-- **layers.tcp.sport / layers.tcp.dport**：源端口和目的端口
-- **layers.tcp.seq / layers.tcp.ack_seq**：TCP 序列号和确认序列号
-- **layers.tcp.sk_state**：丢包时 TCP 连接状态
-- **stack**：丢包发生时的内核调用栈
-
-### 3. net_rx_latency 协议栈延迟
-
-**功能描述** 检测协议栈接收方向（网卡驱动 → 内核协议栈 → 用户态主动收包）的分段延迟事件。在接收路径上设置三个观测点，任意阶段延迟超过对应阈值（默认：网卡到内核 5ms、内核到 TCP 10ms、TCP 到用户态 115ms）时触发，记录网络五元组、TCP 序列号、延迟位置及延迟时间。支持所有 TCP 状态的报文观测，不限于 ESTABLISHED 状态，可捕获 SYN、FIN、TIME_WAIT 等非 ESTABLISHED 状态下的接收延迟事件。默认过滤宿主机网络命名空间，仅观测容器网络。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "observed_timestamp": "2025-06-11T00:00:00Z",
-    "tracer_data": {
-        "comm": "nginx",
-        "pid": 2921092,
-        "latency_stage": "RX_STAGE_USERCOPY",
-        "latency_ms": 95973,
-        "latency_threshold_ms": 115,
-        "tcp_state": "ESTABLISHED",
-        "tcp_saddr": "10.156.248.76",
-        "tcp_daddr": "10.134.72.4",
-        "tcp_sport": 9213,
-        "tcp_dport": 49000,
-        "tcp_seq": 1009085774,
-        "tcp_ack_seq": 689410995,
-        "net_namespace_cookie": 123456789,
-        "net_namespace_inum": 402653184,
-        "packet_len_bytes": 26064
-    }
-}
-```
-
-**字段含义解释**
-
-- **comm**：触发事件的进程名称
-- **pid**：触发事件的进程 ID
-- **latency_stage**：延迟发生的阶段（`RX_STAGE_NETIF` 网卡到内核 / `RX_STAGE_TCPV4` 内核到 TCP / `RX_STAGE_USERCOPY` TCP 到用户态）
-- **latency_ms**：实际延迟时间（毫秒）
-- **latency_threshold_ms**：触发事件的延迟阈值（毫秒）
-- **tcp_state**：TCP 连接状态（支持所有状态，如 `ESTABLISHED`、`SYN_SENT`、`FIN_WAIT`、`TIME_WAIT` 等）
-- **tcp_saddr / tcp_daddr**：源 IP / 目的 IP 地址
-- **tcp_sport / tcp_dport**：源端口 / 目的端口
-- **tcp_seq / tcp_ack_seq**：TCP 序列号 / 确认序列号
-- **net_namespace_cookie**：网络命名空间 cookie（内核 ≥ 5.14 可用，用于高效容器关联）
-- **net_namespace_inum**：网络命名空间 inum
-- **packet_len_bytes**：数据包长度（字节）
-
-### 4. memory_oom_kill 内存耗尽
-
-OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更早为 `oom`），需同步更新黑名单、事件过滤器和告警查询。指标前缀现为 `huatuo_bamai_memory_oom_kill_`，替代 `huatuo_bamai_memory_oom_` 及更早的 `huatuo_bamai_oom_`，需同步更新指标仪表盘和记录规则。历史事件保留原名称，跨版本查询需匹配这三个名称；内置事件仪表盘已覆盖三者。
-
-**功能描述** 检测宿主机或容器内发生的 OOM（Out of Memory）事件，记录被 OOM Killer 终止的进程（victim）与触发 OOM 的进程（trigger）信息，以及对应容器和 memory cgroup 的详细信息，提供完整的故障快照。同时维护宿主机和各容器的 OOM 计数指标。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "trigger_memcg_css": "0xff4b8d8be3818000",
-        "trigger_container_id": "***",
-        "trigger_container_hostname": "***.docker",
-        "trigger_pid": 3218804,
-        "trigger_process_name": "java",
-        "victim_memcg_css": "0xff4b8d8be3818000",
-        "victim_container_id": "***",
-        "victim_container_hostname": "***.docker",
-        "victim_pid": 3218745,
-        "victim_process_name": "java",
-        "cgroup_memory_limit": 2147483648,
-        "cgroup_memory_usage": 2143289344,
-        "memory_snapshot": {
-            "top_processes": [
-                {
-                    "pid": 3218745,
-                    "process_name": "java",
-                    "vm_rss": 1604321280,
-                    "rss_anon": 1509949440,
-                    "rss_file": 83886080,
-                    "rss_shmem": 0,
-                    "vm_swap": 0,
-                    "total": 1593835520
-                }
-            ],
-            "host_meminfo": {
-                "MemAvailable": 3355443200,
-                "Cached": 1073741824,
-                "Slab": 268435456
-            },
-            "victim_cgroup": {
-                "container_id": "***",
-                "cgroup_path": "kubepods.slice/...",
-                "current": 2143289344,
-                "max": 2147483648,
-                "stat": {
-                    "anon": 1509949440,
-                    "file": 83886080
-                },
-                "events": {
-                    "oom": 1,
-                    "oom_kill": 1
-                }
-            }
-        }
-    }
-}
-```
-
-**字段含义解释**
-
-- **victim_process_name / victim_pid**：被 OOM Killer 终止的进程名称与 PID
-- **victim_container_hostname / victim_container_id**：被终止进程所在的容器主机名与容器 ID
-- **victim_memcg_css**：被终止进程对应的 memory cgroup 指针（十六进制）
-- **trigger_process_name / trigger_pid**：触发 OOM 的进程名称与 PID
-- **trigger_container_hostname / trigger_container_id**：触发进程所在的容器主机名与容器 ID
-- **trigger_memcg_css**：触发进程对应的 memory cgroup 指针（十六进制）
-- **cgroup_memory_limit / cgroup_memory_usage**：内核事件中携带的 cgroup 内存限制与使用量
-- **memory_snapshot.top_processes**：OOM 现场按 RSS/swap 排序的 Top 进程，包含 `RssAnon`、`RssFile`、`RssShmem`、`VmRSS`、`VmSwap`
-- **memory_snapshot.host_meminfo**：OOM 现场关键宿主机 `/proc/meminfo` 字段，如 `MemAvailable`、`Cached`、`Slab`、swap、anon/file 活跃页等
-- **memory_snapshot.trigger_cgroup / victim_cgroup**：触发容器和受害容器的 cgroup 路径、current/max、`memory.stat` 和 `memory.events`
-
-### 5. softlockup 软锁死
-
-**功能描述** 检测系统 softlockup 事件（CPU 长时间无法被调度，约 1 秒），提供导致锁死的目标进程信息、所在 CPU 及所有 CPU 的 NMI 回溯信息。采用退避（backoff）策略，同一轮事件风暴期间上报间隔从 10 分钟递增至最长 3 小时，防止重复上报。同时维护 softlockup 发生次数的计数指标。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "cpu": 15,
-        "pid": 12345,
-        "comm": "kworker/15:0",
-        "cpus_stack": "2025-06-10 14:30:22 sysrq: Show backtrace of all active CPUs\nNMI backtrace for cpu 15\n..."
-    }
-}
-```
-
-**字段含义解释**
-
-- **cpu**：发生 softlockup 的 CPU 编号
-- **pid**：触发 softlockup 的进程 PID
-- **comm**：触发 softlockup 的进程名称
-- **cpus_stack**：所有 CPU 的 NMI 回溯信息（多行文本，包含时间戳和调用栈）
-
-### 6. hungtask 任务挂起
-
-**功能描述** 检测系统 hungtask 事件，捕获当前所有处于 D 状态（不可中断睡眠）的进程内核栈及所有 CPU 的回溯信息，用于保留故障现场。采用退避策略，同一轮事件风暴期间上报间隔从 10 分钟递增至最长 3 小时。同时维护 hungtask 发生次数的计数指标。注意：部分 Linux 发行版（如 Fedora 42）默认禁用 hungtask 检测，此时该观测器不会启动。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "tid": 2567042,
-        "comm": "kworker/u48:2",
-        "cpus_stack": "2025-06-10 09:57:14 sysrq: Show backtrace of all active CPUs\nNMI backtrace for cpu 33\n...",
-        "blocked_processes_stack": "task:java            state:D stack:    0 pid: 12345 ..."
-    }
-}
-```
-
-**字段含义解释**
-
-- **tid**：触发 hungtask 检测的任务 TID
-- **comm**：触发 hungtask 检测的任务名称
-- **cpus_stack**：所有 CPU 的 NMI 回溯信息（多行文本，包含时间戳和调用栈）
-- **blocked_processes_stack**：D 状态进程的内核栈信息
-
-### 7. memory_reclaim_events 内存回收
-
-**功能描述** 检测容器进程发生直接内存回收（direct reclaim）的事件，当同一进程在 1 秒内直接回收时间超过阈值（默认 900ms）时触发，记录回收耗时、进程及容器信息。**注意：该观测器仅记录容器进程的内存回收事件，宿主机进程的事件会被过滤。**
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "pid": 1896137,
-        "tid": 1896138,
-        "comm": "java",
-        "reclaim_duration_ns": 1412702917
-    }
-}
-```
-
-**字段含义解释**
-
-- **comm**：触发直接内存回收的进程名称
-- **pid**：触发进程的 PID
-- **tid**：触发线程的 TID
-- **reclaim_duration_ns**：直接回收耗时（纳秒）
-
-### 8. ras 硬件错误
-
-**功能描述** 通过内核 tracepoint 检测 CPU、内存、PCIe 等硬件错误，支持 5 种硬件错误来源：MCE（Machine Check Exception）、EDAC（内存控制器）、ACPI/GHES（非标准硬件错误）、PCIe AER（高级错误上报）、MCE 阈值中断（THR）。错误按严重程度分级：`Corrected`（已纠正）、`UncorrectedRecoverable`（未纠正可恢复）、`UncorrectedFatal`（未纠正致命）。MCE 阈值中断事件采用冷却策略（默认 30 分钟），防止中断风暴触发大量重复上报。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**MCE 示例数据**
-
-```json
-{
-    "tracer_data": {
-        "dev": "CPU/MEM",
-        "event": "MCE",
-        "type": "UncorrectedRecoverable",
-        "info": "{\"mcg_cpu_cap\":4096,\"banks_msr_status\":9295429630892703744,\"cpu\":2,\"socketid\":0,\"bank\":5}"
-    }
-}
-```
-
-**PCIe AER 示例数据**
-
-```json
-{
-    "observed_timestamp": "2025-06-11T00:00:00Z",
-    "tracer_data": {
-        "dev": "PCIe 0000:3b:00.0",
-        "event": "AER",
-        "type": "UncorrectedRecoverable",
-        "info": "{\"dev_name\":\"0000:3b:00.0\",\"err_type\":\"UncorrectedRecoverable\",\"err_reason\":\"Completion Timeout\",\"tlp_header\":\"not available\"}"
-    }
-}
-```
-
-**字段含义解释**
-
-- **dev**：发生错误的硬件设备（如 `CPU/MEM`、`PCIe 0000:3b:00.0`）
-- **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`）
-- **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`）
-- **observed_timestamp**：顶层字段，表示用户态观测事件的 UTC 时间；`kernel_observed_timestamp` 表示内核观测事件的 UTC 时间
-- **info**：JSON 格式的详细错误信息，内容因 event 类型不同而不同
-
-### 9. netdev_events 网络设备
-
-**功能描述** 通过订阅内核 netlink RTM_NEWLINK 消息，检测网卡链路状态变化事件（down/up、MTU 变更、AdminDown、CarrierDown 等），输出接口名称、链路状态、MAC 地址及驱动信息。观测器启动时会扫描 `device_list` 中配置的网卡当前状态作为基线，后续仅上报状态变化事件。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "ifname": "eth1",
-        "index": 3,
-        "linkstatus": "linkStatusAdminDown, linkStatusCarrierDown",
-        "mac": "5c:6f:69:34:dc:72",
-        "start": false,
-        "driver": "ixgbe",
-        "driver_version": "5.1.0-k",
-        "firmware_version": "3.25 0x80000421 1.2163.0"
-    }
-}
-```
-
-**字段含义解释**
-
-- **ifname**：网络接口名称（如 `eth1`）
-- **index**：接口索引号
-- **linkstatus**：链路状态变化描述（可包含多个状态）
-- **mac**：网卡 MAC 地址
-- **start**：是否为启动时扫描的基线事件（`true`：启动扫描，`false`：实时变化事件）
-- **driver**：网卡驱动名称
-- **driver_version**：网卡驱动版本
-- **firmware_version**：网卡固件版本
-
-### 10. netdev_bonding_lacp LACP 协议
-
-**功能描述** 检测 bonding 模式下 LACP（Link Aggregation Control Protocol，IEEE 802.3ad）协议的状态变化，读取并记录 `/proc/net/bonding/` 下所有 bonding 接口的完整状态信息，包含模式、MII 状态、Actor/Partner 协商参数、Slave 链路状态等。**仅在系统存在 IEEE 802.3ad bonding 模式接口时自动启用。**
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "content": "/proc/net/bonding/bond0\nEthernet Channel Bonding Driver: v4.18.0...\nBonding Mode: IEEE 802.3ad Dynamic link aggregation\nMII Status: down\n..."
-    }
-}
-```
-
-**字段含义解释**
-
-- **content**：完整的 bonding 接口状态信息（多行文本，包含所有 Slave 的 LACP 协商细节，等同于 `/proc/net/bonding/bondX` 文件内容）
-
-### 11. netdev_txqueue_timeout 发送队列超时
-
-**功能描述** 检测网卡发送队列超时（TX queue timeout）事件，记录发生超时的队列索引、设备名称和驱动名称，用于定位网卡发送方向的硬件故障。
-
-**数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
-
-**示例数据**
-
-```json
-{
-    "tracer_data": {
-        "queue_index": 3,
-        "device_name": "eth0",
-        "driver_name": "ixgbe"
-    }
-}
-```
-
-**字段含义解释**
-
-- **queue_index**：发生超时的发送队列索引
-- **device_name**：网卡设备名称
-- **driver_name**：网卡驱动名称
-
-## ⚙️ 原理
-
-### 整体架构
-
-HUATUO 的异常事件观测基于 eBPF 技术，在内核态以极低的性能损耗采集异常事件现场数据，并通过用户态守护进程完成格式化、过滤、容器信息关联和持久化存储。
-
-```mermaid
-graph TB
-    subgraph "Linux Kernel"
-        direction TB
-        K1["kprobe 挂钩\n(sched_tick / softlockup / hungtask\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
-        K2["tracepoint 挂钩\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
-        K3["netlink 订阅\n(netdev_events: RTM_NEWLINK)"]
-        K4["kprobe 挂钩\n(netdev_bonding_lacp: 802.3ad)"]
-        PEB["Perf Event 环形缓冲区\n(8192 页)"]
-    end
-
-    subgraph "HUATUO 用户态"
-        direction TB
-        EH["Go 事件处理 goroutine\n(每类事件独立运行)"]
-        CF["过滤器\n(阈值判断 / 降噪 / 已知问题过滤)"]
-        CM["容器信息关联\n(CSS → ContainerID\n NetNS → ContainerID)"]
-    end
-
-    subgraph "存储"
-        ES["Elasticsearch"]
-        DISK["本地磁盘文件"]
-    end
-
-    K1 --> PEB
-    K2 --> PEB
-    K4 --> PEB
-    PEB --> EH
-    K3 --> EH
-    EH --> CF
-    CF --> CM
-    CM --> ES
-    CM --> DISK
-```
-
-### 事件处理流程
-
-```mermaid
-sequenceDiagram
-    participant K as Linux Kernel
-    participant B as eBPF Program
-    participant P as Perf Event Buffer
-    participant H as Go 事件处理器
-    participant F as 过滤器
-    participant S as 存储
-
-    K->>B: 触发 kprobe / tracepoint
-    B->>B: 采集现场数据<br/>(进程信息 / 内核栈 / 网络上下文)
-    B->>P: 写入 perf event 环形缓冲区
-    H->>P: 读取事件数据（阻塞等待）
-    H->>F: 格式化并执行过滤<br/>(阈值 / 降噪 / 已知问题)
-    F->>H: 通过过滤的事件
-    H->>H: 关联容器信息<br/>(CSS / NetNS 映射)
-    H->>S: 持久化存储<br/>(Elasticsearch / 本地文件)
-```
-
-{{% alert color="info" %}}
-<div style="text-align: center;">
-🌟 欢迎 Star: <a href="https://github.com/ccfos/huatuo" target="_blank">https://github.com/ccfos/huatuo</a>
-<br><br>
-👀 欢迎订阅官方微信公众号<br>
-<img src="/img/contact-weixin.png" alt="微信公众号二维码" style="max-width: 200px; margin-top: 10px;">
-</div>
-{{% /alert %}}
+| 问题 | 事件或观测器 |
+| --- | --- |
+| 调度停顿、软锁死、任务长期阻塞 | `sched_tick`、`softlockup`、`hungtask` |
+| OOM、直接内存回收阻塞 | `memory_oom_kill`、`memory_reclaim_events` |
+| 协议栈丢包、接收延迟 | `dropwatch`、`net_rx_latency` |
+| 网卡状态、LACP、发送队列超时 | `netdev_events`、`netdev_bonding_lacp`、`netdev_txqueue_timeout` |
+| TCP 重传 | 见 [tcpshark](/docs/best-practice/tcpshark_zh.md) |
+| CPU、内存及 PCIe 硬件错误 | 见[硬件故障诊断](/docs/key-feature/hardware-events_zh.md) |
+
+事件提供诊断线索，不能单独证明故障根因。探针支持、过滤和限速规则会影响观测范围；缓冲区不足时也可能丢失事件。
+
+## 配置
+
+在 `huatuo-bamai.conf` 的 `EventTracing` 下设置阈值和过滤规则。完整字段、默认值及单位见[节点配置](/docs/configuration/huatuo-bamai-configuration_zh.md)的“事件追踪”章节；全局黑名单控制观测器是否启用。
+
+## 事件记录
+
+事件按存储配置写入 Elasticsearch 或本地文件。通过 `tracer_type=event`、事件名称、主机或容器及时间范围筛选，查看对应的进程、调用栈和设备信息。容器字段仅在关联成功时提供。
+
+完整 JSON 示例、字段单位和兼容性说明见[异常事件字段](/docs/reference/instant-observability_zh.md)。
+
+## CPU 调度
+
+### 调度 tick 间隔
+
+观测器：`sched_tick`。
+
+相邻调度 tick 的间隔达到阈值时，记录进程和内核栈，可用于排查中断长时间关闭、CPU 停顿或虚拟化调度延迟。阈值应高于正常 tick 周期；正常 NO_HZ 停 tick 会被过滤。
+
+记录的是延迟结束后首个 tick 的现场。进程和调用栈不一定是延迟原因，普通 CPU 高负载或 softirq 积压也不等同于 tick 延迟。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#调度-tick-间隔)。
+
+### 软锁死
+
+观测器：`softlockup`。
+
+记录内核报告 softlockup 时的进程、CPU 和 NMI 回溯信息；这些信息不能单独确定致因进程。触发时间由内核 watchdog 配置决定。
+
+重复事件的上报间隔从 10 分钟递增至最长 3 小时，期间仍累计事件计数。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#软锁死)。
+
+### 任务阻塞
+
+观测器：`hungtask`。
+
+检测系统 hungtask 事件，采集 D 状态（不可中断睡眠）进程的内核栈及 CPU 回溯信息。
+
+重复事件的上报间隔从 10 分钟递增至最长 3 小时，期间仍累计事件计数。内核未提供 `hung_task_timeout_secs` 时不注册观测器；将该值设为 `0` 会禁用内核 hungtask 检测。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#任务阻塞)。
+
+## 内存
+
+### OOM 终止
+
+观测器：`memory_oom_kill`。
+
+记录 OOM Killer 的触发进程（`trigger`）与被终止进程（`victim`），以及可获取的容器、cgroup 和宿主机内存信息。触发进程不一定是主要内存消耗者，需结合使用量和内存限制分析。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#oom-终止)。
+
+### 直接回收
+
+观测器：`memory_reclaim_events`。
+
+记录容器线程单次直接内存回收的耗时。`try_to_free_pages` 返回时，若本次调用超过阈值（默认 900 毫秒），则上报进程、线程和容器信息。未关联到容器的事件会被过滤。
+
+黑名单使用注册名 `memory_reclaim_events`，落盘记录的 `tracer_name` 为 `memory_reclaim`。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#直接回收)。
+
+## 网络
+
+### 协议栈丢包
+
+观测器：`dropwatch`。
+
+检测内核网络协议栈中的丢包行为，输出丢包时的内核调用栈、网络五元组、TCP 状态等信息。可通过可选的调用栈过滤器抑制经本机验证的噪声模式。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#协议栈丢包)。
+
+### 接收延迟
+
+观测器：`net_rx_latency`。
+
+记录 TCP 报文从驱动接收点到 `__netif_receive_skb`、`tcp_v4_rcv` 和用户态拷贝点的延迟。这三个值均从驱动起算，不是相邻观测点之间的耗时；默认阈值依次为 5、10、115 毫秒。达到对应阈值时记录端点、TCP 状态、序列号及延迟值。
+
+默认排除宿主机网络命名空间，仅观测容器网络。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#接收延迟)。
+
+### 网卡状态
+
+观测器：`netdev_events`。
+
+通过订阅内核 netlink RTM_NEWLINK 消息，检测网卡链路状态标志变化（如 AdminDown、CarrierDown），输出接口名称、链路状态、MAC 地址及驱动信息。
+
+观测器启动时扫描 `EventTracing.Netdev.DeviceList` 中配置的网卡当前状态作为基线，后续仅上报状态变化事件。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#网卡状态)。
+
+### LACP 状态
+
+观测器：`netdev_bonding_lacp`。
+
+仅在系统存在 IEEE 802.3ad bonding 接口时启用。LACP 状态变化时，记录 bonding 接口的模式、链路状态和协商信息，用于分析链路聚合异常。
+
+黑名单使用注册名 `netdev_bonding_lacp`，查询记录时使用 `tracer_name=lacp`。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#lacp-状态)。
+
+### 发送队列超时
+
+观测器：`netdev_txqueue_timeout`。
+
+检测网卡发送队列超时（TX queue timeout）事件，记录发生超时的队列索引、设备名称和驱动名称，用于排查发送方向的设备、驱动或链路异常。
+
+详细字段见[异常事件字段](/docs/reference/instant-observability_zh.md#发送队列超时)。

@@ -16,7 +16,10 @@ package bpfmap
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+
+	"github.com/cilium/ebpf"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 )
@@ -25,15 +28,24 @@ import (
 const StackTraceLen = 127
 
 // ReadStackTrace reads a stack by ID, including ID zero. Callers must filter
-// capture-failure sentinels before reading. Lookup errors retain their identity;
-// malformed values wrap ErrInvalidStackData. No partial stack is returned.
+// capture-failure sentinels before reading. Missing lookups wrap ErrStackNotFound;
+// malformed values wrap ErrInvalidStackData. Other lookup errors retain their
+// identity. No partial stack is returned.
 func ReadStackTrace(b bpf.BPF, mapID, stackID uint32) ([StackTraceLen]uint64, error) {
 	var stack [StackTraceLen]uint64
 	var key [4]byte
 	binary.LittleEndian.PutUint32(key[:], stackID)
 	raw, err := b.ReadMap(mapID, key[:])
 	if err != nil {
+		if errors.Is(err, ebpf.ErrKeyNotExist) {
+			err = ErrStackNotFound
+		}
 		return stack, fmt.Errorf("read stack map %d ID %d: %w", mapID, stackID, err)
+	}
+
+	// LookupBytes reports missing keys as (nil, nil).
+	if raw == nil {
+		return stack, fmt.Errorf("read stack map %d ID %d: %w", mapID, stackID, ErrStackNotFound)
 	}
 
 	if len(raw) != StackTraceLen*8 {

@@ -15,9 +15,16 @@
 package symbol
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/procfs"
@@ -25,10 +32,18 @@ import (
 
 const ksymMax = 300000
 
+const ksymStackRetryInterval = time.Second
+
+type ksymLoadFailure struct {
+	err     error
+	retryAt time.Time
+}
+
 var (
-	ksymLoadOnce sync.Once
-	ksymTable    symbols
-	ksymUnknown  = &symbol{Name: "[unknown]"}
+	ksymLoadMu      sync.Mutex
+	ksymTable       atomic.Pointer[symbols]
+	ksymLastFailure atomic.Pointer[ksymLoadFailure]
+	ksymUnknown     = &symbol{Name: "[unknown]"}
 )
 
 const (
@@ -38,6 +53,24 @@ const (
 	KsymStackMaxDepth = 127
 	// KsymPerfStackDepth is the default perf kernel stack depth.
 	KsymPerfStackDepth = 20
+)
+
+// KsymbolRange contains an address and the available kernel symbol range end.
+type KsymbolRange struct {
+	Start uint64
+	End   uint64
+}
+
+// KsymbolLookupMode selects the requested kernel symbol information.
+type KsymbolLookupMode uint8
+
+const (
+	// KsymbolLookupDefault preserves ordinary address lookup behavior.
+	KsymbolLookupDefault KsymbolLookupMode = iota
+	// KsymbolLookupData reads only the requested data symbol addresses.
+	KsymbolLookupData
+	// KsymbolLookupRange additionally resolves kernel symbol range ends.
+	KsymbolLookupRange
 )
 
 // KsymStackBytes resolves kernel stack addresses into byte frames (innermost first).
@@ -60,15 +93,97 @@ func KsymStackStrsReversed(kstack []uint64, kstackSize int) []string {
 	return dumpKernelBackTrace(kstack, kstackSize, outTypeString, true).strings
 }
 
-// KsymbolSearchAddr returns the address of a kernel symbol by name.
-func KsymbolSearchAddr(name string) (uint64, error) {
-	ensureKsymsLoaded()
-	for _, s := range ksymTable {
-		if s.Name == name {
-			return s.Addr, nil
+// KsymbolSearchAddr returns addresses for the requested symbols.
+// The default mode retains ordinary lookups. Data and range lookups read the
+// requested symbols without adding them to the stack symbol table.
+// Missing names are omitted; an unavailable range end remains zero.
+func KsymbolSearchAddr(names []string, mode KsymbolLookupMode) (map[string]KsymbolRange, error) {
+	result := make(map[string]KsymbolRange, len(names))
+	switch mode {
+	default:
+		table, err := ensureKsymsLoaded(false)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range names {
+			for _, s := range table {
+				if s.Name == name {
+					result[name] = KsymbolRange{Start: s.Addr}
+					break
+				}
+			}
+		}
+	case KsymbolLookupData:
+		path := procfs.Path("kallsyms")
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open %q: %w", path, err)
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			words := strings.Fields(scanner.Text())
+			name := words[2]
+			if !slices.Contains(names, name) {
+				continue
+			}
+			if _, exists := result[name]; exists {
+				continue
+			}
+			addr, err := strconv.ParseUint(words[0], 16, 64)
+			if err != nil {
+				continue
+			}
+			result[name] = KsymbolRange{Start: addr}
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scan %q: %w", path, err)
+		}
+	case KsymbolLookupRange:
+		path := procfs.Path("kallsyms")
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open %q: %w", path, err)
+		}
+		defer file.Close()
+
+		// Complete one range before scanning for the next requested name.
+		for _, name := range names {
+			if _, err := file.Seek(0, io.SeekStart); err != nil {
+				return nil, fmt.Errorf("rewind %q: %w", path, err)
+			}
+			var value KsymbolRange
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				// Kernel records have three fields, plus [module] for modules.
+				words := strings.Fields(scanner.Text())
+				if value.Start == 0 && words[2] != name {
+					continue
+				}
+				addr, err := strconv.ParseUint(words[0], 16, 64)
+				if err != nil {
+					continue
+				}
+				if value.Start == 0 {
+					value.Start = addr
+					result[name] = value
+					if len(words) > 3 {
+						break
+					}
+				} else if len(words) == 3 && addr > value.Start {
+					// Match kallsyms: the next distinct address bounds a symbol.
+					value.End = addr
+					result[name] = value
+					break
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				return nil, fmt.Errorf("scan %q: %w", path, err)
+			}
 		}
 	}
-	return 0, fmt.Errorf("symbol %q not found in %q", name, procfs.Path("kallsyms"))
+	return result, nil
 }
 
 // dumpKernelBackTrace resolves kernel addresses into stackFrames up to maxDepth frames.
@@ -78,9 +193,10 @@ func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed boo
 	if len(stack) > maxDepth {
 		stack = stack[:maxDepth]
 	}
-	ensureKsymsLoaded()
+	// Keep stack output best-effort: a failed load resolves to unknown.
+	table, _ := ensureKsymsLoaded(true)
 	frames := resolveStack(stack, func(addr uint64) string {
-		sym := ksymTable.floorSym(addr)
+		sym := table.floorSym(addr)
 		if sym == nil {
 			return failFrame("ksym-not-found", "")
 		}
@@ -97,15 +213,41 @@ func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed boo
 	return frames
 }
 
-// ensureKsymsLoaded loads kallsyms exactly once; on failure it logs a warning and leaves ksymTable empty.
-func ensureKsymsLoaded() {
-	ksymLoadOnce.Do(func() {
-		tbl, err := scanKallsyms(procfs.Path("kallsyms"), ksymMax)
-		if err != nil {
-			log.Warnf("symbol: failed to load kallsyms: %v", err)
-			return
+// Publish only a complete immutable table. Failed loads remain retryable;
+// successful readers need no lock and never observe a partially sorted table.
+func ensureKsymsLoaded(isBestEffort bool) (symbols, error) {
+	if table := ksymTable.Load(); table != nil {
+		return *table, nil
+	}
+	// Stack events reuse a recent failure without locking or scanning again.
+	// Explicit address queries must remain immediately retryable.
+	if isBestEffort {
+		if failure := ksymLastFailure.Load(); failure != nil && time.Now().Before(failure.retryAt) {
+			return nil, failure.err
 		}
-		ksymTable = append(symbols{ksymUnknown}, tbl...)
-		ksymTable[1:].sort()
-	})
+	}
+	ksymLoadMu.Lock()
+	defer ksymLoadMu.Unlock()
+	if table := ksymTable.Load(); table != nil {
+		return *table, nil
+	}
+	// Another loader may have failed while this stack reader waited.
+	if isBestEffort {
+		if failure := ksymLastFailure.Load(); failure != nil && time.Now().Before(failure.retryAt) {
+			return nil, failure.err
+		}
+	}
+	table, err := scanKallsyms(procfs.Path("kallsyms"), ksymMax)
+	if err != nil {
+		ksymLastFailure.Store(&ksymLoadFailure{
+			err:     err,
+			retryAt: time.Now().Add(ksymStackRetryInterval),
+		})
+		log.Warnf("symbol: failed to load kallsyms: %v", err)
+		return nil, err
+	}
+	table = append(symbols{ksymUnknown}, table...)
+	table[1:].sort()
+	ksymTable.Store(&table)
+	return table, nil
 }

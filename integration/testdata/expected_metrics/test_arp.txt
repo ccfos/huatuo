@@ -1,6 +1,6 @@
 # HELP huatuo_bamai_arp_entries host init namespace
 # TYPE huatuo_bamai_arp_entries gauge
-huatuo_bamai_arp_entries{host="huatuo-dev",region="dev"} 5
+huatuo_bamai_arp_entries{hostname="huatuo-dev",region="dev"} 5
 # HELP huatuo_bamai_arp_total all entries in arp_cache for containers and host netns
 # TYPE huatuo_bamai_arp_total gauge
-huatuo_bamai_arp_total{host="huatuo-dev",region="dev"} 15
+huatuo_bamai_arp_total{hostname="huatuo-dev",region="dev"} 15

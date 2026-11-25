@@ -51,5 +51,11 @@ func parseNodeContainerResponse(
 			fmt.Sprintf("response container ID %q does not match %q", metadata.ID, containerID),
 		)
 	}
+	if metadata.CgroupCSSRefs == nil {
+		return nil, newNodeProtocolError(
+			response.StatusCode,
+			"container response has no cgroup_css_refs",
+		)
+	}
 	return &metadata, nil
 }

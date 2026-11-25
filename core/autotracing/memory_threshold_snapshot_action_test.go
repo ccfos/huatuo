@@ -34,6 +34,7 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnapshot/collector"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
@@ -256,7 +257,8 @@ func TestActionRunnerMergedInvalidationsCancelSnapshot(t *testing.T) {
 			}
 			ctx := waitActionContextForTest(t, started)
 			update := applyContainerEventsForTest(t, tracker, pod.ContainerEvent{
-				Kind: pod.ContainerDeleted, Container: containerRefForTest(first),
+				Kind:      pod.ContainerDeleted,
+				Container: containerRefForTest(first),
 			})
 			invalidated := append([]memoryWatchRegistrationID(nil), update.Invalidated...)
 			update, err := tracker.ProcessMemoryEvents(t.Context(), []memoryWatchEvent{
@@ -477,7 +479,9 @@ func TestActionBatchSnapshotsFirstAndLogsRemaining(t *testing.T) {
 			third := "/" + strings.Repeat("c", 64)
 			createMemoryCgroupForTest(t, batch.source.root, third, 80)
 			batch.targets = append(batch.targets, memoryEventObservation{
-				RegistrationID: 3, Cgroup: cgroupRefForTest(t, batch.source, third), Container: containerRefForTest(third),
+				RegistrationID: 3,
+				Cgroup:         cgroupRefForTest(t, batch.source, third),
+				Container:      containerRefForTest(third),
 			})
 			var selected []string
 			snapshotCalls := 0
@@ -600,7 +604,9 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 			outputDir := t.TempDir()
 			store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{
 				LocalFile: &tracingstore.LocalFileConfig{
-					Path: outputDir, RotationSizeMiB: 1, MaxRotatedFiles: 1,
+					Path:            outputDir,
+					RotationSizeMiB: 1,
+					MaxRotatedFiles: 1,
 				},
 			})
 			if err != nil {
@@ -611,7 +617,10 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			if err := tracing.EnableDocumentWriter(store, document.New("test")); err != nil {
+			if err := tracing.EnableDocumentWriter(store, document.New(&observation.Metadata{
+				Region:   "test",
+				Hostname: "test-node",
+			})); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(tracing.DisableDocumentWriter)
@@ -625,7 +634,8 @@ func TestActionBatchRevalidatesContainerBeforePersistence(t *testing.T) {
 			process := memsnapshot.ProcessInstanceID{TGID: 42, StartTimeTicks: 100}
 			rssBytes := uint64(4096)
 			result := &collector.Result{
-				Process: process, Language: memsnapshot.LanguageGo,
+				Process:       process,
+				Language:      memsnapshot.LanguageGo,
 				Snapshot:      &memsnapshot.Snapshot{Status: test.status},
 				ProcessMemory: &memsnapshot.ProcessMemory{Status: memsnapshot.SnapshotStatusComplete, RSSBytes: &rssBytes},
 			}
@@ -984,6 +994,42 @@ func TestActionBatchSnapshotSequenceAndFailures(t *testing.T) {
 			}
 			if !slices.Equal(calls, wantCalls) || !errors.Is(err, wantErr) {
 				t.Fatalf("calls=%v err=%v, want calls=%v err=%v", calls, err, wantCalls, wantErr)
+			}
+		})
+	}
+}
+
+func TestThresholdRetriesAfterBurstContention(t *testing.T) {
+	for _, outcome := range []string{"released", "pressure recovered", "canceled"} {
+		t.Run(outcome, func(t *testing.T) {
+			batch := newRunnerActionBatchForTest(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			batch.ctx = ctx
+			calls, saves := 0, 0
+			batch.ops.save = func(*tracing.WriteRequest) error { saves++; return nil }
+			batch.ops.snapshotProcessMemory = func(context.Context, memsnapshot.ProcessInstanceID, collector.Options) (*collector.Result, error) {
+				calls++
+				if calls == 1 {
+					if outcome == "canceled" {
+						cancel()
+					}
+					if outcome == "pressure recovered" {
+						for _, target := range batch.targets {
+							createMemoryCgroupForTest(t, batch.source.root, target.Cgroup.Path, 1)
+						}
+					}
+					return nil, collector.ErrCaptureBusy
+				}
+				return &collector.Result{SnapshotStartedAt: time.Now()}, nil
+			}
+			finished := batch.Run()
+			if outcome == "released" {
+				if calls != 2 || saves != 1 || finished.IsZero() {
+					t.Fatalf("retry lost: calls=%d saves=%d finished=%v", calls, saves, finished)
+				}
+			} else if calls != 1 || saves != 0 || !finished.IsZero() {
+				t.Fatalf("invalid retry: calls=%d saves=%d", calls, saves)
 			}
 		})
 	}

@@ -15,18 +15,26 @@
 package process
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/procfs"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestExecutable(t *testing.T) {
@@ -119,6 +127,16 @@ func TestCommandLine(t *testing.T) {
 			want: strings.Repeat("a", 5) + " " + strings.Repeat("a", 121) + " ",
 		},
 		{
+			name: "exact limit",
+			data: bytes.Repeat([]byte{'a'}, 128),
+			want: strings.Repeat("a", 128),
+		},
+		{
+			name: "large command line",
+			data: bytes.Repeat([]byte{'a'}, 1024*1024),
+			want: strings.Repeat("a", 128),
+		},
+		{
 			name:    "missing process",
 			wantErr: true,
 		},
@@ -155,21 +173,47 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
+const (
+	utsNamespaceModeEnv        = "HUATUO_TEST_UTS_NAMESPACE_MODE"
+	utsNamespaceTargetPIDEnv   = "HUATUO_TEST_UTS_NAMESPACE_TARGET_PID"
+	utsNamespaceHelperHostname = "huatuo-uts-namespace-test"
+	utsNamespaceCallerHostname = "huatuo-uts-caller-test"
+)
+
 func TestHostname(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("UTS namespace lookup requires Linux")
+	switch os.Getenv(utsNamespaceModeEnv) {
+	case "target":
+		runUTSNamespaceTarget()
+		return
+	case "caller":
+		runUTSNamespaceCaller()
+		return
+	case "namespaced":
+		runHostnameTestSuite(t)
+		return
 	}
 
 	pid := os.Getpid()
 	if _, err := Hostname(pid); errors.Is(err, syscall.EPERM) {
-		t.Skip("setns requires CAP_SYS_ADMIN")
+		t.Log("setns requires CAP_SYS_ADMIN; retrying in a user namespace")
+		runHostnameTestsInUserNamespace(t)
+		return
 	}
+	runHostnameTestSuite(t)
+}
 
+func runHostnameTestSuite(t *testing.T) {
+	t.Helper()
+
+	pid := os.Getpid()
 	want, err := os.Hostname()
 	if err != nil {
-		t.Fatalf("Hostname() error = %v", err)
+		t.Fatalf("os.Hostname() error = %v", err)
 	}
 	got, err := Hostname(pid)
+	if errors.Is(err, syscall.EPERM) {
+		t.Skip("setns requires CAP_SYS_ADMIN")
+	}
 	if err != nil {
 		t.Fatalf("Hostname(%d) error = %v", pid, err)
 	}
@@ -180,9 +224,343 @@ func TestHostname(t *testing.T) {
 	if got, err := Hostname(99999999); err == nil || got != "" {
 		t.Fatalf("Hostname(missing) = %q, %v, want empty result and error", got, err)
 	}
+
+	t.Run("restores caller namespace", testHostnameRestoresCallerNamespace)
+	t.Run("restore failure leaves caller unchanged", testHostnameRestoreFailureKeepsCaller)
 }
 
-func setProcRoot(t *testing.T) string {
+func runHostnameTestsInUserNamespace(t *testing.T) {
+	t.Helper()
+
+	// Skip records are only emitted in verbose mode, including in child tests.
+	cmd, _ := utsNamespaceCommand(t)
+	cmd.Env = append(os.Environ(), utsNamespaceModeEnv+"=namespaced")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: unix.CLONE_NEWUSER | unix.CLONE_NEWUTS,
+		UidMappings: []syscall.SysProcIDMap{{
+			ContainerID: 0,
+			HostID:      os.Getuid(),
+			Size:        1,
+		}},
+		GidMappings: []syscall.SysProcIDMap{{
+			ContainerID: 0,
+			HostID:      os.Getgid(),
+			Size:        1,
+		}},
+		GidMappingsEnableSetgroups: false,
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) {
+			t.Skip("creating a user namespace requires permission")
+		}
+		t.Fatalf("namespaced Hostname tests failed: %v\n%s", err, output)
+	}
+	if bytes.Contains(output, []byte("--- SKIP")) {
+		t.Skipf("namespaced Hostname tests were skipped:\n%s", output)
+	}
+}
+
+func testHostnameRestoresCallerNamespace(t *testing.T) {
+	t.Helper()
+	targetPID := startUTSNamespaceTarget(t)
+	runUTSNamespaceCallerTest(t, targetPID)
+}
+
+func testHostnameRestoreFailureKeepsCaller(t *testing.T) {
+	t.Helper()
+	targetPID := startUTSNamespaceTarget(t)
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	beforeNS, err := currentThreadUTSNamespace()
+	if err != nil {
+		t.Fatalf("read caller namespace before Hostname: %v", err)
+	}
+	beforeHost, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("read caller hostname before Hostname: %v", err)
+	}
+
+	originalRestore := restoreUTSNamespace
+	t.Cleanup(func() { restoreUTSNamespace = originalRestore })
+	var workerTID int
+	restoreFailure := errors.New("injected restore failure")
+	restoreUTSNamespace = func(int) error {
+		workerTID = unix.Gettid()
+		return restoreFailure
+	}
+
+	retiredWorkers := 0
+	for range 3 {
+		_, err := Hostname(targetPID)
+		if !errors.Is(err, restoreFailure) {
+			t.Fatalf("Hostname(%d) error = %v, want restore failure", targetPID, err)
+		}
+
+		// The runtime permanently parks its initial thread instead of exiting
+		// it. Other locked workers must disappear after sending their result.
+		threadPath := procfs.Path("self", "task", strconv.Itoa(workerTID))
+		deadline := time.Now().Add(5 * time.Second)
+		for workerTID != os.Getpid() {
+			_, statErr := os.Stat(threadPath)
+			if errors.Is(statErr, fs.ErrNotExist) {
+				retiredWorkers++
+				break
+			}
+			if statErr != nil {
+				t.Fatalf("stat worker thread %d: %v", workerTID, statErr)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("worker thread %d still exists after restore failure", workerTID)
+			}
+			time.Sleep(time.Millisecond)
+		}
+
+		afterNS, nsErr := currentThreadUTSNamespace()
+		if nsErr != nil {
+			t.Fatalf("read caller namespace after failed restore: %v", nsErr)
+		}
+		if afterNS != beforeNS {
+			t.Fatalf("caller namespace changed after failed restore: %q -> %q", beforeNS, afterNS)
+		}
+		afterHost, hostErr := os.Hostname()
+		if hostErr != nil {
+			t.Fatalf("read caller hostname after failed restore: %v", hostErr)
+		}
+		if afterHost != beforeHost {
+			t.Fatalf("caller hostname changed after failed restore: %q -> %q", beforeHost, afterHost)
+		}
+	}
+
+	if retiredWorkers == 0 {
+		t.Fatal("restore failures did not retire any non-initial worker thread")
+	}
+
+	restoreUTSNamespace = originalRestore
+	got, err := Hostname(targetPID)
+	if err != nil {
+		t.Fatalf("Hostname(%d) after restore hook reset error = %v", targetPID, err)
+	}
+	if got != utsNamespaceHelperHostname {
+		t.Fatalf("Hostname(%d) after restore hook reset = %q, want %q", targetPID, got, utsNamespaceHelperHostname)
+	}
+}
+
+func utsNamespaceCommand(t testing.TB) (*exec.Cmd, context.CancelFunc) {
+	t.Helper()
+
+	// Test contexts are canceled before cleanup; keep the target alive until
+	// cleanup has closed its stdin and waited for a graceful exit.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHostname$", "-test.v")
+	// Bound pipe draining if a descendant keeps an inherited descriptor open.
+	cmd.WaitDelay = time.Second
+
+	return cmd, cancel
+}
+
+func startUTSNamespaceTarget(t testing.TB) int {
+	t.Helper()
+
+	cmd, cancel := utsNamespaceCommand(t)
+	cmd.Args = append(cmd.Args, "-test.v=false")
+	cmd.Env = append(os.Environ(), utsNamespaceModeEnv+"=target")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWUTS}
+	cmd.Stderr = os.Stderr
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("StdoutPipe() error = %v", err)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("StdinPipe() error = %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		if errors.Is(err, syscall.EPERM) {
+			t.Skip("creating a UTS namespace requires CAP_SYS_ADMIN")
+		}
+		t.Fatalf("start UTS namespace helper: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		// Allow EOF shutdown and the race runtime exit delay before killing.
+		timer := time.AfterFunc(5*time.Second, cancel)
+		defer timer.Stop()
+		if err := cmd.Wait(); err != nil && !t.Failed() {
+			t.Errorf("UTS namespace helper: %v", err)
+		}
+	})
+
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() {
+		t.Fatalf("UTS namespace helper produced no status: %v", scanner.Err())
+	}
+	status := strings.TrimSpace(scanner.Text())
+	if status != "ready" {
+		t.Fatalf("UTS namespace helper status = %q, want ready", status)
+	}
+	return cmd.Process.Pid
+}
+
+func runUTSNamespaceCallerTest(t *testing.T, targetPID int) {
+	t.Helper()
+
+	cmd, _ := utsNamespaceCommand(t)
+	cmd.Env = append(
+		os.Environ(),
+		utsNamespaceModeEnv+"=caller",
+		utsNamespaceTargetPIDEnv+"="+strconv.Itoa(targetPID),
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: unix.CLONE_NEWUTS}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 77 {
+			t.Skipf("caller helper skipped: %s", output)
+		}
+		if errors.Is(err, syscall.EPERM) {
+			t.Skip("creating a UTS namespace requires CAP_SYS_ADMIN")
+		}
+		t.Fatalf("caller helper failed: %v\n%s", err, output)
+	}
+}
+
+func runUTSNamespaceTarget() {
+	if err := unix.Sethostname([]byte(utsNamespaceHelperHostname)); err != nil {
+		fmt.Fprintf(os.Stderr, "set helper hostname: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("ready")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+func runUTSNamespaceCaller() {
+	targetPID, err := strconv.Atoi(os.Getenv(utsNamespaceTargetPIDEnv))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse target PID: %v\n", err)
+		os.Exit(1)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		if err := unix.Unshare(unix.CLONE_NEWUTS); err != nil {
+			done <- err
+			return
+		}
+		// Do not unlock after unshare. This helper exits immediately; leaving
+		// the private namespace on a runtime-reused thread would contaminate it.
+		if err := unix.Sethostname([]byte(utsNamespaceCallerHostname)); err != nil {
+			done <- err
+			return
+		}
+		beforeNS, err := currentThreadUTSNamespace()
+		if err != nil {
+			done <- err
+			return
+		}
+		got, err := Hostname(targetPID)
+		if err != nil {
+			done <- err
+			return
+		}
+		afterNS, err := currentThreadUTSNamespace()
+		if err != nil {
+			done <- err
+			return
+		}
+		afterHost, err := os.Hostname()
+		if err != nil {
+			done <- err
+			return
+		}
+		if got != utsNamespaceHelperHostname {
+			done <- fmt.Errorf("Hostname(%d) = %q, want %q", targetPID, got, utsNamespaceHelperHostname)
+			return
+		}
+		if afterHost != utsNamespaceCallerHostname {
+			done <- fmt.Errorf("caller hostname = %q, want %q", afterHost, utsNamespaceCallerHostname)
+			return
+		}
+		if afterNS != beforeNS {
+			done <- fmt.Errorf("caller namespace changed: %q -> %q", beforeNS, afterNS)
+			return
+		}
+		done <- nil
+	}()
+
+	if err := <-done; err != nil {
+		if errors.Is(err, syscall.EPERM) {
+			fmt.Printf("skip: %v\n", err)
+			os.Exit(77)
+		}
+		fmt.Fprintf(os.Stderr, "fail: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("ok")
+	os.Exit(0)
+}
+
+func currentThreadUTSNamespace() (string, error) {
+	return os.Readlink(procfs.Path("thread-self", "ns/uts"))
+}
+
+func BenchmarkCommandLine(b *testing.B) {
+	for _, size := range []int{32, 128, 1024 * 1024} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			root := setProcRoot(b)
+			path := filepath.Join(root, "proc", "100", "cmdline")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				b.Fatal(err)
+			}
+			if err := os.WriteFile(path, bytes.Repeat([]byte{'a'}, size), 0o600); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := CommandLine(100); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkHostname(b *testing.B) {
+	for _, name := range []string{"self", "target"} {
+		b.Run(name, func(b *testing.B) {
+			pid := os.Getpid()
+			if name == "target" {
+				pid = startUTSNamespaceTarget(b)
+			}
+
+			want, err := Hostname(pid)
+			if errors.Is(err, syscall.EPERM) {
+				b.Skip("setns requires CAP_SYS_ADMIN; run in a user and UTS namespace")
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				got, err := Hostname(pid)
+				if err != nil || got != want {
+					b.Fatalf("Hostname(%d) = %q, %v; want %q, nil", pid, got, err, want)
+				}
+			}
+		})
+	}
+}
+
+func setProcRoot(t testing.TB) string {
 	t.Helper()
 	tmpRoot := t.TempDir()
 	originalPrefix := filepath.Dir(procfs.DefaultPath())

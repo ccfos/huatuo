@@ -34,12 +34,14 @@ func (f *formatter) Add(ctx context.Context, window *types.AggregationWindow) er
 		return err
 	}
 
-	writer, err := f.destination.Open()
+	// Build the profile first: opening the destination truncates an existing
+	// result or creates a new file, which must not happen on conversion failure.
+	p, err := profilewindow.BuildProfile(ctx, window)
 	if err != nil {
 		return err
 	}
 
-	p, err := profilewindow.BuildProfile(ctx, window)
+	writer, err := f.destination.Open()
 	if err != nil {
 		return err
 	}

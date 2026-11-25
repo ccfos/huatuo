@@ -63,7 +63,7 @@ struct {
 } dropwatch_hardware_skb SEC(".maps");
 
 /* Runtime-configurable rate limiter. Userspace patches the three
- * bpf_rlimit_*_dropwatch constants via RewriteConstants; interval == 0
+ * read-only bpf_rlimit_*_dropwatch globals before loading; interval == 0
  * (default) keeps the limiter disabled with a single-load fast path.
  */
 BPF_RATELIMIT_IN_MAP_RC(dropwatch);

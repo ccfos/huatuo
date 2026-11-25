@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
@@ -42,7 +43,7 @@ const (
 )
 
 var (
-	kubeletPodListRunningEnabled    = false
+	kubeletPodListRunningEnabled    atomic.Bool
 	kubeletPodListURL               string
 	kubeletPodListClient            *http.Client
 	kubeletPodCgroupDriver          = "cgroupfs"
@@ -131,7 +132,7 @@ func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) 
 	if client, err := kubeletPodListHttpRequest(requestCtx, ctx); err == nil {
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
-		kubeletPodListRunningEnabled = true
+		kubeletPodListRunningEnabled.Store(true)
 		return nil
 	}
 
@@ -144,12 +145,19 @@ func kubeletPodListPortCacheUpdate(requestCtx context.Context, ctx *ManagerCtx) 
 	// update https instance cache
 	kubeletPodListClient = client
 	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
-	kubeletPodListRunningEnabled = true
+	kubeletPodListRunningEnabled.Store(true)
 	return nil
 }
 
+// KubeletPodListRunningEnabled reports whether kubelet discovery has initialized.
+// An empty container view does not disable discovery; transient refresh errors
+// retain the initialized state until the manager stops.
+func KubeletPodListRunningEnabled() bool {
+	return kubeletPodListRunningEnabled.Load()
+}
+
 func kubeletGetPodList(ctx context.Context) (corev1.PodList, error) {
-	if !kubeletPodListRunningEnabled {
+	if !KubeletPodListRunningEnabled() {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 

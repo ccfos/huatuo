@@ -25,17 +25,17 @@ func TestParseScope(t *testing.T) {
 		want    Scope
 		wantErr string
 	}{
-		{name: "host", value: "host", want: ScopeHost},
-		{name: "container", value: "container", want: ScopeContainer},
+		{name: "host", value: "host", want: ScopeTypeHost},
+		{name: "container", value: "container", want: ScopeTypeContainer},
 		{
 			name:    "empty",
-			want:    ScopeUnknown,
+			want:    ScopeTypeUnknown,
 			wantErr: `unsupported observation scope ""`,
 		},
 		{
 			name:    "unknown",
 			value:   "process",
-			want:    ScopeUnknown,
+			want:    ScopeTypeUnknown,
 			wantErr: `unsupported observation scope "process"`,
 		},
 	}
@@ -73,22 +73,22 @@ func TestValidateScope(t *testing.T) {
 		containerID string
 		wantErr     string
 	}{
-		{name: "host", scope: ScopeHost},
-		{name: "container", scope: ScopeContainer, containerID: "container-2026"},
+		{name: "host", scope: ScopeTypeHost},
+		{name: "container", scope: ScopeTypeContainer, containerID: "container-2026"},
 		{
 			name:        "host with container",
-			scope:       ScopeHost,
+			scope:       ScopeTypeHost,
 			containerID: "container-2026",
 			wantErr:     "container id must be empty for host scope",
 		},
 		{
 			name:    "container without id",
-			scope:   ScopeContainer,
+			scope:   ScopeTypeContainer,
 			wantErr: "container id is required for container scope",
 		},
 		{
 			name:    "unknown scope",
-			scope:   ScopeUnknown,
+			scope:   ScopeTypeUnknown,
 			wantErr: `unsupported observation scope ""`,
 		},
 	}

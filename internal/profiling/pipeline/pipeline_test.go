@@ -118,18 +118,73 @@ func TestPipelineEnqueueFullQueue(t *testing.T) {
 			cfg := pipelineConfig(f)
 			cfg.AggregationMode = mode
 			p := NewPipeline(cfg)
-			// Freeze consumption without a production hook; this test exercises only
-			// the synchronous enqueue ownership boundary.
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			// Delay the consumer so the next delivery must wait for queue space.
 			for range cap(p.queue) {
 				if err := p.Enqueue(t.Context(), testBatch(1)); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			if err := p.Enqueue(t.Context(), testBatch(1)); !errors.Is(err, ErrQueueFull) {
-				t.Fatalf("expected full queue error, got %v", err)
+			enqueued := make(chan error, 1)
+			go func() {
+				enqueued <- p.Enqueue(ctx, testBatch(7))
+				close(enqueued)
+			}()
+			defer func() { cancel(); <-enqueued }()
+			select {
+			case err := <-enqueued:
+				t.Fatalf("full queue delivery returned before consumption: %v", err)
+			case <-time.After(20 * time.Millisecond):
+			}
+
+			done := make(chan error, 1)
+			go func() {
+				done <- p.Run(ctx)
+				close(done)
+			}()
+			defer func() { cancel(); <-done }()
+			if err := <-enqueued; err != nil {
+				t.Fatal(err)
+			}
+
+			p.Close()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+
+			var total int64
+			for _, w := range f.windows {
+				for i := range w.Aggregated.Samples {
+					total += w.Aggregated.Samples[i].Value
+				}
+			}
+
+			if want := int64(cap(p.queue)) + 7; total != want {
+				t.Fatalf("delivered weight = %d, want %d", total, want)
 			}
 		})
+	}
+}
+
+func TestPipelineEnqueueFullQueueDeadline(t *testing.T) {
+	p := NewPipeline(pipelineConfig(&captureOutput{}))
+	for range cap(p.queue) {
+		if err := p.Enqueue(t.Context(), testBatch(1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	batch := testBatch(7)
+	if err := p.Enqueue(ctx, batch); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked Enqueue() = %v, want deadline exceeded", err)
+	}
+
+	if len(p.queue) != cap(p.queue) || batch.Samples[0].Value != 7 {
+		t.Fatal("canceled delivery changed the queue or rejected batch")
 	}
 }
 

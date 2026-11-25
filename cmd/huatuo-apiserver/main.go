@@ -24,11 +24,11 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/client"
+	"github.com/ccfos/huatuo/internal/httpserver"
 	"github.com/ccfos/huatuo/internal/job"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pidfile"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
-	"github.com/ccfos/huatuo/internal/server"
 	"github.com/ccfos/huatuo/internal/version"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
@@ -84,7 +84,7 @@ type Daemon struct {
 	profileStorage      *profilingstore.Store
 	profileQueryService *profilequery.ProfileQueryService
 	agentObserver       client.NodeRequestObserver
-	apiServer           *server.Server
+	apiServer           *httpserver.Server
 	steps               []daemonStep
 }
 

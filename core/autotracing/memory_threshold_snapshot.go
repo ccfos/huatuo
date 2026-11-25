@@ -119,6 +119,7 @@ func (s *memoryThresholdSnapshot) mainAction(ctx context.Context,
 	var arbitrate <-chan time.Time
 	var invalidated []memoryWatchRegistrationID
 	isUnavailable := false
+	hasCompleteView := false
 
 	processEvents := func() error {
 		events, err := watcher.ProcessEvents(ctx)
@@ -131,12 +132,13 @@ func (s *memoryThresholdSnapshot) mainAction(ctx context.Context,
 		}
 		if err != nil {
 			if !isUnavailable {
-				log.WithError(err).Warn("memory snapshot waiting for a complete container view")
+				logMemoryContainerViewUnavailable(err, hasCompleteView)
 			}
 			isUnavailable = true
 			actions.Cancel()
 		} else {
 			isUnavailable = false
+			hasCompleteView = true
 		}
 		update, err := tracker.ProcessContainerEvents(ctx, containers)
 		if err != nil {
@@ -194,4 +196,15 @@ func (s *memoryThresholdSnapshot) mainAction(ctx context.Context,
 			}
 		}
 	}
+}
+
+// Subscription initialization is expected; losing an established view or a
+// concrete producer failure still needs operator attention.
+func logMemoryContainerViewUnavailable(err error, hasCompleteView bool) {
+	entry := log.WithError(err)
+	if !hasCompleteView && err == pod.ErrContainersUnavailable { //nolint:errorlint // Only the bare initialization sentinel is expected.
+		entry.Debug("memory snapshot waiting for a complete container view")
+		return
+	}
+	entry.Warn("memory snapshot waiting for a complete container view")
 }

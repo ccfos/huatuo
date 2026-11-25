@@ -71,7 +71,7 @@ func TestAggregatorAggregatesStackSamplesWithoutMutatingInput(t *testing.T) {
 }
 
 func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
-	for _, field := range []string{"pid", "comm", "category", "user frames", "kernel frames"} {
+	for _, field := range []string{"pid", "comm", "reason", "user frames", "kernel frames"} {
 		t.Run(field, func(t *testing.T) {
 			p := New()
 			left := Sample{
@@ -79,7 +79,7 @@ func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 				KernelFrames: frames("syscall"),
 				Labels: []types.ProfileLabel{
 					types.ProfileStringLabel("comm", "app"),
-					types.ProfileStringLabel("offcpu_category", "unknown"),
+					types.ProfileStringLabel("offcpu_reason", "unknown"),
 					types.ProfilePIDLabel(12),
 				},
 				Value: 1,
@@ -91,8 +91,8 @@ func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 				right.Labels[2] = types.ProfilePIDLabel(13)
 			case "comm":
 				right.Labels[0] = types.ProfileStringLabel("comm", "worker")
-			case "category":
-				right.Labels[1] = types.ProfileStringLabel("offcpu_category", "blocked")
+			case "reason":
+				right.Labels[1] = types.ProfileStringLabel("offcpu_reason", "blocked")
 			case "user frames":
 				right.UserFrames = frames("main", "other")
 			case "kernel frames":
@@ -193,18 +193,18 @@ func TestAggregatorDrainPreservesPreviousResult(t *testing.T) {
 	}
 }
 
-func TestAggregatorSeparatesOffCPUCategories(t *testing.T) {
+func TestAggregatorSeparatesOffCPUReasons(t *testing.T) {
 	p := New()
-	for _, category := range []string{"blocked", "runqueue"} {
+	for _, reason := range []string{"blocked", "runqueue"} {
 		add(t, p, &Sample{
 			UserFrames: frames("main", "wait"),
-			Labels:     []types.ProfileLabel{types.ProfileStringLabel("offcpu_category", category)},
+			Labels:     []types.ProfileLabel{types.ProfileStringLabel("offcpu_reason", reason)},
 			Value:      10,
 		})
 	}
 
 	if len(p.profile.Samples) != 2 {
-		t.Fatal("categories merged")
+		t.Fatal("off-CPU reasons merged")
 	}
 }
 

@@ -22,12 +22,19 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 func TestDocumentToWatchEvent(t *testing.T) {
 	document := newTestDocument("cpu", types.TracerRunTypeEvent)
+	document.ContainerID = "container-a"
+	document.ContainerName = "worker"
+	document.ContainerHostname = "pod-a"
+	document.ContainerNamespace = "production"
+	document.ContainerType = "normal"
+	document.ContainerQoS = "guaranteed"
 	event := documentToWatchEvent(document)
 
 	if event.SpecVersion != "1.0" || event.Type != "tech.huatuo.kernel.event" ||
@@ -45,11 +52,17 @@ func TestDocumentToWatchEvent(t *testing.T) {
 	}
 
 	want := types.WatchEventData{
-		Hostname:          document.Hostname,
-		Region:            document.Region,
-		ObservedTimestamp: document.ObservedTimestamp.FormatUTC(),
-		TracerName:        document.TracerName,
-		TracerRunType:     document.TracerRunType,
+		ContainerID:        document.ContainerID,
+		ContainerName:      document.ContainerName,
+		ContainerHostname:  document.ContainerHostname,
+		ContainerNamespace: document.ContainerNamespace,
+		ContainerType:      document.ContainerType,
+		ContainerQoS:       document.ContainerQoS,
+		Hostname:           document.Hostname,
+		Region:             document.Region,
+		ObservedTimestamp:  document.ObservedTimestamp.FormatUTC(),
+		TracerName:         document.TracerName,
+		TracerRunType:      document.TracerRunType,
 	}
 	if diff := cmp.Diff(want, event.Data); diff != "" {
 		t.Errorf("documentToWatchEvent() data mismatch (-want +got):\n%s", diff)
@@ -63,8 +76,10 @@ func newTestDocument(tracerName, runType string) *tracingstore.Document {
 	observedTimestamp := time.Unix(1_700_000_000, 0).UTC()
 	startedTimestamp := observedTimestamp
 	return &tracingstore.Document{Document: types.Document{
-		Hostname:          "node-1",
-		Region:            "cn",
+		Metadata: observation.Metadata{
+			Hostname: "node-1",
+			Region:   "cn",
+		},
 		StartedTimestamp:  &timeutil.Timestamp{Time: startedTimestamp},
 		ObservedTimestamp: &timeutil.Timestamp{Time: observedTimestamp},
 		TracerName:        tracerName,

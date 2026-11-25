@@ -21,10 +21,10 @@ import (
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
 	"github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/trace"
+	"github.com/ccfos/huatuo/internal/httpserver"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/job"
 	profilequery "github.com/ccfos/huatuo/internal/profiling/query"
-	"github.com/ccfos/huatuo/internal/server"
-	"github.com/ccfos/huatuo/internal/server/response"
 	"github.com/ccfos/huatuo/internal/version"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 
@@ -40,14 +40,14 @@ type ServerOptions struct {
 	ProfileStorage      *profilingstore.Store
 	ProfileQueryService *profilequery.ProfileQueryService
 	ProfilingConfig     profiling.Config
-	AuthUsers           []server.UserConfig
+	AuthUsers           []httpserver.UserConfig
 	EnablePProf         bool
 	VersionInfo         *version.Info
-	RateLimit           *server.RateLimitConfig
+	RateLimit           *httpserver.RateLimitConfig
 }
 
 // Start starts the API service with generated business routes.
-func Start(opts *ServerOptions) (*server.Server, error) {
+func Start(opts *ServerOptions) (*httpserver.Server, error) {
 	if opts == nil {
 		return nil, errors.New("start API server: options are required")
 	}
@@ -80,7 +80,7 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		return nil, err
 	}
 
-	httpServer := server.NewServer(&server.Config{
+	httpServer := httpserver.NewServer(&httpserver.Config{
 		EnablePProf: opts.EnablePProf,
 		RateLimit:   opts.RateLimit,
 		AuthUsers:   opts.AuthUsers,

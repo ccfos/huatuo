@@ -23,8 +23,8 @@ import (
 	apiv1 "github.com/ccfos/huatuo/apis/v1"
 	serverapi "github.com/ccfos/huatuo/apis/v1/server"
 	profilinghandler "github.com/ccfos/huatuo/cmd/huatuo-apiserver/handlers/profiling"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
 	"github.com/ccfos/huatuo/internal/job"
-	"github.com/ccfos/huatuo/internal/server/response"
 	"github.com/ccfos/huatuo/pkg/observation"
 	tracingdomain "github.com/ccfos/huatuo/pkg/tracing"
 
@@ -57,7 +57,7 @@ func TestMapCommonJobMapsTerminalFailure(t *testing.T) {
 		ID:        "job-1",
 		Hostname:  "node-1",
 		Duration:  time.Minute,
-		Scope:     observation.ScopeHost,
+		Scope:     observation.ScopeTypeHost,
 		Status:    job.StatusTerminal,
 		CreatedAt: base,
 		UpdatedAt: base.Add(time.Second),
@@ -88,7 +88,7 @@ func TestMapTracingJobUsesIndependentDomainState(t *testing.T) {
 		Kind:     job.KindTracing,
 		Hostname: "node-1",
 		Duration: time.Minute,
-		Scope:    observation.ScopeHost,
+		Scope:    observation.ScopeTypeHost,
 		Status:   job.StatusTerminal,
 		Terminal: &job.TerminalResult{Outcome: job.OutcomeUnknown},
 		Spec: job.Spec{Tracing: &tracingdomain.Spec{

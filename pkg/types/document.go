@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/ccfos/huatuo/internal/timeutil"
+	"github.com/ccfos/huatuo/pkg/observation"
 )
 
 const (
@@ -35,17 +36,10 @@ const (
 // Document field names are shared so storage indexes cannot drift from the
 // serialized contract.
 const (
-	DocumentFieldHostname                = "hostname"
-	DocumentFieldRegion                  = "region"
 	DocumentFieldUploadedTimestamp       = "uploaded_timestamp"
 	DocumentFieldStartedTimestamp        = "started_timestamp"
 	DocumentFieldObservedTimestamp       = "observed_timestamp"
 	DocumentFieldKernelObservedTimestamp = "kernel_observed_timestamp"
-	DocumentFieldContainerID             = "container_id"
-	DocumentFieldContainerHostname       = "container_hostname"
-	DocumentFieldContainerHostNamespace  = "container_host_namespace"
-	DocumentFieldContainerType           = "container_type"
-	DocumentFieldContainerQoS            = "container_qos"
 	DocumentFieldTracerName              = "tracer_name"
 	DocumentFieldTracerID                = "tracer_id"
 	DocumentFieldTracerType              = "tracer_type"
@@ -64,18 +58,12 @@ const (
 //
 // TracerRunType determines which producer-owned timestamp is required.
 type Document struct {
-	Hostname                string              `json:"hostname"`
-	Region                  string              `json:"region"`
+	observation.Metadata
+
 	UploadedTimestamp       timeutil.Timestamp  `json:"uploaded_timestamp"`
 	StartedTimestamp        *timeutil.Timestamp `json:"started_timestamp,omitempty"`
 	ObservedTimestamp       *timeutil.Timestamp `json:"observed_timestamp,omitempty"`
 	KernelObservedTimestamp *timeutil.Timestamp `json:"kernel_observed_timestamp,omitempty"`
-
-	ContainerID            string `json:"container_id,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	ContainerType          string `json:"container_type,omitempty"`
-	ContainerQoS           string `json:"container_qos,omitempty"`
 
 	TracerName    string `json:"tracer_name,omitempty"`
 	TracerID      string `json:"tracer_id,omitempty"`

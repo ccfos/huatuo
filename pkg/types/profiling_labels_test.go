@@ -39,6 +39,51 @@ func TestValidateNumericProfileLabels(t *testing.T) {
 	}
 }
 
+func TestValidateOffCPUReason(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels []ProfileLabel
+		valid  bool
+	}{
+		{
+			name:   "blocked",
+			labels: []ProfileLabel{ProfileStringLabel("offcpu_reason", "blocked")},
+			valid:  true,
+		},
+		{
+			name:   "unknown",
+			labels: []ProfileLabel{ProfileStringLabel("offcpu_reason", "unknown")},
+			valid:  true,
+		},
+		{
+			name:   "empty",
+			labels: []ProfileLabel{ProfileStringLabel("offcpu_reason", "")},
+		},
+		{
+			name: "numeric",
+			labels: []ProfileLabel{{
+				Name:        "offcpu_reason",
+				Kind:        ProfileLabelNumber,
+				NumberValue: 1,
+			}},
+		},
+		{
+			name: "multiple reasons",
+			labels: []ProfileLabel{
+				ProfileStringLabel("offcpu_reason", "blocked"),
+				ProfileStringLabel("offcpu_reason", "runqueue"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateLabels(tc.labels)
+			if (err == nil) != tc.valid {
+				t.Fatalf("ValidateLabels() = %v, want valid=%t", err, tc.valid)
+			}
+		})
+	}
+}
+
 func BenchmarkValidateNumericProfileLabels(b *testing.B) {
 	for _, label := range []ProfileLabel{ProfilePIDLabel(12345), ProfileCPULabel(3), ProfileLockAddressLabel(0xffff888012345678)} {
 		b.Run(label.Name, func(b *testing.B) {

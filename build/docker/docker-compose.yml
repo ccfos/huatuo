@@ -29,14 +29,21 @@ services:
     container_name: grafana
     network_mode: host
     environment:
-      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource ${INFINITY_DATA_SOURCE:-3.4.1}"
+      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource ${INFINITY_DATA_SOURCE:-3.4.1},volkovlabs-echarts-panel ${ECHARTS_PANEL_VERSION:-7.2.2}"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/autotracing-event.json
     volumes:
+      - grafana-plugins:/var/lib/grafana/plugins
       - ./grafana/datasources/elasticsearch.yaml:/etc/grafana/provisioning/datasources/elasticsearch.yaml:ro
       - ./grafana/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
       - ./grafana/datasources/infinity.yaml:/etc/grafana/provisioning/datasources/infinity.yaml:ro
       - ./grafana/datasources/pyroscope.yaml:/etc/grafana/provisioning/datasources/pyroscope.yaml:ro
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 4s
+      retries: 24
+      start_period: 30s
     depends_on:
       - prometheus
       - elasticsearch
@@ -79,11 +86,13 @@ services:
       - /etc:/etc:ro
       - /var:/var:ro
       - ../../huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:rw
-    command: ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf", "--disable-kubelet"]
+    command: ["./bin/huatuo-bamai", "--region", "pre-test", "--config", "huatuo-bamai.conf", "--disable-kubelet"]
     depends_on:
       elasticsearch:
         condition: service_healthy
       prometheus:
         condition: service_started
-      grafana:
-        condition: service_started
+      grafana: {condition: service_healthy}
+
+volumes:
+  grafana-plugins:

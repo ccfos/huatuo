@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/toolstream"
@@ -72,6 +73,7 @@ func NewFormatter(cfg output.Config) (output.Formatter, error) {
 		ToolName:    cfg.ToolName,
 		TaskID:      cfg.TaskID,
 		Version:     "3",
+		SendTimeout: 30 * time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("connect remote profiling destination %q: %w", path, err)

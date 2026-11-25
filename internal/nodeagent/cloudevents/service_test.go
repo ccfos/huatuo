@@ -93,12 +93,15 @@ func TestServiceSubscribeFiltersAndConvertsEvents(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	subscription, err := service.Subscribe(t.Context(), &Filters{
-		TracerName:             "^cpu$",
-		Hostname:               "^node-1$",
-		ContainerHostname:      "^app-",
-		ContainerHostNamespace: "^prod$",
-		ContainerQoS:           "^guaranteed$",
-		Region:                 "^cn$",
+		TracerName:         "^cpu$",
+		ContainerID:        "^container-a$",
+		ContainerName:      "^worker$",
+		ContainerType:      "^normal$",
+		Hostname:           "^node-1$",
+		ContainerHostname:  "^app-",
+		ContainerNamespace: "^prod$",
+		ContainerQoS:       "^guaranteed$",
+		Region:             "^cn$",
 	})
 	if err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
@@ -114,9 +117,23 @@ func TestServiceSubscribeFiltersAndConvertsEvents(t *testing.T) {
 		t.Fatalf("Save() non-matching event error = %v", err)
 	}
 	matching := newTestDocument("cpu", types.TracerRunTypeEvent)
+	matching.ContainerID = "container-a"
+	matching.ContainerName = "worker"
+	matching.ContainerType = "normal"
 	matching.ContainerHostname = "app-1"
-	matching.ContainerHostNamespace = "prod"
+	matching.ContainerNamespace = "prod"
 	matching.ContainerQoS = "guaranteed"
+	for _, change := range []func(*tracingstore.Document){
+		func(document *tracingstore.Document) { document.ContainerID = "container-b" },
+		func(document *tracingstore.Document) { document.ContainerName = "other-worker" },
+		func(document *tracingstore.Document) { document.ContainerType = "sidecar" },
+	} {
+		rejected := *matching
+		change(&rejected)
+		if err := store.Save(&rejected); err != nil {
+			t.Fatalf("Save() non-matching container: %v", err)
+		}
+	}
 	if err := store.Save(matching); err != nil {
 		t.Fatalf("Save() matching event error = %v", err)
 	}
@@ -127,7 +144,7 @@ func TestServiceSubscribeFiltersAndConvertsEvents(t *testing.T) {
 		if !ok {
 			t.Fatalf("event data type = %T", event.Data)
 		}
-		if data.TracerName != "cpu" || data.ContainerHostname != "app-1" {
+		if data.TracerName != "cpu" || data.ContainerHostname != "app-1" || data.ContainerID != "container-a" || data.ContainerName != "worker" || data.ContainerType != "normal" {
 			t.Errorf("event data = %+v", data)
 		}
 	case <-time.After(time.Second):

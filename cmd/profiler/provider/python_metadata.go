@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/process"
 
 	hostprocess "github.com/ccfos/huatuo/internal/process"
 )
@@ -31,7 +31,7 @@ func pythonProcessName(pid int) (string, error) {
 	}
 
 	base := filepath.Base(resolvedExe)
-	if !strings.HasPrefix(base, "python") {
+	if !hasExecutablePrefix(base, "python") {
 		return "", fmt.Errorf("process %d exe is %q, not a python process", pid, base)
 	}
 

@@ -18,6 +18,7 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
@@ -68,7 +69,7 @@ static KEEP_FRAME void test_alloc_free_loop(void) {
 		blocks[i] = test_mmap_allocator(block_sizes[i]);
 	}
 
-	/* A rejected mapping must not contribute virtual allocation bytes. */
+	/* The occupied address must fail without adding allocation bytes. */
 	errno = 0;
 	void *failed = (void *)syscall(SYS_mmap, blocks[0], ALLOC_SIZE_1,
 				      PROT_READ | PROT_WRITE,
@@ -102,6 +103,8 @@ static void wait_for_start_signal(void) {
 		perror("sigprocmask");
 		exit(1);
 	}
+	puts("ready");
+	fflush(stdout);
 
 	if (sigwait(&set, &signo) != 0) {
 		perror("sigwait");
@@ -113,8 +116,10 @@ static void wait_for_start_signal(void) {
 	}
 }
 
-int main(void) {
-	const int iterations = 500;
+int main(int argc, char **argv)
+{
+	const int final_burst = argc > 1 && strcmp(argv[1], "final") == 0;
+	const int iterations = final_burst ? 1 : 500;
 	size_t actual_allocated_bytes = 0;
 
 	wait_for_start_signal();
@@ -126,5 +131,12 @@ int main(void) {
 	}
 
 	fprintf(stderr, "actual_allocated_bytes=%zu\n", actual_allocated_bytes);
+	if (final_burst) {
+		/* Keep /proc metadata available while userspace resolves final stacks. */
+		puts("final allocation complete");
+		fflush(stdout);
+		for (;;)
+			pause();
+	}
 	return 0;
 }

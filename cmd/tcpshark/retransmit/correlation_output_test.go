@@ -113,7 +113,7 @@ func TestEmitResultsBuildsCorrelationFields(t *testing.T) {
 				retransmit: input, drop: test.drop, reason: test.reason,
 				netNamespace: test.reason == types.CorrelationMatched || test.netNamespace,
 			}
-			err := session.emitResults([]correlationResult{result})
+			err := session.emitResults(t.Context(), []correlationResult{result})
 			if !errors.Is(err, test.readErr) {
 				t.Fatalf("emit error = %v, want %v", err, test.readErr)
 			}
@@ -159,7 +159,7 @@ func TestEmitResultsRejectsInvalidCorrelationResult(t *testing.T) {
 			source := &dropwatchStatusStub{readErr: statusErr}
 			sink := &retransmitDropWriterStub{}
 			session := retransmitDropSession{readDropwatchStatus: source.ReadStatus, sink: sink}
-			err := session.emitResults([]correlationResult{{retransmit: &retransmitEvent{}, drop: test.drop, reason: test.reason}})
+			err := session.emitResults(t.Context(), []correlationResult{{retransmit: &retransmitEvent{}, drop: test.drop, reason: test.reason}})
 			if err == nil || !strings.Contains(err.Error(), test.wantError) || !errors.Is(err, statusErr) {
 				t.Fatalf("emit error = %v, want %q and status error", err, test.wantError)
 			}
@@ -181,7 +181,7 @@ func TestEmitResultsPreservesErrors(t *testing.T) {
 		sink:                &retransmitDropWriterStub{err: writeErr},
 		sourceType:          "tools",
 	}
-	err := session.emitResults([]correlationResult{{
+	err := session.emitResults(t.Context(), []correlationResult{{
 		retransmit: &retransmitEvent{},
 		reason:     types.CorrelationWaitTimeout,
 	}})
@@ -212,7 +212,7 @@ func TestEmitResultsReadsDropwatchStatusOncePerBatch(t *testing.T) {
 		sink:                sink,
 		sourceType:          "tools",
 	}
-	if err := session.emitResults(results); err != nil {
+	if err := session.emitResults(t.Context(), results); err != nil {
 		t.Fatalf("emitResults() error = %v", err)
 	}
 	// Status is queried once per batch, not once per result.
@@ -242,7 +242,7 @@ func TestEmitResultsSkipsEmptyBatch(t *testing.T) {
 		sink:                sink,
 		sourceType:          "tools",
 	}
-	if err := session.emitResults(nil); err != nil {
+	if err := session.emitResults(t.Context(), nil); err != nil {
 		t.Fatalf("emitResults() error = %v", err)
 	}
 	if source.readCalls != 0 || len(sink.events) != 0 {
@@ -271,7 +271,7 @@ func TestEmitResultsUsesLatestDropwatchStatus(t *testing.T) {
 		sourceType: "tools",
 	}
 
-	if err := session.emitResults([]correlationResult{result}); err != nil {
+	if err := session.emitResults(t.Context(), []correlationResult{result}); err != nil {
 		t.Fatalf("emitResults() error = %v", err)
 	}
 	if len(sink.events) != 1 {
@@ -309,7 +309,7 @@ func TestEmitResultsWritesOnceWhenDropwatchStatusFails(t *testing.T) {
 		sourceType: "tools",
 	}
 
-	err := session.emitResults([]correlationResult{result})
+	err := session.emitResults(t.Context(), []correlationResult{result})
 	if !errors.Is(err, statusErr) {
 		t.Fatalf("emit error = %v, want %v", err, statusErr)
 	}
@@ -417,7 +417,7 @@ func TestCorrelationPreservesDropMetadata(t *testing.T) {
 						readDropwatchStatus: newTraceTestDropwatchStatus(t, types.DropwatchStatus{}).ReadStatus,
 						sink:                &jsonWriter{w: &output},
 					}
-					if err := session.emitResults(results); err != nil {
+					if err := session.emitResults(t.Context(), results); err != nil {
 						t.Fatal(err)
 					}
 					var event types.TCPRetransmitTracing

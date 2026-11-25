@@ -18,6 +18,7 @@ package speedscope
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
@@ -91,7 +92,6 @@ func (f *formatter) Complete(ctx context.Context) error {
 	}
 	result := encoder{
 		unit:      f.sampleUnit,
-		frames:    make(map[frame]int),
 		frameList: []frame{},
 	}
 	for i := range windows {
@@ -104,7 +104,13 @@ func (f *formatter) Complete(ctx context.Context) error {
 		return nil
 	}
 
-	return f.destination.WriteAndClose(result.write)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	return f.destination.WriteAndClose(func(w io.Writer) error {
+		return result.write(ctx, w)
+	})
 }
 
 func (f *formatter) Close() error { return f.destination.Close() }
@@ -127,7 +133,8 @@ func (f *formatter) Add(ctx context.Context, w *types.AggregationWindow) error {
 	}
 
 	if f.sampleType != "" && (f.sampleType != sampleType || f.sampleUnit != sampleUnit) {
-		return fmt.Errorf("speedscope: cannot mix sample types or units")
+		return fmt.Errorf("speedscope: cannot mix sample type %q unit %q with type %q unit %q",
+			f.sampleType, f.sampleUnit, sampleType, sampleUnit)
 	}
 
 	f.sampleType, f.sampleUnit = sampleType, sampleUnit

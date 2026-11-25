@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Qualify request.part layouts without loading or attaching BPF.
+// Check Go request-layout validation without loading BPF.
 package main
 
 import (
@@ -104,7 +104,7 @@ func requestPartLayoutBTF(t *testing.T, partName string, rqDisk, oldType, devt b
 	if oldType {
 		types = append(types, hdStruct)
 	}
-	builder, err := btf.NewBuilder(types)
+	builder, err := btf.NewBuilder(types, nil)
 	require.NoError(t, err)
 	data, err := builder.Marshal(nil, nil)
 	require.NoError(t, err)

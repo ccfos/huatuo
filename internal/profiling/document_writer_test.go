@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/toolstream"
+	"github.com/ccfos/huatuo/pkg/observation"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
 	"github.com/ccfos/huatuo/pkg/types"
 
@@ -269,7 +270,10 @@ func newPersistentDocumentWriter(t *testing.T) (*DocumentWriter, *profileBackend
 
 	writer, err := NewDocumentWriter(
 		store,
-		document.New("test"),
+		document.New(&observation.Metadata{
+			Region:   "test",
+			Hostname: "test-node",
+		}),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)

@@ -143,6 +143,26 @@ func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 	}
 }
 
+func TestFindProcessesMatchesPlatformPythonExecutable(t *testing.T) {
+	root, procFS := newTestProcFS(t)
+	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/libexec/platform-python3.6", ppid: 1})
+	writeTestProcess(t, root, testProcess{pid: 101, executable: "/usr/libexec/platform-python", ppid: 1})
+	writeTestProcess(t, root, testProcess{pid: 102, executable: "/usr/bin/git", ppid: 1})
+
+	got, err := findProcesses(
+		[]int32{100, 101, 102},
+		procFS,
+		executableFilter{ExecutablePrefix: "python"},
+	)
+	if err != nil {
+		t.Fatalf("findProcesses() error = %v", err)
+	}
+	want := map[int][]int{100: {100}, 101: {101}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("findProcesses() = %v, want %v", got, want)
+	}
+}
+
 func TestFindProcessesSkipsExitedProcess(t *testing.T) {
 	root, procFS := newTestProcFS(t)
 	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/bin/java", ppid: 1})

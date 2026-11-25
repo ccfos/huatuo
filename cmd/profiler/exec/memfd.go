@@ -66,7 +66,13 @@ func runCollectorCommand(ctx context.Context, spec *executil.Spec, options ...ex
 		returnErr = errors.Join(returnErr, process.Close())
 		result.Stderr = process.Stderr()
 	}()
-	if err := process.Start(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
+		return result, context.Cause(ctx)
+	}
+	// A normal stop can arrive while the subprocess is launching. Detach the
+	// launch from cancellation so the stop is handled below and the tool can
+	// flush its final samples instead of failing the launch.
+	if err := process.Start(context.WithoutCancel(ctx)); err != nil {
 		return result, err
 	}
 	select {

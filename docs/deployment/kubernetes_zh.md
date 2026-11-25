@@ -7,7 +7,7 @@ date: 2026-01-11
 weight: 2
 ---
 
-本文介绍如何通过 Kubernetes DaemonSet 将华佗采集器部署到集群。
+通过 DaemonSet 在 Kubernetes 节点上部署采集器。可直接应用清单，也可使用 Helm；选择一种方式即可。管理机需安装 kubectl，并能访问目标集群。
 
 ## 1. Kubernetes 清单部署
 

@@ -46,7 +46,7 @@ func TestFetchContainer(t *testing.T) {
 			return nodeJSONResponse(
 				http.StatusOK,
 				fmt.Sprintf(
-					`{"data":{"id":%q,"cgroup_css":{"cpu":"0xffff888012345678"}}}`,
+					`{"data":{"id":%q,"cgroup_css_refs":{"cpu":{"css_addr":"0xffff888012345678","cgroup_id":"0x000000000000002a"}}}}`,
 					nodeTestContainerID,
 				),
 			), nil
@@ -67,8 +67,8 @@ func TestFetchContainer(t *testing.T) {
 	if metadata.ID != nodeTestContainerID {
 		t.Errorf("FetchContainer() ID = %q, want %q", metadata.ID, nodeTestContainerID)
 	}
-	if got := metadata.CgroupCSS["cpu"]; got != "0xffff888012345678" {
-		t.Errorf("FetchContainer() CPU CSS = %q", got)
+	if got := metadata.CgroupCSSRefs["cpu"]; got.CSSAddr != "0xffff888012345678" || got.CgroupID != "0x000000000000002a" {
+		t.Errorf("FetchContainer() CPU CSS reference = %+v", got)
 	}
 	if observedName != "container.fetch" {
 		t.Errorf("observed operation = %q", observedName)

@@ -16,12 +16,11 @@ package metric
 
 import (
 	"errors"
-	"fmt"
-	"os"
 	"sort"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/observation"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -45,21 +44,6 @@ const (
 	MetricTypeGauge = 0
 	// MetricTypeCounter indicates a counter metric.
 	MetricTypeCounter = 1
-
-	// LabelHost indicates the host.
-	LabelHost = "host"
-	// LabelRegion indicates the data collected from.
-	LabelRegion = "region"
-	// LabelContainerName indicates the container name.
-	LabelContainerName = "container_name"
-	// LabelContainerHost indicates the container host.
-	LabelContainerHost = "container_host"
-	// LabelContainerType indicates the container type.
-	LabelContainerType = "container_type"
-	// LabelContainerLevel indicates the container level.
-	LabelContainerLevel = "container_level"
-	// LabelContainerHostNamespace indicates the container host namespace.
-	LabelContainerHostNamespace = "container_hostnamespace"
 )
 
 var metricDescCache sync.Map
@@ -106,48 +90,57 @@ func IsNoDataError(err error) bool {
 	return errors.Is(err, ErrNoData)
 }
 
-func newData(name string, value float64, typ int, help string, label map[string]string) *Data {
+func newData(name string, value float64, typ int, help string, labels map[string]string) *Data {
+	metadata := observation.Metadata{
+		Region:   defaultRegion,
+		Hostname: defaultHostname,
+	}
+	return newMetadataData(name, value, typ, help, &metadata, observation.ScopeTypeHost, labels)
+}
+
+func newMetadataData(name string, value float64, typ int, help string,
+	metadata *observation.Metadata, scope observation.Scope, labels map[string]string,
+) *Data {
+	fieldCount := 2
+	if scope == observation.ScopeTypeContainer {
+		fieldCount = 8
+	}
+
 	data := &Data{
-		name:      name,
-		valueType: typ,
-		Value:     value,
-		help:      help,
+		name:       name,
+		valueType:  typ,
+		Value:      value,
+		help:       help,
+		labelKey:   make([]string, 0, fieldCount+len(labels)),
+		labelValue: make([]string, 0, fieldCount+len(labels)),
+	}
+	data.labelKey = append(data.labelKey, observation.FieldRegion, observation.FieldHostname)
+	data.labelValue = append(data.labelValue, metadata.Region, metadata.Hostname)
+	if scope == observation.ScopeTypeContainer {
+		data.labelKey = append(data.labelKey,
+			observation.FieldContainerID, observation.FieldContainerName,
+			observation.FieldContainerHostname, observation.FieldContainerNamespace,
+			observation.FieldContainerType, observation.FieldContainerQoS)
+		data.labelValue = append(data.labelValue,
+			metadata.ContainerID, metadata.ContainerName, metadata.ContainerHostname,
+			metadata.ContainerNamespace, metadata.ContainerType, metadata.ContainerQoS)
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = defaultHostname
-	}
-
-	data.labelKey = append(data.labelKey, LabelRegion, LabelHost)
-	data.labelValue = append(data.labelValue,
-		labelValue(label, LabelRegion, defaultRegion),
-		labelValue(label, LabelHost, hostname))
-
-	// sort the labelKey
-	selfLabelKeys := make([]string, 0, len(label))
-	for k := range label {
-		selfLabelKeys = append(selfLabelKeys, k)
-	}
-	sort.Strings(selfLabelKeys)
-
-	// add self label
-	for _, k := range selfLabelKeys {
-		if isDefaultHostLabel(k) {
-			continue
+	extraKeys := make([]string, 0, len(labels))
+	for key := range labels {
+		// Public identity comes from the selected target, never from business labels.
+		if !observation.IsMetadataField(key) {
+			extraKeys = append(extraKeys, key)
 		}
-		data.labelKey = append(data.labelKey, k)
-		data.labelValue = append(data.labelValue, label[k])
+	}
+
+	sort.Strings(extraKeys)
+	for _, key := range extraKeys {
+		data.labelKey = append(data.labelKey, key)
+		data.labelValue = append(data.labelValue, labels[key])
 	}
 
 	return data
-}
-
-func labelValue(label map[string]string, key, fallback string) string {
-	if value, ok := label[key]; ok {
-		return value
-	}
-	return fallback
 }
 
 // NewGaugeData creates a new instance of Data.
@@ -163,7 +156,7 @@ func labelValue(label map[string]string, key, fallback string) string {
 //
 //	*Data - A pointer to the newly created Data instance.
 //
-// NOTE: the default label `Host` will be added if it is not present in the label map.
+// Public metadata comes from the target and cannot be overridden by labels.
 func NewGaugeData(name string, value float64, help string, label map[string]string) *Data {
 	return newData(name, value, MetricTypeGauge, help, label)
 }
@@ -181,92 +174,28 @@ func NewGaugeData(name string, value float64, help string, label map[string]stri
 //
 //	*Data - A pointer to the newly created Data instance.
 //
-// NOTE: the default label `Host` will be added if it is not present in the label map.
+// Public metadata comes from the target and cannot be overridden by labels.
 func NewCounterData(name string, value float64, help string, label map[string]string) *Data {
 	return newData(name, value, MetricTypeCounter, help, label)
 }
 
-func newContainerData(container *pod.Container, name string, value float64, typ int, help string, label map[string]string) *Data {
-	data := &Data{
-		name:      fmt.Sprintf("container_%s", name),
-		valueType: typ,
-		Value:     value,
-		help:      help,
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = defaultHostname
-	}
-
-	// default label
-	data.labelKey = append(data.labelKey,
-		LabelRegion,
-		LabelContainerHost,
-		LabelContainerName,
-		LabelContainerType,
-		LabelContainerLevel,
-		LabelContainerHostNamespace,
-		LabelHost)
-	data.labelValue = append(data.labelValue,
-		labelValue(label, LabelRegion, defaultRegion),
-		labelValue(label, LabelContainerHost, container.Hostname),
-		labelValue(label, LabelContainerName, container.Name),
-		labelValue(label, LabelContainerType, container.Type.String()),
-		labelValue(label, LabelContainerLevel, container.Qos.String()),
-		labelValue(label, LabelContainerHostNamespace, container.LabelHostNamespace()),
-		labelValue(label, LabelHost, hostname))
-
-	// sort the labelKey
-	selfLabelKeys := make([]string, 0, len(label))
-	for k := range label {
-		selfLabelKeys = append(selfLabelKeys, k)
-	}
-	sort.Strings(selfLabelKeys)
-
-	// add self label
-	for _, k := range selfLabelKeys {
-		if isDefaultContainerLabel(k) {
-			continue
-		}
-		data.labelKey = append(data.labelKey, k)
-		data.labelValue = append(data.labelValue, label[k])
-	}
-
-	return data
-}
-
-func isDefaultHostLabel(key string) bool {
-	return key == LabelRegion || key == LabelHost
-}
-
-func isDefaultContainerLabel(key string) bool {
-	switch key {
-	case LabelRegion,
-		LabelContainerHost,
-		LabelContainerName,
-		LabelContainerType,
-		LabelContainerLevel,
-		LabelContainerHostNamespace,
-		LabelHost:
-		return true
-	default:
-		return false
-	}
+func newContainerData(container *pod.Container, name string, value float64, typ int, help string, labels map[string]string) *Data {
+	metadata := container.ObservationMetadata()
+	metadata.Region = defaultRegion
+	metadata.Hostname = defaultHostname
+	return newMetadataData("container_"+name, value, typ, help, &metadata, observation.ScopeTypeContainer, labels)
 }
 
 // NewContainerGaugeData creates a new instance of container Data.
 //
-// NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
-// in the label map.
+// Public metadata comes from the target and cannot be overridden by labels.
 func NewContainerGaugeData(container *pod.Container, name string, value float64, help string, label map[string]string) *Data {
 	return newContainerData(container, name, value, MetricTypeGauge, help, label)
 }
 
 // NewContainerCounterData creates a new instance of container Data.
 //
-// NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
-// in the label map.
+// Public metadata comes from the target and cannot be overridden by labels.
 func NewContainerCounterData(container *pod.Container, name string, value float64, help string, label map[string]string) *Data {
 	return newContainerData(container, name, value, MetricTypeCounter, help, label)
 }

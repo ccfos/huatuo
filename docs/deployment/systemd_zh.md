@@ -7,31 +7,9 @@ date: 2026-01-11
 weight: 3
 ---
 
-## 生产环境资源限制
+本文说明通过 tar 包或 RPM 安装 HUATUO，并使用 systemd 管理服务。启动前检查[资源限制](#资源限制与验证)，安装后验证服务状态。
 
-`huatuo-bamai.service` 由 systemd 负责资源限制和进程生命周期。服务单元默认不启用 Huatuo 自身 cgroup，使用以下原生配置：
-
-```ini
-[Service]
-CPUAccounting=yes
-CPUQuota=200%
-MemoryAccounting=yes
-MemoryMax=2G
-TasksAccounting=yes
-TasksMax=32768
-KillMode=control-group
-```
-
-`CPUQuota=200%` 表示最多使用 2 个 CPU 核，`MemoryMax=2G` 限制服务内存。根据主机规格、采集任务和资源峰值调整这些值。systemd 部署不要传入 `--enable-cgroup`，否则进程会脱离 service cgroup。
-
-服务启动后，检查状态和 cgroup：
-
-```bash
-systemctl status huatuo-bamai --no-pager
-systemd-cgls --unit huatuo-bamai.service
-```
-
-## 二进制
+## tar 包
 
 HUATUO Release 提供 amd64 和 arm64 的 Linux 静态 tar 包。tar 包包含 `huatuo-bamai` 和 `huatuo-apiserver` 二进制文件、配置文件和 BPF 对象。
 
@@ -92,7 +70,7 @@ sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubuse
 
 根据 service unit 中的 `CPUQuota`、`MemoryMax` 和 `TasksMax` 设置资源上限。只有直接运行且传入 `--enable-cgroup` 时才配置 `[Runtime]`。
 
-### 5. 注册 HUATUO 服务
+### 5. 加载服务配置
 
 重新加载 systemd 配置：
 
@@ -100,7 +78,7 @@ sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubuse
 sudo systemctl daemon-reload
 ```
 
-### 6. 启动 HUATUO 服务
+### 6. 启动服务
 
 启动服务并设置开机启动：
 
@@ -148,7 +126,7 @@ sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
 
 根据 service unit 中的 `CPUQuota`、`MemoryMax` 和 `TasksMax` 设置资源上限。只有直接运行且传入 `--enable-cgroup` 时才配置 `[Runtime]`。
 
-### 4. 启动 HUATUO 服务
+### 4. 启动服务
 
 RPM 包会安装 `huatuo-bamai.service` 服务单元文件。启动服务并设置开机启动：
 
@@ -157,3 +135,27 @@ sudo systemctl enable --now huatuo-bamai
 ```
 
 > 完整的 RPM 安装指引请参阅 [https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ](https://mp.weixin.qq.com/s/Gmst4_FsbXUIhuJw1BXNnQ)。
+
+## 资源限制与验证
+
+`huatuo-bamai.service` 由 systemd 负责资源限制和进程生命周期。服务单元默认不启用 Huatuo 自身 cgroup，使用以下原生配置：
+
+```ini
+[Service]
+CPUAccounting=yes
+CPUQuota=200%
+MemoryAccounting=yes
+MemoryMax=2G
+TasksAccounting=yes
+TasksMax=32768
+KillMode=control-group
+```
+
+`CPUQuota=200%` 表示最多使用 2 个 CPU 核，`MemoryMax=2G` 限制服务内存。根据主机规格、采集任务和资源峰值调整这些值。systemd 部署不要传入 `--enable-cgroup`，否则进程会脱离 service cgroup。
+
+服务启动后，检查状态和 cgroup：
+
+```bash
+systemctl status huatuo-bamai --no-pager
+systemd-cgls --unit huatuo-bamai.service
+```

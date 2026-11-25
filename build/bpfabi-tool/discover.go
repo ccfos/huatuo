@@ -100,9 +100,12 @@ func discoverCandidates(root string, domains []domain) (map[string][]candidate, 
 			return nil, fmt.Errorf("load btf from %q: %w", object, err)
 		}
 
-		iter := spec.Iterate()
-		for iter.Next() {
-			v, ok := iter.Type.(*btf.Var)
+		for typ, err := range spec.All() {
+			if err != nil {
+				return nil, fmt.Errorf("iterate btf from %q: %w", object, err)
+			}
+
+			v, ok := typ.(*btf.Var)
 			if !ok || !strings.HasPrefix(v.Name, anchorPrefix) {
 				continue
 			}

@@ -1,9 +1,9 @@
 # HELP huatuo_bamai_loadavg_load1 system load average, 1 minute
 # TYPE huatuo_bamai_loadavg_load1 gauge
-huatuo_bamai_loadavg_load1{host="huatuo-dev",region="dev"} 1.31
+huatuo_bamai_loadavg_load1{hostname="huatuo-dev",region="dev"} 1.31
 # HELP huatuo_bamai_loadavg_load15 system load average, 15 minutes
 # TYPE huatuo_bamai_loadavg_load15 gauge
-huatuo_bamai_loadavg_load15{host="huatuo-dev",region="dev"} 1.11
+huatuo_bamai_loadavg_load15{hostname="huatuo-dev",region="dev"} 1.11
 # HELP huatuo_bamai_loadavg_load5 system load average, 5 minutes
 # TYPE huatuo_bamai_loadavg_load5 gauge
-huatuo_bamai_loadavg_load5{host="huatuo-dev",region="dev"} 1.29
+huatuo_bamai_loadavg_load5{hostname="huatuo-dev",region="dev"} 1.29

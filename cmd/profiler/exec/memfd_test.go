@@ -123,6 +123,83 @@ func TestCollectorCommandSignalChild(t *testing.T) {
 	os.Exit(0)
 }
 
+// stopDuringLaunchContext blocks the post-launch cancellation check until the
+// child is ready and the stop has been requested, reproducing the launch window.
+type stopDuringLaunchContext struct {
+	context.Context
+	release <-chan struct{}
+	checks  int
+}
+
+func (c *stopDuringLaunchContext) Err() error {
+	c.checks++
+	// Process.Start checks before preparing, before launching and after
+	// cmd.Start; the last check is the launch window under test.
+	if c.checks == 3 {
+		<-c.release
+	}
+	return c.Context.Err()
+}
+
+func TestRunWithMemfdStopDuringLaunch(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cause       error
+		wantSuccess bool
+	}{
+		{name: "duration", cause: profile.ErrCollectionDurationElapsed, wantSuccess: true},
+		{name: "requested", cause: profile.ErrStopRequested, wantSuccess: true},
+		{name: "canceled", cause: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 5 {
+				ctx, cancel := context.WithCancelCause(t.Context())
+				reader, writer, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				release := make(chan struct{})
+				launchCtx := &stopDuringLaunchContext{Context: ctx, release: release}
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					_, _ = bufio.NewReader(reader).ReadString('\n')
+					cancel(tc.cause)
+					close(release)
+				}()
+
+				env := append(os.Environ(), "HUATUO_COLLECTOR_SIGNAL_CHILD=1", "HUATUO_COLLECTOR_OUTPUT=/proc/self/fd/3")
+				results := RunWithMemfd(launchCtx, []int{123}, &executil.Spec{
+					Path: os.Args[0], Env: env, StopSignal: syscall.SIGINT, StopGracePeriod: 5 * time.Second,
+				}, func(_ int, _ string) []string {
+					return []string{"-test.run=^TestCollectorCommandSignalChild$"}
+				}, executil.WithStdout(writer))
+
+				writer.Close()
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+					t.Fatal("child did not report readiness")
+				}
+				reader.Close()
+				cancel(nil)
+
+				if len(results) != 1 {
+					t.Fatalf("results=%v", results)
+				}
+				result := results[0]
+				if tc.wantSuccess {
+					if result.Err != nil || string(result.Output) != "root;leaf 7\n" {
+						t.Fatalf("error=%v output=%q", result.Err, result.Output)
+					}
+				} else if result.Err == nil || len(result.Output) != 0 {
+					t.Fatalf("error=%v output=%q", result.Err, result.Output)
+				}
+			}
+		})
+	}
+}
+
 func TestRunWithMemfdStopContract(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

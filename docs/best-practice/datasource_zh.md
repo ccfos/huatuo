@@ -7,7 +7,7 @@ date: 2026-05-05
 weight: 2
 ---
 
-HUATUO 通过 Prometheus 采集指标，并将事件数据写入 Elasticsearch。本文介绍 Docker Compose 和 Kubernetes 环境下的数据源与仪表盘配置方法。
+Prometheus 抓取 HUATUO 暴露的指标，Elasticsearch 保存事件数据。本文介绍 Docker Compose 和 Kubernetes 环境下的数据源与仪表盘配置方法。
 
 > 不要在同一节点同时运行 Docker Compose、systemd 和 Kubernetes 版本的
 > huatuo-bamai。它们会争用 `19704` 端口和
@@ -76,7 +76,7 @@ template:
       prometheus.io/path: "/metrics"
 ```
 
-Helm Chart 根据 `charts/huatuo/values.yaml` 中的以下配置生成注解：
+Helm Chart 根据 `build/charts/values.yaml` 中的以下配置生成注解：
 
 ```yaml
 metrics:

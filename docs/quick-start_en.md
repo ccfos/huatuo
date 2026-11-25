@@ -1,123 +1,134 @@
 ---
-title: Getting started
-type: docs
+title: Quick Start
 description: 
 date: 2026-07-27
+type: docs
 weight: 1
 ---
 
-> To help users quickly experience and deploy HUATUO, this document is divided into three sections: [Quick Experience](#1-quick-experience)，[Quick Start](#2-quick-start)，[Compilation & Deployment](#3-compilation--deployment).
+Choose one of three paths: [view the demo](#view-the-demo), [run containers](#run-containers), or [build from source](#build-from-source). Running the collector locally requires Linux. Container deployment also requires Docker and the permissions used in the examples.
 
-### 1. Quick Experience
+## View the Demo
 
-This section helps you quickly explore the frontend capabilities. You can directly access [demo station](http://console.huatuo.tech), such as viewing exception event overviews, exception event context information, metric curves, etc. (Account: huatuo passwd: huatuo1024).
+Log in to the [demo site](http://console.huatuo.tech) to view kernel metrics, abnormal events, and flame graphs. The demo username is `huatuo` and the password is `huatuo1024`.
 
-- [Events, AutoTracing Dashboard（improvements in progress）](http://console.huatuo.tech/d/autotracing-event)
-  ![autotracing-event demo diagram​](/docs/img/quickstart-autotracing-event.png)
+- [Events and AutoTracing](http://console.huatuo.tech/d/autotracing-event)
 
-- [Host Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-host)
-  ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)
+  ![Events and AutoTracing dashboard](/docs/img/quickstart-autotracing-event.png)
 
-- [Container Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-container)
- ![metrics-container demo diagram](/docs/img/quickstart-metrics-container.png)
+- [Host Metrics](http://console.huatuo.tech/d/metrics-host)
 
-### 2. Quick Start
+  ![Host metrics dashboard](/docs/img/quickstart-metrics-host.png)
 
-![HUATUO Component Data Flow Diagram](/docs/img/quickstart-data-flow.png)
+- [Container Metrics](http://console.huatuo.tech/d/metrics-container)
 
-#### 2.1 Quick Run
-If you want to understand the underlying principles and deploy HUATUO to your own monitoring system, you can start pre-compiled container images via Docker (Note: This method disables container information retrieval and ES storage functionality by default).
+  ![Container metrics dashboard](/docs/img/quickstart-metrics-container.png)
 
-- **Direct Execution**：
-    ```bash
-    $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
-    ```
+## Run Containers
 
-- **Metric Collection**：In another terminal, collect metrics
-    ```bash
-    $ curl -s localhost:19704/metrics
-    ```
-- **View Exception Events (Events, AutoTracing)**：HUATUO stores collected kernel exception event information in ES (disabled by default) while retaining a copy in the local directory `huatuo-local`. Note: Typically, no files exist in this path (systems in normal state don't trigger event collection). You can generate events by creating exception scenarios or modifying configuration thresholds.
+![HUATUO component data flow](/docs/img/quickstart-data-flow.png)
 
-#### 2.2 Quick Setup
-If you want to further understand HUATUO's operational mechanisms, architecture design, monitoring dashboard, and custom deployment, you can quickly set up a complete local environment using docker compose.
+### Docker
+
+The following image disables container information retrieval and Elasticsearch storage by default. Start the collector:
+
+```bash
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+```
+
+Fetch metrics from another terminal:
+
+```bash
+$ curl -s localhost:19704/metrics
+```
+
+A response with Prometheus-format metrics confirms that the metric endpoint is accessible. Event and AutoTracing results are written to `huatuo-local` inside the container. This directory may have no records until collection is triggered. In a test environment, generate the target activity or adjust the corresponding threshold, then check the records.
+
+### Docker Compose
+
+From the repository root, start [Elasticsearch](https://www.elastic.co), [Prometheus](https://prometheus.io), [Grafana](https://grafana.com), and the HUATUO components:
 
 ```bash
 $ docker compose --project-directory ./build/docker up
 ```
 
-This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
+Once the services start, open [Grafana](http://localhost:3000). Both the default administrator username and password are `admin`. Event and AutoTracing panels show data only when corresponding results have been collected. See [Data Sources](/docs/best-practice/datasource_en.md) for data source and dashboard configuration.
 
-![HUATUO huatuo-bamai Component Operation Diagram](/docs/img/quickstart-components.png)
+![huatuo-bamai processing flow](/docs/img/quickstart-components.png)
 
+## Build from Source
 
-#### 3. Compilation & Deployment
-#### 3.1 Compilation
-To isolate the developer's local environment and simplify the compilation process, we provide containerized compilation. You can directly use docker build to construct the completed image (including the underlying collector huatuo-bamai, BPF objects, tools, etc.). Run the following command in the project root directory:
+### Build the Image
+
+From the repository root, build an image containing `huatuo-bamai`, BPF objects, and tools:
 
 ```bash
 $ docker build --network host -t huatuo/huatuo-bamai:latest .
 ```
 
-#### 3.2 Execution
-- Run container:
-    ```bash
-    $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
-    ```
+### Run the Collector
 
-- Or copy all files from the container path `/home/huatuo-bamai` and run manually locally:
-    ```bash
-    $ ./huatuo-bamai --region example --config huatuo-bamai.conf
-    ```
-- Management: Can be managed using systemd/supervisord/k8s-DaemonSet, etc.
+Run the image:
 
-#### 3.3 Configuration
-- Container Information Configuration
+```bash
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+```
 
-    HUATUO obtains POD/container information by calling the kubelet interface. Configure the access interface and certificates according to your actual environment. Empty configuration "" indicates disabling this functionality.
-    ```yml
-      [Pod]
-        KubeletPodListURL = "http://127.0.0.1:10255/pods"
-        KubeletPodListHTTPSURL = "https://127.0.0.1:10250/pods"
-        KubeletPodClientCertPath = "/var/lib/kubelet/pki/kubelet-client-current.pem"
-    ```
+Alternatively, copy the files from `/home/huatuo-bamai` in the container and run locally:
 
-- Storage Configuration
+```bash
+$ ./huatuo-bamai --region example --config huatuo-bamai.conf
+```
 
-    - **Metric Storage (Metric)**: All metrics are stored in Prometheus. You can access the :19704/metrics interface to obtain metrics.
-    - **Exception Event Storage (Events, AutoTracing)**: All kernel events and AutoTracing events are stored in ES. Note: If the configuration is empty, ES storage is not activated, and events are only stored in the local directory `huatuo-local`.
+For long-running deployments, use [systemd](/docs/deployment/systemd_en.md) or [Kubernetes](/docs/deployment/kubernetes_en.md) as appropriate for your environment.
 
-       ES storage configuration is as follows:
-        ```yaml
-        [Storage.Elasticsearch]
-            Address = "http://127.0.0.1:9200"
-            Username = "elastic"
-            Password = "huatuo-bamai"
-            Index = "huatuo_bamai"
-        ```
+## Configuration
 
-        Local storage configuration is as follows:
-        ```yaml
-        # tracer's record data
-        # Path: all but the last element of path for per tracer
-        # RotationSizeMiB: maximum record file size before rotation
-        # MaxRotatedFiles: maximum number of rotated files to retain
-        [Storage.LocalFile]
-            Path = "huatuo-local"
-            RotationSizeMiB = 100
-            MaxRotatedFiles = 10
-        ```
+See [Node Configuration](/docs/configuration/huatuo-bamai-configuration_en.md) for all fields, defaults, and conditions for settings to take effect.
 
-- Event Thresholds
+### Container Information
 
-    All kernel event collections (Events and AutoTracing) can have configurable trigger thresholds. The default thresholds are empirical data repeatedly validated in actual production environments. You can modify thresholds in huatuo-bamai.conf according to your requirements.
+HUATUO retrieves Pod and container information through kubelet. Set ports and certificates for your environment. Setting both `KubeletAuthorizedPort` and `KubeletReadOnlyPort` to `0` disables this feature.
 
-- Resource Limits
+```toml
+  [Pod]
+    KubeletClientCertPath = "/etc/kubernetes/pki/apiserver-kubelet-client.crt,/etc/kubernetes/pki/apiserver-kubelet-client.key"
+```
 
-    Kubernetes and systemd deployments let kubelet or systemd manage Huatuo cgroups by default, so Huatuo does not migrate its own PID. For direct execution without an external manager, pass `--enable-cgroup` and configure:
-    ```toml
-    [Runtime]
-        StartupCPULimitCores = 0.5
-        CPULimitCores = 2.0
-        MemoryLimitMiB = 2048
-    ```
+### Storage
+
+Metrics are exposed at `:19704/metrics`; configure Prometheus to scrape and store them. Events and AutoTracing results are written to the enabled storage backends. The following examples configure Elasticsearch and local files:
+
+```toml
+[Storage.Elasticsearch]
+    Address = "http://127.0.0.1:9200"
+    Username = "elastic"
+    Password = "huatuo-bamai"
+    Index = "huatuo_bamai"
+```
+
+```toml
+# tracer's record data
+# Path: all but the last element of path for per tracer
+# RotationSizeMiB: Maximum size of a record file before rotation
+# MaxRotatedFiles: Maximum number of rotated files to retain
+[Storage.LocalFile]
+    Path = "huatuo-local"
+    RotationSizeMiB = 100
+    MaxRotatedFiles = 10
+```
+
+### Event Thresholds
+
+Adjust the configurable event and AutoTracing thresholds in `huatuo-bamai.conf` for your workload. Trigger conditions, scope, and defaults vary by collector and should be verified in the target environment.
+
+### Resource Limits
+
+In Kubernetes and systemd deployments, kubelet or systemd manages HUATUO's cgroup by default; HUATUO does not move its own PID. Use `--enable-cgroup` and the following configuration only when running directly without an external manager:
+
+```toml
+[Runtime]
+    StartupCPULimitCores = 0.5
+    CPULimitCores = 2.0
+    MemoryLimitMiB = 2048
+```

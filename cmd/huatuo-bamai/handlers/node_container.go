@@ -19,7 +19,8 @@ import (
 	"fmt"
 
 	nodeapi "github.com/ccfos/huatuo/apis/v1/node"
-	"github.com/ccfos/huatuo/internal/server/response"
+	"github.com/ccfos/huatuo/internal/httpserver/response"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 )
 
@@ -39,16 +40,28 @@ func (h *NodeAPIHandler) GetContainer(
 		)
 	}
 
-	cgroupCSS := make(map[string]string, len(container.CgroupCss))
+	cgroupCSSRefs := make(map[string]nodeapi.CgroupCSSRef, len(container.CgroupCss))
 	for subsystem, address := range container.CgroupCss {
-		if encoded := kernaddr.Format(address); encoded != "" {
-			cgroupCSS[subsystem] = encoded
+		encoded := kernaddr.Format(address)
+		if encoded == "" {
+			continue
+		}
+		resolve := h.containerCSSBySubsys
+		if resolve == nil {
+			resolve = pod.ContainerCSSBySubsys
+		}
+		ref, err := resolve(container.ID, subsystem)
+		if err == nil && ref.CSSAddr == address && ref.CgroupID != 0 {
+			cgroupCSSRefs[subsystem] = nodeapi.CgroupCSSRef{
+				CSSAddr:  encoded,
+				CgroupID: kernaddr.Format(ref.CgroupID),
+			}
 		}
 	}
 	return nodeapi.GetContainer200JSONResponse{
 		Data: nodeapi.ContainerMetadata{
-			ID:        container.ID,
-			CgroupCSS: cgroupCSS,
+			ID:            container.ID,
+			CgroupCSSRefs: cgroupCSSRefs,
 		},
 	}, nil
 }
