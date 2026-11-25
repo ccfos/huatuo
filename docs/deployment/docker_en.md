@@ -99,6 +99,8 @@ To deploy and benchmark Redis or PostgreSQL and collect a CPU profile of the ser
 ```bash
 ./build/docker/run_test_redis_profiling.sh
 ./build/docker/run_test_postgres_profiling.sh
+./build/docker/run_test_postgres_profiling.sh --offcpu
+./build/docker/run_test_postgres_profiling.sh --oncpu --offcpu
 ```
 
 Run `make compose-dev-up` before these scripts. They require `curl`, `jq`, `kubectl`,
@@ -114,5 +116,8 @@ Success exits with code 0; the JSON output contains the flame graph link in `gra
 results and benchmark log directory in `output_dir`. Failure exits with a nonzero code and
 `grafana_url: null`. Temporary services, data, and benchmark containers are removed on exit;
 the development stack and collected results remain available.
+Selecting both PostgreSQL modes returns a `results` array with a separate `output_dir` and
+`grafana_url` for each trial; either mode failing produces a nonzero exit code.
+Off-CPU uses the same read-only pgbench workload and does not guarantee a particular wait reason.
 
 After the trial, run `make compose-dev-down` to stop and remove the development stack.

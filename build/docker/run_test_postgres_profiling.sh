@@ -101,12 +101,27 @@ pgbench_stop() {
 }
 
 assert_postgres_profile() {
-	local output_dir=$1 container_id=$2
-	jq -e --arg container "$container_id" '.items | length > 0 and all(.[]; .container_id == $container)' \
+	local output_dir=$1 container_id=$2 mode=$3 profile_type=$4
+	jq -e --arg container "$container_id" --arg type "$profile_type" \
+		'.items | length > 0 and all(.[]; .container_id == $container and .profile_type == $type)' \
 		"${output_dir}/raw.json" > /dev/null || {
-		printf 'Expected windows from container %s; inspect %s/raw.json.\n' "$container_id" "$output_dir" >&2
+		printf 'Expected %s windows from container %s; inspect %s/raw.json.\n' "$profile_type" "$container_id" "$output_dir" >&2
 		return 1
 	}
+	if [[ $mode == offcpu ]]; then
+		jq -e '
+ [.items[].profile | . as $p | .sample[]? | {value:.value,labels:
+   [.label[]? | {key:$p.string_table[.key],value:$p.string_table[.str]}] | from_entries}] as $samples
+ | ($samples | length > 0) and all($samples[];
+   (.value | length > 0 and all(.[]; . > 0)) and
+   (.labels.offcpu_reason | IN("blocked","runqueue","runqueue_preempted","runqueue_yielded","runqueue_missed_wakeup","unknown")) and
+   (.labels.cpu | type == "string" and test("^(0|[1-9][0-9]*)$")) and
+   (.labels.pid | type == "string" and test("^[1-9][0-9]*$")) and
+   (.labels.comm | type == "string"))' "${output_dir}/raw.json" > /dev/null || {
+			printf 'Expected positive off-CPU samples with offcpu_reason/cpu/pid/comm string labels; inspect %s/raw.json.\n' "$output_dir" >&2
+			return 1
+		}
+	fi
 	jq -e '([.frames[]?.data.values[0] | length] | add // 0) > 0' "${output_dir}/flamegraph.json" > /dev/null || {
 		printf 'Expected a nonempty postgres flame graph; inspect %s/flamegraph.response.json.\n' "$output_dir" >&2
 		return 1
@@ -121,11 +136,11 @@ postgres_result_write() {
 		graph="${output_dir}/flamegraph.json"
 		url=$(grafana_profiling_url_build "$POSTGRES_GRAFANA_BASE" "$POSTGRES_REGION" "$profile") || return 1
 	fi
-	jq -n --argjson status "$status" --arg url "$url" --arg id "$job_id" \
+	jq -n --argjson status "$status" --arg url "$url" --arg id "$job_id" --arg mode "$postgres_mode" \
 		--arg image "$POSTGRES_IMAGE" --arg tool "$POSTGRES_PGBENCH_IMAGE" --argjson duration "$POSTGRES_DURATION" \
 		--argjson elapsed "$elapsed" --arg output "$output_dir" \
 		--rawfile error "${output_dir}/stderr.log" --slurpfile profile "$profile" --slurpfile raw "$raw" --slurpfile graph "$graph" '
- {scope:"container",service:"postgres",service_image:$image,benchmark_image:$tool,duration_seconds:$duration,
+ {scope:"container",service:"postgres",mode:$mode,service_image:$image,benchmark_image:$tool,duration_seconds:$duration,
  elapsed_seconds:$elapsed,output_dir:$output,benchmark_log:($output+"/benchmark.log"),request_id:$id,grafana_url:null}
  + (if $status==0 then $profile[0] + {status:"passed",grafana_url:$url,raw_windows:($raw[0].items|length),
      flamegraph_nodes:([$graph[0].frames[]?.data.values[0]|length]|add // 0)}
@@ -165,7 +180,11 @@ cleanup() {
 }
 
 main() {
-	local output_dir=$1 node address namespace container_id
+	local output_dir=$1 node address namespace container_id profile_type
+	case $postgres_mode in
+	oncpu) profile_type='process_cpu:cpu:nanoseconds:cpu:nanoseconds' ;;
+	offcpu) profile_type='process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds' ;;
+	esac
 	require_commands kubectl ip curl crictl
 	require_development_stack "$output_dir" "$POSTGRES_NODE_BASE" "$POSTGRES_API_BASE"
 	node=$(require_local_kubernetes_node "$output_dir")
@@ -181,42 +200,74 @@ main() {
 	node_container_wait_discovered "$output_dir" "$POSTGRES_NODE_BASE" "$POSTGRES_NODE_TOKEN" "$container_id"
 	pgbench_start "$output_dir" "$namespace" "$node" "$address"
 	assert_pgbench_progress "$output_dir" "$namespace"
-	jq -n --arg host "$POSTGRES_TARGET_HOST" --arg container "$container_id" --argjson duration "$POSTGRES_DURATION" \
-		'{type:"cpu",language:"c",mode:"oncpu",scope:"container",hostname:$host,container_id:$container,duration_seconds:$duration}' \
+	jq -n --arg host "$POSTGRES_TARGET_HOST" --arg container "$container_id" --argjson duration "$POSTGRES_DURATION" --arg mode "$postgres_mode" \
+		'{type:"cpu",language:"c",mode:$mode,scope:"container",hostname:$host,container_id:$container,duration_seconds:$duration}' \
 		> "${output_dir}/create.request.json"
 	postgres_job_id=$(profiling_task_create "$output_dir" "$POSTGRES_API_BASE" "$POSTGRES_API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id)
 	profiling_task_wait_completed "$output_dir" "$POSTGRES_API_BASE" "$POSTGRES_API_TOKEN" "$postgres_job_id" "$((POSTGRES_DURATION + 120))" > "${output_dir}/task.json"
 	assert_pgbench_progress "$output_dir" "$namespace"
 	pgbench_stop "$output_dir" "$namespace"
 	profiling_raw_query "$output_dir" "$POSTGRES_API_BASE" "$POSTGRES_API_TOKEN" "$postgres_job_id" > "${output_dir}/raw.json"
-	jq '{request_id,hostname,scope,container_id,profile_type:"process_cpu:cpu:nanoseconds:cpu:nanoseconds",time_range:{
+	jq --arg type "$profile_type" --arg mode "$postgres_mode" '{request_id,hostname,scope,container_id,mode,profile_type:$type,time_range:{
    from_ms:(.created_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601*1000),
    to_ms:(.ended_at|sub("\\.[0-9]+Z$";"Z")|(fromdateiso8601+1)*1000)}}' \
 		"${output_dir}/task.json" > "${output_dir}/profile.json"
 	grafana_flamegraph_query "$output_dir" "$POSTGRES_GRAFANA_BASE" "$POSTGRES_GRAFANA_AUTH" "$POSTGRES_REGION" "${output_dir}/profile.json" > "${output_dir}/flamegraph.json"
-	assert_postgres_profile "$output_dir" "$container_id"
+	assert_postgres_profile "$output_dir" "$container_id" "$postgres_mode" "$profile_type"
+}
+
+usage() {
+	printf 'Usage: run_test_postgres_profiling.sh [--oncpu] [--offcpu]\nRun make compose-dev-up first. Defaults: container scope, oncpu, 60 seconds per mode. Both flags run separate trials sequentially and print a results array; each trial has its own output_dir and grafana_url.\n'
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-	if [[ ${1:-} == --help && $# == 1 ]]; then
-		printf 'Usage: run_test_postgres_profiling.sh\nRun make compose-dev-up first. Preload images with crictl, benchmark postgres, profile its container for 60 seconds, and print JSON with grafana_url.\n'
-		exit 0
-	fi
-	if (($# != 0)); then
-		printf 'Usage: run_test_postgres_profiling.sh [--help]\n' >&2
-		exit 2
-	fi
+	postgres_oncpu=false postgres_offcpu=false
+	while (($#)); do
+		case $1 in
+		--oncpu) postgres_oncpu=true ;;
+		--offcpu) postgres_offcpu=true ;;
+		--help | -h)
+			usage
+			exit 0
+			;;
+		*)
+			printf 'Unknown argument: %s\n' "$1" >&2
+			usage >&2
+			exit 2
+			;;
+		esac
+		shift
+	done
 	if ! command -v jq > /dev/null; then
 		printf '{"status":"failed","grafana_url":null,"error":"Install jq before running this script."}\n'
 		exit 1
 	fi
 	mkdir -p "${ROOT_DIR}/_output/profiling"
+	if [[ $postgres_oncpu == true && $postgres_offcpu == true ]]; then
+		postgres_output_dir=$(mktemp -d "${ROOT_DIR}/_output/profiling/postgres.XXXXXX")
+		postgres_status=0
+		# Separate processes retain errexit and the existing per-trial cleanup on failure.
+		for postgres_mode in oncpu offcpu; do
+			if bash "${BASH_SOURCE[0]}" "--${postgres_mode}" > "${postgres_output_dir}/${postgres_mode}.json"; then
+				continue
+			else
+				postgres_status=1
+			fi
+		done
+		jq -s --argjson status "$postgres_status" --arg output "$postgres_output_dir" \
+			'{status:(if $status==0 then "passed" else "failed" end),output_dir:$output,results:.}' \
+			"${postgres_output_dir}/oncpu.json" "${postgres_output_dir}/offcpu.json" > "${postgres_output_dir}/result.json"
+		cat "${postgres_output_dir}/result.json"
+		exit "$postgres_status"
+	fi
+	postgres_mode=oncpu
+	if [[ $postgres_offcpu == true ]]; then postgres_mode=offcpu; fi
 	postgres_run_dir=$(mktemp -d "${ROOT_DIR}/_output/profiling/postgres.XXXXXX")
 	postgres_started=$SECONDS postgres_namespace='' postgres_job_id='' postgres_benchmark_saved=false
 	: > "${postgres_run_dir}/stderr.log"
 	trap cleanup EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
-	printf 'Profiling postgres; logs: %s\n' "$postgres_run_dir" >&2
+	printf 'Profiling postgres (%s); logs: %s\n' "$postgres_mode" "$postgres_run_dir" >&2
 	main "$postgres_run_dir" > "${postgres_run_dir}/execution.log" 2> "${postgres_run_dir}/stderr.log"
 fi

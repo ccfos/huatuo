@@ -97,6 +97,8 @@ make compose-dev-up
 ```bash
 ./build/docker/run_test_redis_profiling.sh
 ./build/docker/run_test_postgres_profiling.sh
+./build/docker/run_test_postgres_profiling.sh --offcpu
+./build/docker/run_test_postgres_profiling.sh --oncpu --offcpu
 ```
 
 运行前先执行 `make compose-dev-up` 启动开发栈。脚本需要 `curl`、`jq`、`kubectl`、`ip`、`crictl`
@@ -107,5 +109,7 @@ make compose-dev-up
 采样任务由 apiserver 创建，完成后停止压测，再生成火焰图地址。
 成功时退出码为 0，输出 JSON 的 `grafana_url` 为火焰图地址，`output_dir` 为结果和压测日志目录；
 失败时退出码非 0，`grafana_url` 为 `null`。退出时清理临时服务、数据和压测容器，保留开发栈和采集结果。
+PostgreSQL 同时选择两种模式时，输出 `results` 数组，每项有独立的 `output_dir` 和 `grafana_url`；
+任一模式失败时退出码非 0。off-CPU 沿用只读 pgbench 负载，不保证出现特定等待原因。
 
 试用结束后运行 `make compose-dev-down` 停止并移除开发栈。
