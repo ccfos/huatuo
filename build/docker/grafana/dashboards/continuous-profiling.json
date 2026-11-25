@@ -221,6 +221,10 @@
 				"name": "region",
 				"label": "Region",
 				"type": "query",
+				"current": {
+					"text": "pre-test",
+					"value": "pre-test"
+				},
 				"datasource": {
 					"type": "elasticsearch",
 					"uid": "huatuo-bamai-es"

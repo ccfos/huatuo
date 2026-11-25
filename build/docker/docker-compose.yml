@@ -86,7 +86,7 @@ services:
       - /etc:/etc:ro
       - /var:/var:ro
       - ../../huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:rw
-    command: ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf", "--disable-kubelet"]
+    command: ["./bin/huatuo-bamai", "--region", "pre-test", "--config", "huatuo-bamai.conf", "--disable-kubelet"]
     depends_on:
       elasticsearch:
         condition: service_healthy
