@@ -113,6 +113,9 @@ func run(specRoot, outputRoot string) error {
 	if err := validateCatalogs(catalogs); err != nil {
 		return err
 	}
+	if err := validateGoNames(catalogs); err != nil {
+		return err
+	}
 
 	for i := range catalogs {
 		current := &catalogs[i]
@@ -262,6 +265,32 @@ func validateCatalogs(catalogs []catalog) error {
 			}
 		}
 	}
+	return nil
+}
+
+// validateGoNames rejects a catalog in which two codes fold to the same Go
+// identifier. Each catalog emits one constant per code, so goName has to stay
+// injective within a catalog or the generated file does not compile:
+// "internal_error" is special-cased to "Internal", and folding underscores
+// makes e.g. "id_conflict" and "i_d_conflict" both "IDConflict".
+func validateGoNames(catalogs []catalog) error {
+	for _, current := range catalogs {
+		names := make(map[string]string, len(current.definitions))
+		for _, candidate := range current.definitions {
+			name := goName(candidate.Code)
+			if previous, ok := names[name]; ok {
+				return fmt.Errorf(
+					"go name %q collides for codes %q and %q in the %s catalog",
+					name,
+					previous,
+					candidate.Code,
+					current.name,
+				)
+			}
+			names[name] = candidate.Code
+		}
+	}
+
 	return nil
 }
 
