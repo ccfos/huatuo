@@ -231,8 +231,13 @@ install_test_dependencies() {
 				package_options+=(
 					--disablerepo=debuginfo --disablerepo=source
 					--disablerepo=update-source --disablerepo=update
-					--disablerepo=everything
 				)
+				# openEuler 22.03 keeps fio in everything, outside OS and EPOL.
+				if [[ ${VERSION_ID%%.*} == 22 && " ${missing_packages[*]} " == *" fio "* ]]; then
+					package_options+=(--enablerepo=everything)
+				else
+					package_options+=(--disablerepo=everything)
+				fi
 			fi
 			if ! "$package_manager" "${package_options[@]}" install -y "${missing_packages[@]}"; then
 				((${#package_options[@]})) || return 1
