@@ -18,6 +18,7 @@ services:
     command: ["./bin/huatuo-bamai", "--region", "pre-test", "--config", "huatuo-bamai.conf"]
     volumes:
       - ./devconf/huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:ro
+      - ../../_output/tools:/opt/huatuo/tools:ro
 
   grafana:
     volumes:
