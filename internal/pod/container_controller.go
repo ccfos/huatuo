@@ -82,9 +82,12 @@ func InitManager(config *ManagerCtx) error {
 		}
 	} else if config.PodReadOnlyPort == 0 {
 		// Without a certificate the HTTPS port authenticates with the Pod's
-		// ServiceAccount token, which only exists when running in a cluster.
+		// ServiceAccount token and verifies the kubelet with the cluster CA.
 		if _, err := readServiceAccountToken(serviceAccountTokenPath); err != nil {
 			return fmt.Errorf("authorized kubelet port requires a client certificate or a service account token: %w", err)
+		}
+		if _, err := loadServiceAccountCAPool(serviceAccountCACertPath); err != nil {
+			return fmt.Errorf("authorized kubelet port requires a client certificate or a service account CA: %w", err)
 		}
 	}
 	dockerAPIVersion = config.DockerAPIVersion

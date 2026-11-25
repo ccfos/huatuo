@@ -17,6 +17,7 @@ package pod
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -107,7 +108,10 @@ func kubeletPodListHttpRequest(requestCtx context.Context, ctx *ManagerCtx) (*ht
 	return client, err
 }
 
-var serviceAccountTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+var (
+	serviceAccountTokenPath  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	serviceAccountCACertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+)
 
 // kubeletTokenTransport re-reads the rotated ServiceAccount token on each request.
 type kubeletTokenTransport struct {
@@ -137,16 +141,24 @@ func readServiceAccountToken(path string) (string, error) {
 	return token, nil
 }
 
-// kubeletAuthorizedClient builds the HTTPS kubelet client: a client certificate
-// when one is configured, otherwise the Pod's ServiceAccount token.
-func kubeletAuthorizedClient(ctx *ManagerCtx) (*http.Client, error) {
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, // #nosec G402 -- kubelet serving certs are commonly self-signed
+func loadServiceAccountCAPool(path string) (*x509.CertPool, error) {
+	pemData, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read service account CA certificate: %w", err)
 	}
-	transport := &http.Transport{TLSClientConfig: tlsConfig}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemData) {
+		return nil, fmt.Errorf("parse service account CA certificate %s: no valid PEM certificates", path)
+	}
+	return pool, nil
+}
+
+// kubeletAuthorizedClient builds the HTTPS kubelet client: a client certificate
+// when one is configured, otherwise the Pod's ServiceAccount token verified
+// against the cluster CA certificate.
+func kubeletAuthorizedClient(ctx *ManagerCtx) (*http.Client, error) {
 	client := &http.Client{
-		Timeout:   kubeletReqTimeout,
-		Transport: transport,
+		Timeout: kubeletReqTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -157,11 +169,26 @@ func kubeletAuthorizedClient(ctx *ManagerCtx) (*http.Client, error) {
 			return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
 				ctx.podClientCertPath, ctx.podClientCertKey, err)
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: true, // #nosec G402 -- kubelet serving certs are commonly self-signed
+			},
+		}
 		return client, nil
 	}
 	if _, err := readServiceAccountToken(serviceAccountTokenPath); err != nil {
 		return nil, fmt.Errorf("no client certificate configured and %w", err)
+	}
+	caPool, err := loadServiceAccountCAPool(serviceAccountCACertPath)
+	if err != nil {
+		return nil, fmt.Errorf("no client certificate configured and %w", err)
+	}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    caPool,
+		},
 	}
 	client.Transport = &kubeletTokenTransport{path: serviceAccountTokenPath, base: transport}
 	return client, nil

@@ -21,7 +21,7 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
 
 Adjust the configuration for your environment, including the storage backend and Pod information source. See the [configuration guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
-When the kubelet read-only port is disabled (`KubeletReadOnlyPort = 0`) and `KubeletClientCertPath` is empty, `huatuo-bamai` authenticates to the kubelet HTTPS port using the Pod's ServiceAccount token (`/var/run/secrets/kubernetes.io/serviceaccount/token`, re-read on every request to support token rotation). Ensure the DaemonSet ServiceAccount has RBAC permission to read kubelet `/pods` and `/configz` (such as `nodes/proxy`).
+When the kubelet read-only port is disabled (`KubeletReadOnlyPort = 0`) and `KubeletClientCertPath` is empty, `huatuo-bamai` authenticates to the kubelet HTTPS port using the Pod's ServiceAccount token (`/var/run/secrets/kubernetes.io/serviceaccount/token`, re-read on every request to support token rotation) and verifies the kubelet server certificate against `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`. Ensure the DaemonSet ServiceAccount has RBAC permission to read kubelet `/pods` and `/configz` (such as `nodes/proxy`), and that kubelet uses a cluster-CA-signed serving certificate (for example via `serverTLSBootstrap: true`).
 
 ### 1.3 Create a ConfigMap
 
