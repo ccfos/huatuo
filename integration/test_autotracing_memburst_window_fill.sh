@@ -25,15 +25,16 @@ burst_prepare_ranked_workloads
 huatuo_bamai_stop
 HUATUO_BAMAI_TEST_TMPDIR="${MEMBURST_ROOT_WORKSPACE}/window_fill"
 mkdir -p "${HUATUO_BAMAI_TEST_TMPDIR}"
-burst_window=5
+# Omit SlidingWindowLength to exercise the daemon default.
+burst_window=""
 burst_input low
 burst_start
-burst_wait_samples low 1
+burst_wait_samples low
 burst_input high
-burst_wait_samples high 1
+burst_wait_samples high 3
 assert_burst_count 0 "history triggered before filling"
 burst_input low
-burst_wait_samples low "${burst_window}"
+wait_until 90 .2 memsnapshot_memburst_samples_ready "${burst_sample_offset}" 60 100000 || fatal "default memburst history did not fill"
 assert_burst_count 0 "event without burst"
 burst_input high
 wait_until 20 .1 burst_expected_count 1 || fatal "burst did not persist"
