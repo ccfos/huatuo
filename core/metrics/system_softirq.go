@@ -39,7 +39,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch possible cpu num")
 	}
-	maxOnlineCPUID := cpuutil.MaxOnlineCPU(cpuutil.SystemCPUOnlinePath)
+	maxOnlineCPUID := cpuutil.ReadListMaxID(cpuutil.SystemCPUOnlinePath)
 	if maxOnlineCPUID < 0 {
 		return nil, fmt.Errorf("fetch maximum online CPU ID")
 	}

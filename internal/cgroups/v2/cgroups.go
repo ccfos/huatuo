@@ -198,7 +198,7 @@ func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 }
 
 func readEffectiveCPUCount(path string) (uint64, error) {
-	return cpuutil.ParseOnlineCores(paths.Path(path, "cpuset.cpus.effective"))
+	return cpuutil.ReadListCount(paths.Path(path, "cpuset.cpus.effective"))
 }
 
 func (c *CgroupV2) MemoryStatRaw(path string) (map[string]uint64, error) {

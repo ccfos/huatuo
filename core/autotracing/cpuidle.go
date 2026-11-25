@@ -141,7 +141,7 @@ func newCPUIdleTracing(
 	if err != nil {
 		return nil, fmt.Errorf("build container filter: %w", err)
 	}
-	hostCPUCount, err := cpuutil.ParseOnlineCores(cpuutil.SystemCPUOnlinePath)
+	hostCPUCount, err := cpuutil.ReadListCount(cpuutil.SystemCPUOnlinePath)
 	if err != nil {
 		return nil, fmt.Errorf("read online CPUs: %w", err)
 	}

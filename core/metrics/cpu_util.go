@@ -57,7 +57,7 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
-	numCores, err := cpuutil.ParseOnlineCores(cpuutil.SystemCPUOnlinePath)
+	numCores, err := cpuutil.ReadListCount(cpuutil.SystemCPUOnlinePath)
 	if err != nil {
 		return nil, fmt.Errorf("read online cpu: %w", err)
 	}
