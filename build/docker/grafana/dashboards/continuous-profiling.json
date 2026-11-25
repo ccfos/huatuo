@@ -217,9 +217,9 @@
 					"timeField": "uploaded_timestamp"
 				}
 			],
-			"title": "Windows and collection losses (before label filtering)",
+			"title": "Profiling Windows and Dropped Samples",
 			"type": "timeseries",
-			"description": "Collection losses include rate limiting and collection capacity. Nonzero losses indicate incomplete profiles. These counts cover the selected task and time range before sample label filtering."
+			"description": "Counts per time bucket before sample label filtering. Dropped samples include losses from rate limiting and collection capacity limits."
 		},
 		{
 			"datasource": {
