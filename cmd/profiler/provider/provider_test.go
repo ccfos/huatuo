@@ -199,23 +199,31 @@ func TestNewRejectsUnsupportedProvider(t *testing.T) {
 	}
 }
 
-func TestSampleTypeSeparatesPhysicalUsage(t *testing.T) {
-	for _, mode := range []profiling.Mode{profiling.ModePhysicalUsage, profiling.ModePhysicalAlloc, profiling.ModeVirtualAlloc} {
-		got, err := sampleType(&Config{
-			Type: profiling.TypeMemory,
-			Mode: mode,
+func TestMemorySampleType(t *testing.T) {
+	for _, tc := range []struct {
+		mode profiling.Mode
+		want string
+	}{
+		{mode: profiling.ModeVirtualAlloc, want: "memory:virtual_alloc:bytes:space:bytes"},
+		{mode: profiling.ModePhysicalAlloc, want: "memory:physical_alloc:bytes:space:bytes"},
+		{mode: profiling.ModePhysicalUsage, want: "memory:physical_usage:bytes:space:bytes"},
+		{mode: profiling.ModeObjectAlloc, want: "memory:object_alloc:bytes:space:bytes"},
+		{mode: profiling.ModeObjectUsage, want: "memory:object_usage:bytes:space:bytes"},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			got, err := sampleType(&Config{Type: profiling.TypeMemory, Mode: tc.mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("profile type = %q, want %q", got, tc.want)
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	}
 
-		want := profiling.ProfileTypeMemSample
-		if mode == profiling.ModePhysicalUsage {
-			want = profiling.ProfileTypePhysicalUsage
-		}
-
-		if got != want {
-			t.Fatalf("mode=%s type=%s, want %s", mode, got, want)
+	for _, mode := range []profiling.Mode{profiling.ModeUnknown, "unsupported"} {
+		if _, err := sampleType(&Config{Type: profiling.TypeMemory, Mode: mode}); err == nil {
+			t.Errorf("expected an error for memory mode %q", mode)
 		}
 	}
 }

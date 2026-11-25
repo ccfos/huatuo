@@ -77,11 +77,20 @@ func sampleType(cfg *Config) (string, error) {
 
 		return profiling.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
-		if cfg.Mode == profiling.ModePhysicalUsage {
+		switch cfg.Mode {
+		case profiling.ModeVirtualAlloc:
+			return profiling.ProfileTypeVirtualAlloc, nil
+		case profiling.ModePhysicalAlloc:
+			return profiling.ProfileTypePhysicalAlloc, nil
+		case profiling.ModePhysicalUsage:
 			return profiling.ProfileTypePhysicalUsage, nil
+		case profiling.ModeObjectAlloc:
+			return profiling.ProfileTypeObjectAlloc, nil
+		case profiling.ModeObjectUsage:
+			return profiling.ProfileTypeObjectUsage, nil
+		default:
+			return "", fmt.Errorf("unsupported memory profiling mode %q", cfg.Mode)
 		}
-
-		return profiling.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
 		return profiling.ProfileTypeLockTimeSample, nil
 	default:

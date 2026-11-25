@@ -163,8 +163,9 @@ for language in c c++ go java python; do
 		case "$typ/$mode" in
 		cpu/oncpu) expected_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds ;;
 		cpu/offcpu) expected_type=process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds ;;
-		memory/physical_usage) expected_type=memory:physical_usage:bytes:space:bytes ;;
-		memory/*) expected_type=memory:alloc_space:bytes:space:bytes ;;
+		memory/virtual_alloc | memory/physical_alloc | memory/physical_usage | memory/object_alloc | memory/object_usage)
+			expected_type="memory:${mode}:bytes:space:bytes"
+			;;
 		esac
 		wait_job "$JOB_ID" completed
 		profiling_results_fetch "$JOB_ID" "$HUATUO_BAMAI_TEST_TMPDIR" "$expected_type" \
@@ -173,6 +174,14 @@ for language in c c++ go java python; do
 			|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$JOB_ID.json"
 		assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$JOB_ID.json" \
 			|| fatal "profiling flamegraph validation failed"
+		if [[ $typ == memory ]]; then
+			jq -e --arg mode "$mode" '
+				all(.data.items[].profile; . as $profile |
+					any(.sample_type[]?; $profile.string_table[.type] == $mode and
+						$profile.string_table[.unit] == "bytes"))' \
+				"$HUATUO_BAMAI_TEST_TMPDIR/raw-$JOB_ID.json" > /dev/null \
+				|| fatal "expected pprof sample type $mode in bytes for task $JOB_ID"
+		fi
 		if [[ $typ/$mode == cpu/oncpu ]]; then
 			assert_matrix_oncpu_samples "${HUATUO_BAMAI_TEST_TMPDIR}/raw-${JOB_ID}.json"
 		fi

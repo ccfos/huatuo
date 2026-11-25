@@ -189,7 +189,10 @@ func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 	}{
 		{name: "periodless CPU", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"},
 		{name: "periodless off-CPU", profileType: "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"},
-		{name: "periodless memory bytes", profileType: "memory:alloc_space:bytes:space:bytes"},
+		{name: "periodless virtual allocation", profileType: "memory:virtual_alloc:bytes:space:bytes"},
+		{name: "periodless physical allocation", profileType: "memory:physical_alloc:bytes:space:bytes"},
+		{name: "periodless Java object allocation", profileType: "memory:object_alloc:bytes:space:bytes"},
+		{name: "periodless Java live objects", profileType: "memory:object_usage:bytes:space:bytes"},
 		{name: "periodless memory count", profileType: "memory:alloc_objects:count:space:bytes"},
 		{
 			name: "legacy CPU", profileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
@@ -243,13 +246,13 @@ func TestSelectMergeStacktracesProfileCompatibility(t *testing.T) {
 		{
 			name:         "physical usage wrong document type",
 			profileType:  "memory:physical_usage:bytes:space:bytes",
-			declaredType: "memory:alloc_space:bytes:space:bytes",
+			declaredType: "memory:physical_alloc:bytes:space:bytes",
 			wantErr:      "does not match query type",
 		},
 		{
 			name:        "physical usage wrong sample name",
 			profileType: "memory:physical_usage:bytes:space:bytes",
-			sampleName:  "alloc_space",
+			sampleName:  "physical_alloc",
 			wantErr:     "stored profile lacks sample type",
 		},
 		{

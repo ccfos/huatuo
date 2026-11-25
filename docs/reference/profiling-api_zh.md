@@ -278,6 +278,10 @@ curl -sS \
 剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_timestamp`、`started_timestamp`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
+
+内存 profile 使用 `memory:<mode>:bytes:space:bytes`。其中 `<mode>` 为
+`virtual_alloc`、`physical_alloc`、`physical_usage`、`object_alloc` 或 `object_usage`，
+同时也是 pprof 样本名。
 可选 `dropped_samples` 按原因记录丢样数，零值可省略。`collection` 非零表示
 限速或采集容量不足导致结果不完整。Grafana 时间线右轴显示该计数，标签筛选只作用于火焰图。
 已持久发布但内容为空的结果仍返回成功，`items` 为空数组。显式 `limit=0` 返回参数

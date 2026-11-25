@@ -260,6 +260,10 @@ curl -sS \
 
 Windows are in `data.items`; `data.limit`, `data.offset`, and `data.has_more` describe pagination. Each record includes `uploaded_timestamp`, `started_timestamp`, `profile_type`, and pprof-compatible `profile` data.
 
+Memory profiles use `memory:<mode>:bytes:space:bytes`, where `<mode>` is
+`virtual_alloc`, `physical_alloc`, `physical_usage`, `object_alloc`, or `object_usage`.
+The mode is also the pprof sample name.
+
 Optional `dropped_samples` records losses by reason; zero values may be omitted.
 A nonzero `collection` count indicates incomplete results due to rate limiting
 or collection capacity. The Grafana timeline shows this count on the right axis;
