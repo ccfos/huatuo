@@ -21,6 +21,8 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
 
 根据实际部署环境修改配置文件，例如调整存储后端、Pod 信息获取方式等配置项，详见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
+当 kubelet 只读端口关闭（`KubeletReadOnlyPort = 0`）且未配置 `KubeletClientCertPath` 时，`huatuo-bamai` 会自动读取 Pod 挂载的 ServiceAccount token（`/var/run/secrets/kubernetes.io/serviceaccount/token`，每次请求重读以兼容 token 轮转）认证 kubelet HTTPS 端口。请确保 DaemonSet 对应的 ServiceAccount 具备访问 kubelet `/pods` 与 `/configz` 的 RBAC 权限（如 `nodes/proxy`）。
+
 ### 1.3 创建 ConfigMap
 
 ```bash
