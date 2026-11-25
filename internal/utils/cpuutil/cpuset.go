@@ -74,7 +74,17 @@ func ParseOnlineCores(path string) (uint64, error) {
 	return count, nil
 }
 
+// parseCPUID parses one CPU ID, rejecting values that do not fit in int.
+func parseCPUID(text string) (int, bool) {
+	id, err := strconv.ParseUint(text, 10, 64)
+	if err != nil || id > math.MaxInt {
+		return 0, false
+	}
+	return int(id), true
+}
+
 // MaxOnlineCPU returns the highest CPU ID in a Linux online CPU list.
+// It returns -1 if the file cannot be read or any list item is malformed.
 func MaxOnlineCPU(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -86,16 +96,29 @@ func MaxOnlineCPU(path string) int {
 		return -1
 	}
 
-	parts := strings.Split(list, ",")
-	last := parts[len(parts)-1]
-	if idx := strings.LastIndex(last, "-"); idx != -1 {
-		last = last[idx+1:]
+	maxID := -1
+	for _, item := range strings.Split(list, ",") {
+		if item == "" {
+			return -1
+		}
+
+		firstText, lastText, isRange := strings.Cut(item, "-")
+		first, ok := parseCPUID(firstText)
+		if !ok {
+			return -1
+		}
+
+		end := first
+		if isRange {
+			last, ok := parseCPUID(lastText)
+			if !ok || last < first {
+				return -1
+			}
+			end = last
+		}
+		maxID = max(maxID, end)
 	}
 
-	maxID, err := strconv.Atoi(last)
-	if err != nil {
-		return -1
-	}
 	return maxID
 }
 
