@@ -35,8 +35,9 @@ func TestExecutableMappingIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	mappings := []memsnapshot.ProcMap{
-		{Path: "/lib/other", Inode: 42, DevMajor: 8, DevMinor: 2, Start: 0x1000},
-		{Path: path, Inode: 42, DevMajor: 8, DevMinor: 3, Start: 0x8000},
+		{Path: "/lib/other", Inode: 42, DevMajor: 8, DevMinor: 2, Start: 0x1000, Perms: "r-xp"},
+		{Path: path, Inode: 42, DevMajor: 8, DevMinor: 3, Start: 0x8000, Perms: "r-xp"},
+		{Path: path, Inode: 42, DevMajor: 8, DevMinor: 3, Start: 0x1000, Perms: "r--p"},
 	}
 	mapping, err := executableMapping(exe, 42, mappings)
 	if err != nil || mapping != &mappings[1] {
