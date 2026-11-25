@@ -89,6 +89,8 @@ func (d *LocalDestination) Open() (io.Writer, error) {
 			prefix, extension = "profile", ".chrometrace.json"
 		case FormatJSON:
 			prefix, extension = "profile", ".json"
+		case FormatTUI:
+			prefix, extension = "profile", ".gob"
 		}
 		file, err = createOutputFile(d.path, prefix, extension)
 	} else {

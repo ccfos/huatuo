@@ -380,6 +380,7 @@ A run with no samples may produce no display file; an existing file alone does n
 | `collapsed` | `perf_<Unix timestamp>.folded`; semicolon-separated frames followed by a numeric value | Scripted searches, comparisons, or rendering with other flame graph tools |
 | `flamegraph` | `flamegraph_<Unix timestamp>.svg`; SVG with interactive scripts | Recommended for visual analysis; search, zoom, and inspect frame values in a browser |
 | `svg` | Same interactive SVG as `flamegraph` | For callers explicitly requesting SVG; currently equivalent to `flamegraph` |
+| `tui` | Interactive terminal flame graph with an optional gob report | [Inspect profiles in a terminal and replay saved reports](../reference/profiler-cli_en.md#terminal-flame-graph-and-replay) |
 | `json` | One JSON line per collection window; streaming collection may emit multiple lines | Preserve windows, sample labels, and signed values |
 | `speedscope` | Speedscope profile JSON | Inspect the profile interactively at speedscope.app or in any Speedscope viewer |
 | `chrometrace` | Chrome tracing JSON | Load the collection into `chrome://tracing` or Perfetto; the timeline is synthesised from the sample unit, so it does not preserve the real event order or concurrency |

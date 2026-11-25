@@ -28,7 +28,6 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
-	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -90,8 +89,18 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("attach err %w", err)
 	}
 
+	showTUI := ctx.Bool("tui")
+	viewerCtx := ctx.Context
+	if showTUI {
+		// Register before sampling ends so hangups during viewer preparation cancel it too.
+		signalCtx, stop := signal.NotifyContext(viewerCtx, syscall.SIGHUP, syscall.SIGQUIT)
+		defer stop()
+		viewerCtx = signalCtx
+	}
+
 	signalWait := make(chan os.Signal, 1)
 	signal.Notify(signalWait, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signalWait)
 
 	select {
 	case <-time.After(time.Duration(optDuration) * time.Second):
@@ -100,13 +109,14 @@ func mainAction(ctx *cli.Context) error {
 	case sig := <-signalWait:
 		return fmt.Errorf("received signal %s", sig)
 	}
+	signal.Stop(signalWait)
 
+	if showTUI {
+		return runTUI(viewerCtx, b)
+	}
 	flameData, err := buildFlameData(b)
 	if err != nil {
 		return fmt.Errorf("parsedata err %w", err)
-	}
-	if ctx.Bool("tui") {
-		return flamegraphtui.Run(flameData)
 	}
 	if err := writeFlameDataJSON(os.Stdout, flameData); err != nil {
 		return fmt.Errorf("write flame data: %w", err)

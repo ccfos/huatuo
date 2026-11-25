@@ -16,8 +16,11 @@ package formatter
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/charmbracelet/x/term"
 )
 
 // ValidateDestination rejects an absent output path.
@@ -25,6 +28,22 @@ import (
 func ValidateDestination(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("--output-path must not be empty")
+	}
+	return nil
+}
+
+// ValidateTUIDestination also accepts an omitted path for terminal-only output.
+func ValidateTUIDestination(path string) error {
+	if path == "" {
+		return nil
+	}
+	return ValidateDestination(path)
+}
+
+// ValidateTUITerminal requires terminal stdin and stdout for the viewer.
+func ValidateTUITerminal() error {
+	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
+		return fmt.Errorf("tui output requires terminal stdin and stdout")
 	}
 	return nil
 }

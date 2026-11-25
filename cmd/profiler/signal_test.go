@@ -105,12 +105,33 @@ func TestSignalContextHandlesTermination(t *testing.T) {
 
 func TestSignalContextHandlesUserStop(t *testing.T) {
 	const childEnv = "HUATUO_PROFILER_INTERRUPT_TEST"
-	if os.Getenv(childEnv) != "1" {
-		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesUserStop$")
-		cmd.Env = append(os.Environ(), childEnv+"=1")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("signal subprocess: %v\n%s", err, output)
+	mode := os.Getenv(childEnv)
+	if mode == "" {
+		for _, mode := range []string{"stop", "terminate"} {
+			t.Run(mode, func(t *testing.T) {
+				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesUserStop$")
+				cmd.Env = append(os.Environ(), childEnv+"="+mode)
+				output, err := cmd.CombinedOutput()
+				if mode == "stop" {
+					if err != nil {
+						t.Fatalf("signal subprocess: %v\n%s", err, output)
+					}
+
+					return
+				}
+
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					t.Fatalf("expected SIGTERM exit after SIGINT, got %v\n%s", err, output)
+				}
+
+				status, ok := exitErr.Sys().(syscall.WaitStatus)
+				if !ok || !status.Signaled() || status.Signal() != syscall.SIGTERM {
+					t.Fatalf("expected SIGTERM exit after SIGINT, got %v\n%s", err, output)
+				}
+			})
 		}
+
 		return
 	}
 	var logs bytes.Buffer
@@ -126,5 +147,14 @@ func TestSignalContextHandlesUserStop(t *testing.T) {
 	}
 	if !profile.IsNormalStop(ctx) {
 		t.Fatalf("cause=%v", context.Cause(ctx))
+	}
+
+	if mode == "terminate" {
+		if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+			t.Fatal(err)
+		}
+
+		<-time.After(5 * time.Second)
+		t.Fatal("SIGTERM remained intercepted after collection stopped")
 	}
 }

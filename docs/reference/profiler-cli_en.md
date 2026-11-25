@@ -8,31 +8,48 @@ weight: 6
 
 This reference lists `profiler` parameters, defaults, and applicability. See [CLI Collection](/docs/best-practice/continuous-profiling_en.md#cli-collection) for prerequisites and examples, and [Output Formats](/docs/best-practice/continuous-profiling_en.md#output-formats) to choose a format.
 
-Both `--output-path` and `--output-format` must be explicit. The declared default for `--output-format` is `collapsed`, but validation does not allow the flag to be omitted.
+Specify `--output-format` explicitly when collecting samples. You can omit `--output-path` with `--output-format=tui`. Other formats require an output path.
 
 ## General
 
 | Parameter | Default | Applies To | Description |
 | --- | --- | --- | --- |
-| `--type`, `-t` | None | All | Observation type: `cpu` or `memory`; required |
-| `--language`, `-l` | None | All | Target language: `c`, `c++`, `go`, `java`, or `python`; required |
-| `--pid`, `-p` | None | All | Target PID; Java and Python accept comma-separated PIDs, native collection accepts at most one |
-| `--container-id` | None | All | Target container ID; native CPU combines it with `--pid` as an AND filter using the host PID; otherwise mutually exclusive with `--pid` |
-| `--duration`, `-d` | `10` | All | Total collection duration in seconds, minimum 1 |
-| `--aggr-interval` | `10` | All | Aggregation interval in seconds; cannot exceed duration |
+| `--type`, `-t` | None | Collection | Observation type: `cpu` or `memory`; required |
+| `--language`, `-l` | None | Collection | Target language: `c`, `c++`, `go`, `java`, or `python`; required |
+| `--pid`, `-p` | None | Collection | Target PID; Java and Python accept comma-separated PIDs, native collection accepts at most one |
+| `--container-id` | None | Collection | Target container ID; native CPU combines it with `--pid` as an AND filter using the host PID; otherwise mutually exclusive with `--pid` |
+| `--duration`, `-d` | `10` | Collection | Total collection duration in seconds, minimum 1 |
+| `--aggr-interval` | `10` | Collection | Aggregation interval in seconds; cannot exceed duration |
 | `--freq`, `-F` | `99` | CPU | Samples per second; Java maximum: 1000 |
-| `--output-path` | Required | All | Local file, directory, or `stdout`; Unix socket for `remote-store`. End new directory paths with `/` |
-| `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, `json`, `speedscope`, `chrometrace`, or `remote-store`; `chrometrace` needs a time-based profile and is rejected for `--type=memory`; must be explicit together with `--output-path` |
+| `--output-path` | Optional for TUI | Collection | Local file, directory, or `stdout`. Use a Unix socket for `remote-store`. End new directory paths with `/`. Specify a path explicitly for other formats |
+| `--output-format` | Required | Collection | `collapsed`, `flamegraph`, `svg`, `tui`, `json`, `speedscope`, `chrometrace` or `remote-store`. `chrometrace` requires a time-based profile |
+| `--tui-report FILE` | None | Report replay | Open a saved terminal flame graph report |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
 | `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
-| `--task-id` | Empty; generated internally for local output | All; required for `remote-store` | Stable collection task ID shared by toolstream and remote storage |
-| `--enable-pprof` | `false` | The tool itself | Serve this process's Go runtime profiles on `127.0.0.1:6000` |
+| `--task-id` | Empty; generated internally for local output | Collection (required for `remote-store`) | Stable collection task ID shared by toolstream and remote storage |
+| `--enable-pprof` | `false` | Collection | Serve this process's Go runtime profiles on `127.0.0.1:6000` |
 | `--version-format` | `text` | Version queries | Format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Show command help |
 | `--version`, `-v` | - | All | Show version and build information |
 
 These pprof endpoints describe the profiler process's own Go runtime, not the `--pid` target or Java/Python collector subprocesses. The listener is now restricted to loopback rather than all interfaces; an occupied port fails startup.
+
+## Terminal flame graph and replay
+
+`--output-format=tui` opens the flame graph in an interactive terminal after collection. Press `v` to cycle through the flame graph, the full frame list, and Top Table. Press `r` to return to the root of the current flame graph. Top Table sorts by descending `Self` by default. Press `s` to switch to descending `Total`.
+
+The flame graph starts with call stacks alone. Press `g` (Group by) in the graph or frame list to enter a comma-separated list of `cpu`, `comm`, and `pid` fields, then press Enter to apply it. For example, `cpu,comm` groups by CPU, then by task name within each CPU. A missing label appears as `field=?`. Press Ctrl+U then Enter to clear the grouping, or Esc to cancel editing.
+
+Top Table covers the entire collection. `Self` counts weight at the stack leaf. `Total` counts weight for every occurrence of the function in a stack, including recursive calls.
+
+Use `--output-path` to save a gob report when you exit with `q`. A file path replaces the existing result at that path. A directory gets an automatically named `profile_*.gob` file. Omit the path or use `stdout` or `-` for terminal viewing only.
+
+```sh
+profiler --tui-report p.gob
+```
+
+`--tui-report p.gob` opens the report at `p.gob` in an interactive terminal. Use this option on its own. Replay requires a HuaTuo gob report and identifies it by its file header, regardless of the filename extension. Open reports only from trusted sources.
 
 ## Collection
 
