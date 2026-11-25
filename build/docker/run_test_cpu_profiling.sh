@@ -148,19 +148,26 @@ run_scope() {
 }
 
 scope_results_write() {
-	local output=$1 elapsed=$2 status=$3 range file url
+	local output=$1 elapsed=$2 status=$3 report results file result
 	shift 3
-	range=$(jq -s '[.[]|select(.status=="passed")|.time_range] | {from_ms:(map(.from_ms)|min),to_ms:(map(.to_ms)|max)}' "$@") || return 1
-	for file in "$@"; do
-		if jq -e '.status=="passed"' "$file" > /dev/null; then
-			jq --argjson range "$range" '.time_range=$range' "$file" > "${file}.tmp" || return 1
-			url=$(grafana_profiling_url_build "$CPU_PROFILER_GRAFANA_BASE" "$CPU_PROFILER_REGION" "${file}.tmp") || return 1
-			jq --arg url "$url" '.grafana_url=$url' "${file}.tmp" > "$file" || return 1
-		fi
-	done
-	jq -s --arg output "$output" --argjson elapsed "$elapsed" --argjson status "$status" '
+	report=$(jq -s -L "${ROOT_DIR}/build" --arg grafana "$CPU_PROFILER_GRAFANA_BASE" \
+		--arg region "$CPU_PROFILER_REGION" --arg output "$output" \
+		--argjson elapsed "$elapsed" --argjson status "$status" '
+ include "profiling";
+ ([.[]|select(.status=="passed")|.time_range] |
+  {from_ms:(map(.from_ms)|min),to_ms:(map(.to_ms)|max)}) as $range |
+ map(if .status=="passed" then
+  .time_range=$range | .grafana_url=grafana_profiling_url($grafana; $region)
+ else . end) |
  {status:(if $status==0 and all(.[];.status=="passed") then "passed" else "failed" end),
- elapsed_seconds:$elapsed,output_dir:$output,results:.}' "$@"
+  elapsed_seconds:$elapsed,output_dir:$output,results:.}' "$@") || return 1
+	results=$(jq -c '.results[]' <<< "$report") || return 1
+	# Keep each trial report identical to its entry in the aggregate.
+	for file in "$@"; do
+		IFS= read -r result || return 1
+		printf '%s\n' "$result" > "$file" || return 1
+	done <<< "$results"
+	printf '%s\n' "$report"
 }
 
 printf 'Starting CPU profiling (%ss per scope and mode)...\n' "$CPU_PROFILER_DURATION_SECONDS" >&2

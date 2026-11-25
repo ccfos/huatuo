@@ -217,13 +217,8 @@ grafana_flamegraph_query() {
 
 grafana_profiling_url_build() {
 	local grafana=$1 region=$2 profile=$3
-	jq -er --arg grafana "$grafana" --arg region "$region" '
- $grafana+"/d/continuous-profiling?var-region="+($region|@uri)
- +"&var-hostname="+(.hostname|@uri)+"&var-task_id="+(.request_id|@uri)
- +"&var-scope="+((if .scope=="host" then "NOT _exists_:container_id" else "_exists_:container_id" end)|@uri)
- +(if .scope=="container" then "&var-container_id="+(.container_id|@uri) else "" end)
- +"&var-type="+(.profile_type|@uri)+"&from="+(.time_range.from_ms|tostring)
- +"&to="+(.time_range.to_ms|tostring)' "$profile"
+	jq -er -L "${ROOT_DIR}/build" --arg grafana "$grafana" --arg region "$region" \
+		'include "profiling"; grafana_profiling_url($grafana; $region)' "$profile"
 }
 
 require_endpoints_ready() {
