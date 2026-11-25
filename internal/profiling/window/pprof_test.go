@@ -95,8 +95,18 @@ func TestBuildProfilePreservesOffCPUReasons(t *testing.T) {
 		Aggregated: types.AggregatedProfile{
 			TimeNanos: 1,
 			LabelSets: [][]types.ProfileLabel{
-				{types.ProfileStringLabel("offcpu_reason", "blocked")},
-				{types.ProfileStringLabel("offcpu_reason", "runqueue")},
+				{
+					types.ProfileStringLabel("comm", "worker"),
+					types.ProfileCPULabel(0),
+					types.ProfileStringLabel("offcpu_reason", "blocked"),
+					types.ProfilePIDLabel(123),
+				},
+				{
+					types.ProfileStringLabel("comm", "worker"),
+					types.ProfileCPULabel(3),
+					types.ProfileStringLabel("offcpu_reason", "runqueue"),
+					types.ProfilePIDLabel(123),
+				},
 			},
 			Samples: []types.AggregatedSample{
 				{
@@ -124,14 +134,15 @@ func TestBuildProfilePreservesOffCPUReasons(t *testing.T) {
 	}
 
 	for i, sample := range p.Sample {
-		if len(sample.Label) != 1 {
-			t.Fatalf("sample %d labels = %v, want one reason", i, sample.Label)
+		if len(sample.Label) != len(w.Aggregated.LabelSets[i]) {
+			t.Fatalf("sample %d labels = %v, want full off-CPU labels", i, sample.Label)
 		}
 
-		label := sample.Label[0]
-		if p.StringTable[label.Key] != "offcpu_reason" ||
-			p.StringTable[label.Str] != w.Aggregated.LabelSets[i][0].StringValue {
-			t.Errorf("sample %d lost its off-CPU reason", i)
+		for j, label := range sample.Label {
+			want := w.Aggregated.LabelSets[i][j]
+			if p.StringTable[label.Key] != want.Name || p.StringTable[label.Str] != want.StringValue || label.Num != 0 {
+				t.Errorf("sample %d lost string label %s=%q", i, want.Name, want.StringValue)
+			}
 		}
 
 		if !reflect.DeepEqual(sample.Value, []int64{w.Aggregated.Samples[i].Value}) {

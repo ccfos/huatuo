@@ -272,7 +272,11 @@ than `=` is rejected as well, including `hostname!="*"`.
 
 Sample labels `pid`, `comm`, `cpu`, and extension labels support `=` and `=~`, combined with AND.
 For example, `{scope="host",id="job-1",pid="1234",cpu="0"}` filters by host PID and CPU 0.
-Only native on-CPU profiling records `cpu`. Omit a condition or use `=~".*"` for all values,
+Native on-CPU `cpu` identifies the CPU at sampling time. Native off-CPU `cpu` identifies the
+original switch-out CPU, preserved across blocked/runqueue phases even if the thread wakes
+or resumes on another CPU. `pid` is the host TGID; `comm` is the sampled thread's name,
+captured at switch-out for off-CPU. Historical samples without `cpu` are not assigned CPU 0.
+Omit a condition or use `=~".*"` for all values,
 including missing labels. Values `all`, `*`, and empty strings are literal. Multi-valued labels
 match their value sets; numeric labels use forms such as `4096 bytes`.
 Physical usage selects the latest snapshot before filtering, without falling back to older snapshots.

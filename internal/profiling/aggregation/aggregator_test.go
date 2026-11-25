@@ -71,7 +71,7 @@ func TestAggregatorAggregatesStackSamplesWithoutMutatingInput(t *testing.T) {
 }
 
 func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
-	for _, field := range []string{"pid", "comm", "reason", "user frames", "kernel frames"} {
+	for _, field := range []string{"pid", "comm", "cpu", "reason", "user frames", "kernel frames"} {
 		t.Run(field, func(t *testing.T) {
 			p := New()
 			left := Sample{
@@ -79,6 +79,7 @@ func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 				KernelFrames: frames("syscall"),
 				Labels: []types.ProfileLabel{
 					types.ProfileStringLabel("comm", "app"),
+					types.ProfileCPULabel(0),
 					types.ProfileStringLabel("offcpu_reason", "unknown"),
 					types.ProfilePIDLabel(12),
 				},
@@ -88,11 +89,13 @@ func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 			right.Labels = slices.Clone(left.Labels)
 			switch field {
 			case "pid":
-				right.Labels[2] = types.ProfilePIDLabel(13)
+				right.Labels[3] = types.ProfilePIDLabel(13)
 			case "comm":
 				right.Labels[0] = types.ProfileStringLabel("comm", "worker")
 			case "reason":
-				right.Labels[1] = types.ProfileStringLabel("offcpu_reason", "blocked")
+				right.Labels[2] = types.ProfileStringLabel("offcpu_reason", "blocked")
+			case "cpu":
+				right.Labels[1] = types.ProfileCPULabel(1)
 			case "user frames":
 				right.UserFrames = frames("main", "other")
 			case "kernel frames":
@@ -101,7 +104,12 @@ func TestAggregatorSeparatesStackSampleIdentity(t *testing.T) {
 
 			add(t, p, &left)
 			add(t, p, &right)
+			add(t, p, &left)
 			if len(p.profile.Samples) != 2 {
+				t.Fatal(p.profile)
+			}
+
+			if p.profile.Samples[0].Value != 2 || p.profile.Samples[1].Value != 1 {
 				t.Fatal(p.profile)
 			}
 		})

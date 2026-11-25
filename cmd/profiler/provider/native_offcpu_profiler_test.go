@@ -43,6 +43,7 @@ func TestOffCPUEventABI(t *testing.T) {
 	var event abi.ProfilerOffCPUEvent
 	require.Equal(t, uintptr(48), unsafe.Sizeof(event))
 	require.Equal(t, uintptr(40), unsafe.Offsetof(event.Kind))
+	require.Equal(t, uintptr(44), unsafe.Offsetof(event.CPU))
 }
 
 func TestOffCPUReason(t *testing.T) {
@@ -343,6 +344,54 @@ func TestEnqueueOffCPUBatch(t *testing.T) {
 		PID:    "200",
 		Reason: "blocked",
 	}])
+}
+
+func TestEnqueueOffCPULabels(t *testing.T) {
+	for kind, reason := range offCPUReasons {
+		t.Run(reason, func(t *testing.T) {
+			for _, tc := range []struct {
+				name string
+				cpu  uint32
+			}{
+				{
+					name: "CPU zero",
+					cpu:  0,
+				},
+				{
+					name: "nonzero CPU",
+					cpu:  32,
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					event := &abi.ProfilerOffCPUEvent{
+						Base: abi.ProfilerEventBase{
+							PIDTGID:   uint64(100)<<32 | 42,
+							Value:     7,
+							Userstack: -1,
+							Kernstack: -1,
+						},
+						Kind: abi.ProfilerOffCPUEventKind(kind),
+						CPU:  tc.cpu,
+					}
+					copy(event.Base.Comm[:], "worker")
+					r := &ringBufferContext{bpf: stackLookupMissBPF{}}
+					var samples []aggregation.Sample
+					require.NoError(t, r.enqueueOffCPUBatch([]any{event}, func(batch *pipeline.SampleBatch) error {
+						samples = append(samples, batch.Samples...)
+						return nil
+					}))
+					require.Len(t, samples, 1)
+					require.Equal(t, []types.ProfileLabel{
+						types.ProfileStringLabel("comm", "worker"),
+						types.ProfileCPULabel(tc.cpu),
+						types.ProfileStringLabel("offcpu_reason", reason),
+						types.ProfilePIDLabel(100),
+					}, samples[0].Labels)
+					require.Equal(t, int64(7), samples[0].Value)
+				})
+			}
+		})
+	}
 }
 
 func TestNativeOffCPUBPFConstants(t *testing.T) {

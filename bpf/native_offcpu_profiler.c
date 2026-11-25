@@ -36,7 +36,7 @@ struct offcpu_state {
 	struct profiler_event_base base;
 	__u64 phase_start_ns;
 	enum profiler_offcpu_event_kind kind;
-	__u32 pad0;
+	__u32 cpu;
 };
 
 /* A single stack map is intentional. An off-CPU interval can outlive any
@@ -146,7 +146,7 @@ offcpu_emit_event(void *ctx, const struct offcpu_state *state, __u64 end_ns,
 	profiler_copy_event_base(&event->base, &state->base);
 	event->base.value = (__s64)duration;
 	event->kind = kind;
-	event->pad0 = 0;
+	event->cpu = state->cpu;
 
 	if (bpf_perf_event_output(ctx, &profiler_output_a,
 				  COMPAT_BPF_F_CURRENT_CPU, event,
@@ -232,6 +232,7 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 		return;
 	}
 
+	state.cpu = cpu;
 	state.phase_start_ns = now;
 	if (is_runnable) {
 		state.kind = PROFILER_OFFCPU_EVENT_RUNQUEUE_YIELDED;

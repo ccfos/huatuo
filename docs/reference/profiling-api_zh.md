@@ -297,7 +297,10 @@ Grafana 使用 `/v1/profiling/flamegraph/querier.v1.QuerierService/` 下的 Pyro
 
 样本标签 `pid`、`comm`、`cpu` 及扩展标签支持 `=`、`=~`，多个条件取 AND。
 例如 `{scope="host",id="job-1",pid="1234",cpu="0"}` 按宿主机 PID 和 CPU 0 过滤。
-`cpu` 仅由 native on-CPU 采集提供。不限制时省略条件或用 `=~".*"`，后者包含缺失标签；
+native on-CPU 的 `cpu` 表示采样时所在 CPU；native off-CPU 的 `cpu` 表示最初切出时的 CPU，
+blocked/runqueue 各阶段均保留该值，即使唤醒或恢复运行时已迁移 CPU。`pid` 为宿主机 TGID，
+`comm` 为采集线程名称；off-CPU 使用切出时的名称。历史样本缺失 `cpu` 时不会补为 CPU 0。
+不限制时省略条件或用 `=~".*"`，后者包含缺失标签；
 `all`、`*`、空字符串均为真实值。多值标签按值集合匹配，数值标签格式如 `4096 bytes`。
 `physical_usage` 先选最新快照再过滤，不回退到旧快照。
 

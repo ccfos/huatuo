@@ -54,7 +54,8 @@ enum profiler_offcpu_stat {
 struct profiler_offcpu_event {
 	struct profiler_event_base base;
 	enum profiler_offcpu_event_kind kind;
-	u32 pad0;
+	/* CPU at sched-out, preserved across blocked/runqueue phases. */
+	u32 cpu;
 };
 
 BPF_ABI_EXPORT(profiler_event_base);

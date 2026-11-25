@@ -1227,8 +1227,10 @@ func TestProfileQueryOffCPUReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !slices.Contains(names.Names, "offcpu_reason") {
-		t.Fatalf("label names = %v, missing offcpu_reason", names.Names)
+	for _, name := range []string{"pid", "comm", "cpu", "offcpu_reason"} {
+		if !slices.Contains(names.Names, name) {
+			t.Fatalf("label names = %v, missing %s", names.Names, name)
+		}
 	}
 
 	values, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
@@ -1265,6 +1267,26 @@ func TestProfileQueryOffCPUReasons(t *testing.T) {
 			name:     "runqueue regexp",
 			selector: `,offcpu_reason=~"runqueue.*"`,
 			total:    24,
+		},
+		{
+			name:     "CPU zero excludes missing CPU",
+			selector: `,cpu="0"`,
+			total:    7,
+		},
+		{
+			name:     "CPU regexp excludes missing CPU",
+			selector: `,cpu=~"0|1"`,
+			total:    18,
+		},
+		{
+			name:     "CPU regexp includes missing CPU",
+			selector: `,cpu=~".*"`,
+			total:    31,
+		},
+		{
+			name:     "combined process CPU and reason",
+			selector: `,pid="123",comm="worker",cpu="0",offcpu_reason="blocked"`,
+			total:    7,
 		},
 		{
 			name:     "absent",

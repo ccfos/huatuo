@@ -162,7 +162,9 @@ Steps:
 #### Label filters
 
 The Labels bar below the target variables filters `comm`, `pid`, `cpu`, or extension labels by exact
-value. `pid` is the host PID; `cpu` is available only for native on-CPU profiling.
+value. `pid` is the host TGID. Native on-CPU `cpu` identifies the sampling CPU;
+native off-CPU `cpu` identifies the original switch-out CPU. Off-CPU also supports
+filtering by `offcpu_reason`; see the [sample label reference](/docs/reference/profiling-api_en.md#unified-flame-graph-queries).
 
 - Click `+` and select a label and value to refresh the flame graph. Conditions use AND.
 - Click an existing condition to edit it or its `×` to remove it.

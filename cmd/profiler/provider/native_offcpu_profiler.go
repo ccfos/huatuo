@@ -232,6 +232,7 @@ func (r *ringBufferContext) enqueueOffCPUBatch(events []any, enqueue func(*pipel
 		pid := uint32(event.Base.PIDTGID >> 32)
 		labels := append(
 			nativeProcessLabels(pid, taskCommString(event.Base.Comm)),
+			types.ProfileCPULabel(event.CPU),
 			types.ProfileStringLabel("offcpu_reason", offCPUReason(event.Kind)),
 		)
 		labels, err := types.NormalizeLabels(labels)

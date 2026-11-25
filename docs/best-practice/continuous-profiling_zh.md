@@ -162,7 +162,9 @@ curl -fsS -H "Authorization: Bearer ${API_TOKEN}" \
 #### 标签过滤
 
 目标变量栏下方的 Labels 过滤条支持按 `comm`、`pid`、`cpu` 或扩展标签精确过滤。
-`pid` 为宿主机 PID；`cpu` 仅适用于 native on-CPU 采集。
+`pid` 为宿主机 TGID；native on-CPU 的 `cpu` 表示采样 CPU，native off-CPU 的 `cpu`
+表示最初切出时的 CPU。off-CPU 还可按 `offcpu_reason` 过滤，具体语义见
+[样本标签说明](/docs/reference/profiling-api_zh.md#统一火焰图查询)。
 
 - 点击 `+` 选择标签和取值，立即刷新火焰图；多条条件按 AND 组合。
 - 点击已有条件可编辑，点击 `×` 删除。

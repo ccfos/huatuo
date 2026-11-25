@@ -107,15 +107,15 @@ jq -c --arg type "$PROFILE_LABEL_TYPE" '
 	>> "${HUATUO_BAMAI_TEST_TMPDIR}/labels.ndjson"
 # Shared stacks must remain separable by off-CPU reason.
 jq -c '
- .[0] as $base | [{reason:"blocked",weight:7},{reason:"runqueue",weight:11}][]
+ .[0] as $base | [{reason:"blocked",weight:7,cpu:"0"},{reason:"runqueue",weight:11,cpu:"3"}][]
  | . as $case | {index:{}},
  ($base | .tracer_id="offcpu-task"
   | .profile_data.profile_type="process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"
   | .profile_data.profile |= (
     (.string_table | length) as $key
     | .string_table[1]="offcpu"
-    | .string_table += ["offcpu_reason",$case.reason]
-    | .sample[0].label=[{key:$key,str:($key+1)}]
+    | .string_table += ["offcpu_reason",$case.reason,"pid","123","comm","worker","cpu",$case.cpu]
+    | .sample[0].label=[{key:$key,str:($key+1)},{key:($key+2),str:($key+3)},{key:($key+4),str:($key+5)},{key:($key+6),str:($key+7)}]
     | .sample[0].value=[$case.weight]))
 ' "${ROOT_DIR}/integration/testdata/test_apiserver_profile_samples.json" \
 	>> "${HUATUO_BAMAI_TEST_TMPDIR}/labels.ndjson"
@@ -216,7 +216,13 @@ done
 profile_label_offcpu_selector='{__profile_type__="process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds",scope="host",id="offcpu-task"}'
 assert_profile_labels LabelNames \
 	"$(jq -nc --arg s "$profile_label_offcpu_selector" '{matchers:[$s]}')" \
-	"$(jq -nc --argjson names "$PROFILE_LABEL_DOCUMENT_NAMES" '$names + ["offcpu_reason"] | sort')"
+	"$(jq -nc --argjson names "$PROFILE_LABEL_DOCUMENT_NAMES" '$names + ["comm","cpu","offcpu_reason","pid"] | sort')"
+for profile_label_pair in 'pid|["123"]' 'comm|["worker"]' 'cpu|["0","3"]'; do
+	profile_label_name=${profile_label_pair%%|*}
+	assert_profile_labels LabelValues \
+		"$(jq -nc --arg s "$profile_label_offcpu_selector" --arg name "$profile_label_name" '{name:$name,matchers:[$s]}')" \
+		"${profile_label_pair#*|}"
+done
 assert_profile_labels LabelValues \
 	"$(jq -nc --arg s "$profile_label_offcpu_selector" '{name:"offcpu_reason",matchers:[$s]}')" '["blocked","runqueue"]'
 assert_profile_labels LabelValues \
@@ -233,6 +239,14 @@ for profile_label_pair in 'blocked|7' 'runqueue|11'; do
 	assert_eq "$(jq -r '.flamegraph.total' "$profile_label_result")" "${profile_label_pair#*|}" \
 		"off-CPU reason nanoseconds" || fatal "incorrect weight for offcpu_reason=$profile_label_reason"
 done
+
+profile_label_result="${HUATUO_BAMAI_TEST_TMPDIR}/offcpu-combined.json"
+assert_profile_query "$PROFILE_LABEL_ADDR" "$PROFILE_LABEL_TOKEN" SelectMergeStacktraces \
+	"$(jq -nc '{profileTypeID:"process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds",
+	  labelSelector:"{scope=\"host\",id=\"offcpu-task\",pid=\"123\",comm=\"worker\",cpu=~\"0|1\",offcpu_reason=\"blocked\"}"}')" \
+	"$profile_label_result"
+assert_eq "$(jq -r '.flamegraph.total' "$profile_label_result")" 7 "off-CPU combined labels" \
+	|| fatal "off-CPU combined labels selected the wrong samples"
 
 profile_label_metadata_selector="{__profile_type__=\"${PROFILE_LABEL_TYPE}\",id=\"metadata-task\"}"
 for profile_label_pair in "profile_type|[\"${PROFILE_LABEL_TYPE}\"]" 'tracer_id|["metadata-task"]' \
