@@ -20,80 +20,42 @@ ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-huatuo-bamai}
 
 RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
 
-# Wait for Elasticsearch to be ready
-wait_for_elasticsearch() {
+elasticsearch_wait_http_ready() (
 	target_url="http://${ELASTICSEARCH_HOST}:9200/"
-
-	# Try to extract Elasticsearch address from config file
-	if [ -f "huatuo-bamai.conf" ]; then
-		# Extract Address from [Storage.Elasticsearch] section
-		# sed: range from [Storage.Elasticsearch] to next section start [
-		# grep: find Address line
-		# awk: extract text between double quotes
-		conf_addr=$(sed -n '/\[Storage\.Elasticsearch\]/,/\[.*\]/p' huatuo-bamai.conf | grep '^[[:space:]]*Address' | head -n 1 | awk -F'"' '{print $2}')
-
+	if [ -f huatuo-bamai.conf ]; then
+		conf_addr=$(awk -F '"' '
+ /^[[:space:]]*\[Storage\.Elasticsearch\][[:space:]]*(#.*)?$/ { in_storage=1; next }
+ /^[[:space:]]*\[/ { in_storage=0 }
+ in_storage && /^[[:space:]]*Address[[:space:]]*=/ { print $2; exit }
+' huatuo-bamai.conf) || exit 1
 		if [ -n "$conf_addr" ]; then
-			echo "Found Elasticsearch address in config: $conf_addr"
-			target_url="${conf_addr}/"
+			target_url="${conf_addr%/}/"
 		fi
 	fi
 
-	args="-s -D- -m15 -w '%{http_code}' ${target_url}"
-	if [ -n "${ELASTIC_PASSWORD}" ]; then
-		args="$args -u elastic:${ELASTIC_PASSWORD}"
+	set -- --silent --show-error --connect-timeout 2 --max-time 15 \
+		--write-out '\nHTTP %{http_code}'
+	if [ -n "$ELASTIC_PASSWORD" ]; then
+		set -- "$@" --user "elastic:${ELASTIC_PASSWORD}"
 	fi
+	# curl retries do not cover every non-200 response on the supported baseline.
+	timeout 180 sh -c '
+ while :; do
+  response=$(curl "$@") && [ "${response##* }" = 200 ] && exit 0
+  printf "%s\n" "$response" >&2
+  sleep 1
+ done
+' sh "$@" "$target_url" || {
+		result=$?
+		printf 'Elasticsearch at %s did not return HTTP 200 within 180s (exit %s).\n' \
+			"$target_url" "$result" >&2
+		exit "$result"
+	}
+)
 
-	result=1
-	output=""
-
-	# retry for up to 180 seconds
-	for sec in $(seq 1 180); do
-		exit_code=0
-		output=$(eval "curl $args") || exit_code=$?
-		# echo "exec curl $args, exit code: $exit_code, output: $output"
-		if [ $exit_code -ne 0 ]; then
-			result=$exit_code
-		fi
-
-		# Extract the last three characters of the output to check the HTTP status code
-		http_code=$(echo "$output" | tail -c 4)
-		if [ "$http_code" -eq 200 ]; then
-			result=0
-			break
-		fi
-
-		echo "Waiting for Elasticsearch ready... ${sec}s"
-		sleep 1
-	done
-
-	if [ $result -ne 0 ] && [ "$http_code" -ne 000 ]; then
-		echo "$output" | head -c -3
-	fi
-
-	if [ $result -ne 0 ]; then
-		case $result in
-		6)
-			echo 'Could not resolve host. Is Elasticsearch running?'
-			;;
-		7)
-			echo 'Failed to connect to host. Is Elasticsearch healthy?'
-			;;
-		28)
-			echo 'Timeout connecting to host. Is Elasticsearch healthy?'
-			;;
-		*)
-			echo "Connection to Elasticsearch failed. Exit code: ${result}"
-			;;
-		esac
-
-		exit $result
-	fi
-}
-
-wait_for_elasticsearch
-sleep 5 # Waiting for initialization of Elasticsearch built-in users
+elasticsearch_wait_http_ready || exit $?
 echo "Elasticsearch is ready."
 
 # Run huatuo-bamai
-cd $RUN_PATH
+cd "$RUN_PATH" || exit 1
 exec ./bin/huatuo-bamai --region pre-test --config huatuo-bamai.conf
