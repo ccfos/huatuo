@@ -101,7 +101,7 @@ run_profile_case() {
 		-type f -size +0c -print -quit)
 	[[ -n "${folded_file}" ]] \
 		|| fatal "no folded output for runtime=${runtime} container ID"
-	grep -qE "${CHAIN_PATTERN}" "${folded_file}" \
+	assert_folded_stack present "$CHAIN_PATTERN" "$folded_file" \
 		|| fatal "native stack missing for runtime=${runtime} container ID"
 }
 
@@ -125,8 +125,8 @@ assert_outside_pid_excluded() (
 		--pid "${outside_pid}" --container-id "${container_id}"
 	assert_process_message "${PROFILER_OUTPUT_FD}" "${PROFILER_OUT}" 'data reading loop started'
 	assert_profiler_exit 0
-	assert_process_alive "${outside_pid}" "${outside_start_time}" "outside workload during filter check"
-	assert_process_alive "${container_pid}" "${container_start_time}" "container workload during filter check"
+	assert_process_alive "${outside_pid}" "${outside_start_time}" "outside workload during filter check" || fatal "workload process identity validation failed"
+	assert_process_alive "${container_pid}" "${container_start_time}" "container workload during filter check" || fatal "workload process identity validation failed"
 	[[ ! -s ${PROFILER_STACKS} ]] || fatal "combined PID/container filters accepted a nonmember PID"
 )
 

@@ -144,7 +144,7 @@ assert_profiler_offcpu_migration() {
 		--log-level debug --log-file stdout --output-format collapsed --output-path "${output_dir}" \
 		> "${output_dir}/profiler.out" 2> "${output_dir}/profiler.err" &
 	profiler_collector_pid=$!
-	wait_until 10 0.1 profiler_ready "${output_dir}/profiler.out" \
+	wait_until 10 0.1 profiler_read_loop_started "${output_dir}/profiler.out" \
 		|| fatal "migration profiler did not become ready; see ${output_dir}/profiler.out"
 
 	kill -CONT "${profiler_target_pid}"

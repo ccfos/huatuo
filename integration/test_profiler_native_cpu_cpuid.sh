@@ -58,15 +58,14 @@ compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
 # --- helper ------------------------------------------------------------------
 
-# verify_cpuid_chain <pin_cpu> <cpuid> <expect_chain>
+# run_cpuid_case <pin_cpu> <cpuid> <expect_chain>
 #   pin_cpu:       CPU to pin the fixture process to
 #   cpuid:         --cpuid value passed to the profiler
 #   expect_chain:  "present" or "absent"
-verify_cpuid_chain() {
+run_cpuid_case() {
 	local pin_cpu=$1 cpuid=$2 expect_chain=$3
 	local out_dir="${FIXTURE_OUTDIR}/${pin_cpu}"
-	local folded_glob="${out_dir}/perf_*.folded"
-	local match_count=0
+	local -a folded_files=()
 
 	log_info "fixture on CPU${pin_cpu}, profiler --cpuid ${cpuid}, expect chain ${expect_chain}"
 	mkdir -p "${out_dir}"
@@ -85,27 +84,15 @@ verify_cpuid_chain() {
 	stop_by_pid "${TARGET_PID}" 5
 	TARGET_PID=""
 
-	if compgen -G "${folded_glob}" > /dev/null; then
-		match_count=$(grep -hE "${CHAIN_PATTERN}" ${folded_glob} | wc -l) || true
-	elif [[ "${expect_chain}" == "present" ]]; then
-		fatal "no folded file produced"
-	fi
+	mapfile -t folded_files < <(find "$out_dir" -maxdepth 1 -type f -name 'perf_*.folded')
+	assert_folded_stack "$expect_chain" "$CHAIN_PATTERN" "${folded_files[@]}" \
+		|| fatal "CPU ${pin_cpu}: unexpected stack for --cpuid ${cpuid}"
 
-	case "${expect_chain}" in
-	present)
-		[[ "${match_count}" -ge 1 ]] || fatal "chain not found (matches=${match_count})"
-		log_info "chain matched (${match_count} lines)"
-		;;
-	absent)
-		[[ "${match_count}" -eq 0 ]] || fatal "chain unexpectedly found (matches=${match_count})"
-		log_info "chain absent as expected"
-		;;
-	esac
 }
 
 # --- tests -------------------------------------------------------------------
 
-verify_cpuid_chain 0 0 present
-verify_cpuid_chain 1 0 absent
+run_cpuid_case 0 0 present
+run_cpuid_case 1 0 absent
 
 log_info "all cpuid tests passed"

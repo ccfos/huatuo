@@ -49,7 +49,8 @@ cpu_reference_ready() {
 		cat "${CPU_REFERENCE_DIR}/cadvisor.log" >&2
 		fatal "cAdvisor exited before readiness; inspect ${CPU_REFERENCE_DIR}/cadvisor.log"
 	fi
-	curl --noproxy '*' -fsS --max-time 3 "${CPU_REFERENCE_URL}/healthz" > /dev/null 2> "${CPU_REFERENCE_DIR}/ready.err"
+	curl --noproxy '*' -fsS "${CURL_TIMEOUT[@]}" --max-time 3 "${CPU_REFERENCE_URL}/healthz" \
+		> /dev/null 2> "${CPU_REFERENCE_DIR}/ready.err"
 }
 
 cpu_reference_stop() {

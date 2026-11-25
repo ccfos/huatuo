@@ -120,7 +120,7 @@ test_identity_cooldown() {
 		finish_case
 		return
 	fi
-	assert_blk_device_health_md_observer_ready "${EVIDENCE_EVENT}" || fatal "replacement MD observer is not ready"
+	blk_device_health_md_probe_observer "${EVIDENCE_EVENT}" || fatal "replacement MD observer is not ready"
 	now=$("${EVIDENCE_PYTHON}" -c 'import time; print(time.monotonic())')
 	if ! awk -v now="${now}" -v ended="${ended}" 'BEGIN { exit !(now < ended + 60) }'; then
 		log_info "NOT_RUN H09 same-name cooldown: replacement setup exceeded the established old cooldown"
@@ -176,7 +176,7 @@ test_identity() {
 
 	recreate_identity
 	before=$(command_count)
-	assert_blk_device_health_md_observer_ready "${EVIDENCE_EVENT}" || fatal "replacement MD observer is not ready"
+	blk_device_health_md_probe_observer "${EVIDENCE_EVENT}" || fatal "replacement MD observer is not ready"
 	assert_evidence_command_count "${before}" "H09 observer check unexpectedly collected member evidence"
 	fault_member
 	wait_until 20 0.2 blk_device_health_evidence_saved ok || fatal "H09 replacement member lacks successful evidence; inspect saved events and command journal"

@@ -68,10 +68,16 @@ restore_freeze_queue() {
 	printf 'freeze_restored=%s\n' "${freeze_requests_original}" >> "${FREEZE_WORK}/resources.txt"
 }
 
-assert_freeze_counter() {
+freeze_counter_read() {
 	local phase=$1 input="${freeze_work_dir}/freeze-${1}.metrics"
-	huatuo_bamai_metrics > "${input}" || fatal "H05 cannot scrape freeze Counter during ${phase}"
-	io_test_metrics_json "${input}" > "${input}.json" || fatal "H05 invalid metric exposition during ${phase}"
+	huatuo_bamai_metrics > "${input}" || {
+		printf 'H05 cannot scrape freeze Counter during %s; inspect %s.\n' "$phase" "$input" >&2
+		return 1
+	}
+	io_test_metrics_json "${input}" > "${input}.json" || {
+		printf 'H05 invalid metric exposition during %s; inspect %s.\n' "$phase" "$input" >&2
+		return 1
+	}
 	freeze_count=$(jq -er --arg disk "${freeze_disk}" '
 		[.[] | select(.name == "huatuo_bamai_blk_device_health_freeze_total")] as $samples
 		| if all($samples[];
@@ -84,30 +90,38 @@ assert_freeze_counter() {
 			and all($samples | group_by(.labels)[]; length == 1)
 		then [$samples[] | select(.labels.disk == $disk) | .value] | .[0] // 0
 		else error("invalid freeze Counter type, labels or count") end
-	' "${input}.json") || fatal "H05 invalid freeze Counter during ${phase}; inspect ${input}"
-	if (($# == 2)); then
-		awk -v value="${freeze_count}" -v before="$2" 'BEGIN { exit !(value > before) }'
-	fi
+	' "${input}.json") || {
+		printf 'H05 invalid freeze Counter during %s; inspect %s.\n' "$phase" "$input" >&2
+		return 1
+	}
 }
 
 assert_freeze_restored_and_idle() {
 	local changed=$1 restored attempt
 	# Restoration can freeze again; compare later scrapes with its cumulative value.
-	assert_freeze_counter restored
+	freeze_counter_read restored || return 1
 	restored=${freeze_count}
 	awk -v value="${restored}" -v before="${changed}" 'BEGIN { exit !(value >= before) }' \
-		|| fatal "H05 freeze Counter regressed after restoring nr_requests"
+		|| {
+			printf 'H05 freeze Counter regressed after restoring nr_requests: before=%s, after=%s.\n' "$changed" "$restored" >&2
+			return 1
+		}
 	# Queue restoration has completed; each scrape reads the current BPF map.
 	for attempt in 1 2; do
-		assert_freeze_counter "idle-${attempt}"
+		freeze_counter_read "idle-${attempt}" || return 1
 		[[ ${freeze_count} == "${restored}" ]] \
-			|| fatal "H05 idle scrape ${attempt} changed the freeze Counter: expected=${restored} actual=${freeze_count}; inspect ${freeze_work_dir}/freeze-idle-${attempt}.metrics"
+			|| {
+				printf 'H05 idle scrape %s changed the freeze Counter: expected=%s actual=%s; inspect %s.\n' \
+					"$attempt" "$restored" "$freeze_count" "${freeze_work_dir}/freeze-idle-${attempt}.metrics" >&2
+				return 1
+			}
 	done
 }
 
 freeze_counter_ready() {
 	freeze_attempt=$((freeze_attempt + 1))
-	if assert_freeze_counter "changed-${freeze_attempt}" "${freeze_before}"; then return 0; fi
+	freeze_counter_read "changed-${freeze_attempt}" || fatal "cannot read freeze Counter during qualification"
+	if awk -v value="$freeze_count" -v before="$freeze_before" 'BEGIN { exit !(value > before) }'; then return 0; fi
 	freeze_target_is_owned || fatal "H05 target ownership changed during startup qualification"
 	timeout --kill-after=2s 5s bash -c 'printf "%s\n" "$2" > "$1"' _ "${freeze_queue}" "${freeze_next}" \
 		|| fatal "H05 owned queue change failed during startup qualification"
@@ -133,7 +147,7 @@ test_freeze_counter() {
 		return
 	fi
 	freeze_changed=$((freeze_requests_original / 2))
-	assert_freeze_counter baseline
+	freeze_counter_read baseline || fatal "cannot read freeze Counter baseline"
 	freeze_before=${freeze_count}
 	printf 'freeze_queue=%s original=%s requested=%s\n' \
 		"${freeze_queue}" "${freeze_requests_original}" "${freeze_changed}" >> "${FREEZE_WORK}/resources.txt"
@@ -153,7 +167,7 @@ test_freeze_counter() {
 		|| fatal "H05 confirmed queue changes did not increase the freeze Counter within 30s"
 	freeze_changed=${freeze_count}
 	restore_freeze_queue || fatal "H05 queue restoration failed after freeze check"
-	assert_freeze_restored_and_idle "${freeze_changed}"
+	assert_freeze_restored_and_idle "${freeze_changed}" || fatal "freeze Counter did not settle after restoration"
 	log_info "H05: owned queue change increases freeze Counter and idle scrapes preserve it"
 }
 

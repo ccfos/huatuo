@@ -166,7 +166,13 @@ for language in c c++ go java python; do
 		memory/physical_usage) expected_type=memory:physical_usage:bytes:space:bytes ;;
 		memory/*) expected_type=memory:alloc_space:bytes:space:bytes ;;
 		esac
-		verify_result "$JOB_ID" "$matrix_minimum_windows" "$expected_type"
+		wait_job "$JOB_ID" completed
+		profiling_results_fetch "$JOB_ID" "$HUATUO_BAMAI_TEST_TMPDIR" "$expected_type" \
+			|| fatal "failed to fetch profiling results"
+		jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$JOB_ID.json" | assert_profile_windows - "$matrix_minimum_windows" "$expected_type" \
+			|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$JOB_ID.json"
+		assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$JOB_ID.json" \
+			|| fatal "profiling flamegraph validation failed"
 		if [[ $typ/$mode == cpu/oncpu ]]; then
 			assert_matrix_oncpu_samples "${HUATUO_BAMAI_TEST_TMPDIR}/raw-${JOB_ID}.json"
 		fi

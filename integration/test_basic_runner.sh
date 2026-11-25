@@ -124,7 +124,8 @@ assert_runner_result() {
 }
 
 runner_prepare_fixture() {
-	mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,_output}
+	mkdir -p "${RUNNER_FIXTURE}"/{integration,e2e,build,_output}
+	cp "${ROOT_DIR}/build/"lib_profiling_assert.sh "${RUNNER_FIXTURE}/build/"
 	cp "${ROOT_DIR}/integration/"{run.sh,env.sh,lib.sh,lib_cgroup.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${RUNNER_FIXTURE}/integration/"
 	cp "${ROOT_DIR}/e2e/"{run.sh,lib.sh} "${RUNNER_FIXTURE}/e2e/"
 	mkdir -p "${RUNNER_FIXTURE}/_output/conf"
@@ -743,7 +744,8 @@ EOF
 assert_runner_report_write_failure() (
 	local mode=${1:-scheduling}
 	local fixture="${RUNNER_FIXTURE}/report-failure-${mode}" pid="" status=0 case_pid child_pid report
-	mkdir -p "${fixture}/integration" "${fixture}/_output"
+	mkdir -p "${fixture}/integration" "${fixture}/_output" "${fixture}/build"
+	cp "${RUNNER_FIXTURE}/build/"lib_profiling_assert.sh "${fixture}/build/"
 	cp "${RUNNER_FIXTURE}/integration/"{run.sh,lib.sh,lib_cgroup.sh,lib_runner.sh,lib_runner_report.sh,runner_worker.sh} "${fixture}/integration/"
 	cp "${RUNNER_FIXTURE}/integration/env.sh" "${fixture}/integration/env.sh"
 	# Keep real scheduling and report I/O, while observing resource teardown.

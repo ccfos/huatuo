@@ -71,7 +71,7 @@ run_wait_metrics() {
 				fi
 			fi
 		else
-			assert_io_test_disk_identity "${wait_disk}" || fatal "IOCOST test disk identity changed"
+			io_test_disk_identity_matches "${wait_disk}" || fatal "IOCOST test disk identity changed"
 			io_test_save_cost_settings "${wait_cgroup_root}" "${wait_control_prefix}" "${wait_device_number}" || return 1
 			if [[ ${limited} == 1 ]]; then
 				printf '%s ctrl=user model=linear rbps=32768 rseqiops=8 rrandiops=8 wbps=32768 wseqiops=8 wrandiops=8\n' \
@@ -248,13 +248,13 @@ run_wait_metrics() {
 			cat "${wait_parent}/io.max" "${wait_leaf}/io.max" > "${directory}/${phase}/limits.txt"
 			assert_wait_workload_completed read "${directory}/${phase}" 8
 			status=0
-			assert_io_wait_slowdown "${directory}/baseline.json" "${directory}/${phase}/limited.json" \
+			io_wait_compare_workload_durations "${directory}/baseline.json" "${directory}/${phase}/limited.json" \
 				> "${directory}/${phase}/timing.json" || status=$?
 			if ((status == 3)); then
 				log_info "NOT_RUN ${phase}-dominant waits: external slowdown was not confirmed"
 			else
 				((status == 0)) || fatal "invalid ${phase}-dominant workload receipt"
-				assert_io_wait_metrics --collector blk_throtl --disk "${wait_disk}" --operation read \
+				io_wait_analyze_metrics --collector blk_throtl --disk "${wait_disk}" --operation read \
 					--positive-windows 1 --container-groups 0 --require-other \
 					"${directory}/${phase}"/sample-*.metrics > "${directory}/${phase}/summary.json" \
 					|| fatal "confirmed ${phase}-dominant IO lacks healthy waiting metrics"
@@ -288,7 +288,7 @@ run_wait_metrics() {
 			|| fatal "successful discard did not increase the owned disk discard count"
 		huatuo_bamai_metrics > "${directory}/after.metrics"
 		for wait_operation in read write; do
-			assert_io_wait_metrics --collector blk_iocost --disk "${wait_disk}" --operation "${wait_operation}" \
+			io_wait_analyze_metrics --collector blk_iocost --disk "${wait_disk}" --operation "${wait_operation}" \
 				--container-groups 0 --idle "${directory}/after.metrics" \
 				> "${directory}/${wait_operation}-summary.json" \
 				|| fatal "discard produced ${wait_operation} waits or unhealthy IOCOST output"
@@ -302,7 +302,7 @@ run_wait_metrics() {
 		mapfile -t samples < "${directory}/before.diskstats"
 		read -ra fields <<< "${samples[0]}"
 		if ((io_test_disk_exclusive)) && [[ ${samples[0]} == "${samples[1]}" && ${fields[8]} == 0 ]]; then
-			assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+			io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 				--operation "${wait_operation}" --idle "${directory}/before.metrics" \
 				> "${directory}/before-summary.json" || status=$?
 			((status != 3)) || log_info "NOT_RUN W07 pre-load isolation: collector had no confirmed empty window"
@@ -348,7 +348,7 @@ run_wait_metrics() {
 		read -ra before_fields <<< "${before}"
 		read -ra after_fields <<< "${after}"
 		[[ ${before} == "${after}" && ${before_fields[8]} == 0 && ${after_fields[8]} == 0 ]] || return 1
-		assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+		io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 			--operation "${wait_operation}" --idle "${wait_case_dir}/idle-${wait_quiet}.metrics" \
 			> "${wait_case_dir}/idle-summary.json" || idle_status=$?
 		((idle_status != 3)) || return 1
@@ -426,7 +426,7 @@ run_wait_metrics() {
 		wait_worker=""
 		printf 'time=%s workload_exit=%s\n' "$(date +%s.%N)" "${status}" > "${directory}/workload-completed.txt"
 		((status == 0)) || fatal "retirement workload failed (${status}); inspect ${directory}"
-		assert_io_wait_slowdown "${wait_case_dir}/baseline.json" "${directory}/limited.json" \
+		io_wait_compare_workload_durations "${wait_case_dir}/baseline.json" "${directory}/limited.json" \
 			> "${directory}/timing.json" \
 			|| fatal "retirement workload did not establish a controlled slowdown; inspect ${directory}"
 		io_test_remove_cgroup "${wait_leaf}" || fatal "completed IO retained the owned cgroup ${wait_leaf}"
@@ -442,7 +442,7 @@ run_wait_metrics() {
 			report_wait_retirement "${directory}" "${wait_operation}" || true
 			return "${status}"
 		fi
-		assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+		io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 			--operation "${wait_operation}" --positive-windows 1 --container-groups 0 --require-other \
 			"${directory}/first.metrics" > "${directory}/first-summary.json" \
 			|| {
@@ -457,7 +457,7 @@ run_wait_metrics() {
 			report_wait_retirement "${directory}" "${wait_operation}" || true
 			return "${status}"
 		fi
-		assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+		io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 			--operation "${wait_operation}" --container-groups 0 --idle "${directory}/next.metrics" \
 			> "${directory}/next-summary.json" \
 			|| {
@@ -496,7 +496,7 @@ run_wait_metrics() {
 		wait_control 1 "${wait_operation}" || fatal "cannot limit the replacement cgroup"
 		assert_wait_workload_completed "${wait_operation}" "${exit_dir}/replacement" 8
 		assert_replacement_wait_baseline "${exit_dir}/replacement"
-		assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+		io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 			--operation "${wait_operation}" --positive-windows 1 --container-groups 0 --require-other \
 			"${exit_dir}/replacement"/sample-*.metrics > "${exit_dir}/replacement/summary.json" \
 			|| fatal "waiting output did not recover after active cgroup exit"
@@ -528,7 +528,7 @@ run_wait_metrics() {
 			attempt=$((attempt + 1))
 			warmup_dir="${WAIT_WORK}/${wait_collector}-warmup-${attempt}"
 			assert_wait_workload_completed read "${warmup_dir}" 8
-			assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" --operation read \
+			io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" --operation read \
 				--container-groups 0 "${warmup_dir}"/sample-*.metrics > "${warmup_dir}/summary.json" \
 				|| fatal "invalid ${wait_collector} output during startup qualification"
 			if io_wait_host_positive "${warmup_dir}/summary.json"; then
@@ -554,12 +554,12 @@ run_wait_metrics() {
 			((workload_status == 0)) || fatal "unlimited ${wait_collector}/${wait_operation} workload failed (${workload_status})"
 			wait_control 1 "${wait_operation}"
 			assert_wait_workload_completed "${wait_operation}" "${wait_case_dir}"
-			assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+			io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 				--operation "${wait_operation}" --container-groups 0 --idle "${wait_case_dir}/before.metrics" \
 				> "${wait_case_dir}/unlimited-summary.json" \
 				|| fatal "unlimited ${wait_collector}/${wait_operation} IO produced waits or unhealthy collector output"
 			timing_status=0
-			assert_io_wait_slowdown "${wait_case_dir}/baseline.json" "${wait_case_dir}/limited.json" \
+			io_wait_compare_workload_durations "${wait_case_dir}/baseline.json" "${wait_case_dir}/limited.json" \
 				> "${wait_case_dir}/timing.json" || timing_status=$?
 			if ((timing_status == 3)); then
 				log_info "SKIP ${wait_collector}/${wait_operation}: external control effect was not established; see ${wait_case_dir}"
@@ -567,7 +567,7 @@ run_wait_metrics() {
 				continue
 			fi
 			((timing_status == 0)) || fatal "cannot validate ${wait_collector}/${wait_operation} workload evidence"
-			assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+			io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 				--operation "${wait_operation}" --positive-windows 2 --container-groups 0 --require-other \
 				"${wait_case_dir}"/sample-*.metrics > "${wait_case_dir}/summary.json" \
 				|| fatal "confirmed sustained ${wait_collector}/${wait_operation} waits violate the public metric contract"
@@ -585,7 +585,7 @@ run_wait_metrics() {
 				wait_control 1 "${wait_operation}"
 				assert_wait_workload_completed "${wait_operation}" "${wait_case_dir}/recreated" 8
 				assert_replacement_wait_baseline "${wait_case_dir}/recreated"
-				assert_io_wait_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
+				io_wait_analyze_metrics --collector "${wait_collector}" --disk "${wait_disk}" \
 					--operation "${wait_operation}" --positive-windows 1 --container-groups 0 --require-other \
 					"${wait_case_dir}/recreated"/sample-*.metrics > "${wait_case_dir}/recreated/summary.json" \
 					|| fatal "${wait_collector} did not resume after replacing the completed cgroup"

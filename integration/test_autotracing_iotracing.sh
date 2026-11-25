@@ -209,9 +209,10 @@ cleanup_iotracing() {
 	exit "${status}"
 }
 
-check_execution_budget() {
-	((SECONDS < IOTRACING_DEADLINE)) && return 0
-	log_error "iotracing execution budget exhausted: scenario=${scenario:-setup} phase=${phase:-setup}; entering cleanup"
+require_execution_budget() {
+	local deadline=$1 description=$2
+	((SECONDS < deadline)) && return 0
+	log_error "${description}: execution budget exhausted; entering cleanup"
 	exit 124
 }
 
@@ -336,7 +337,7 @@ run_iotracing_case() {
 	rm -f "${IOTRACING_EVENT}"
 	rm -f "${result_dir}/capture.pid" "${result_dir}/capture.err"
 	write_diskstats 0
-	check_execution_budget
+	require_execution_budget "$IOTRACING_DEADLINE" "iotracing scenario=${scenario:-setup} phase=${phase:-setup}"
 	log_info "${scenario}: expected=${expected_reason} events=${expected_count} device=${device} capture_duration=${capture_duration}s"
 	HUATUO_IOTRACING_CAPTURE_DIR="${result_dir}" io_test_start_bamai \
 		write_config_bamai_iotracing_case \
@@ -364,7 +365,7 @@ run_iotracing_case() {
 		esac
 	}
 	iotracing_case_phase_poll() {
-		check_execution_budget
+		require_execution_budget "$IOTRACING_DEADLINE" "iotracing scenario=${scenario:-setup} phase=${phase:-setup}"
 		record_content_progress
 		iotracing_case_phase_ready && return 0
 		if [[ ${phase} == trigger ]]; then

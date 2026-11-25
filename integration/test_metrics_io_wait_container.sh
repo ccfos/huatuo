@@ -83,7 +83,7 @@ container_wait_control() {
 			fi
 		done
 	elif [[ ${container_wait_collector} == blk_iocost ]]; then
-		assert_io_test_disk_identity "${container_wait_disk}" || return 1
+		io_test_disk_identity_matches "${container_wait_disk}" || return 1
 		io_test_save_cost_settings "${container_wait_cgroup_root}" "${container_wait_control_prefix}" "${container_wait_device_number}" || return 1
 		if [[ ${enabled} == 1 ]]; then
 			printf '%s ctrl=user model=linear rbps=32768 rseqiops=8 rrandiops=8 wbps=32768 wseqiops=8 wrandiops=8\n' \
@@ -318,7 +318,7 @@ assert_container_wait_ready() {
 		assert_container_wait_jobs_completed
 		huatuo_bamai_metrics > "${directory}/after.metrics" || fatal "wait startup scrape failed"
 		status=0
-		assert_io_wait_metrics --collector "${container_wait_collector}" --disk "${container_wait_disk}" --operation read \
+		io_wait_analyze_metrics --collector "${container_wait_collector}" --disk "${container_wait_disk}" --operation read \
 			--warmup --positive-windows 1 --expected-containers "${expected}" --namespace "${POD_NAMESPACE}" \
 			--require-other "${directory}/after.metrics" > "${directory}/summary.json" || status=$?
 		if ((status == 0)); then
@@ -338,7 +338,7 @@ assert_container_wait_inputs() {
 	[[ -n ${directory} && -s ${directory}/after.metrics ]] || fatal "container waits lack a qualified measurement window"
 	for participant in 0 1 other; do
 		timing_status=0
-		assert_io_wait_slowdown "${WAIT_WORK}/${container_wait_collector}/baseline/${participant}.json" \
+		io_wait_compare_workload_durations "${WAIT_WORK}/${container_wait_collector}/baseline/${participant}.json" \
 			"${directory}/${participant}.json" > "${directory}/timing-${participant}.json" || timing_status=$?
 		if ((timing_status == 3)); then
 			unconfirmed=1

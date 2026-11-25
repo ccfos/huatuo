@@ -426,5 +426,5 @@ start_case() {
 	chmod +x "${evidence_case_dir}/bamai"
 	HUATUO_BAMAI_BIN="${evidence_case_dir}/bamai"
 	io_test_start_bamai write_config_bamai_blk_device_health --region dev --disable-kubelet --log-debug
-	assert_blk_device_health_md_observer_ready "${EVIDENCE_EVENT}" || fatal "MD observer is not ready for evidence injection"
+	blk_device_health_md_probe_observer "${EVIDENCE_EVENT}" || fatal "MD observer is not ready for evidence injection"
 }

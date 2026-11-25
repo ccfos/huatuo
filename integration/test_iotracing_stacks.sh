@@ -95,7 +95,7 @@ trap cleanup EXIT
 record_resources
 
 stacks_set_completion_delay() {
-	assert_io_test_disk_identity "${stacks_disk}" || fatal "T06 SCSI disk ownership changed while setting its delay"
+	io_test_disk_identity_matches "${stacks_disk}" || fatal "T06 SCSI disk ownership changed while setting its delay"
 	printf '%s\n' "${STACKS_DELAY_NS}" 2>> "${TOOL_WORK_DIR}/delay-setting.log" > "${STACKS_SCSI_CONTROLS}/ndelay"
 }
 
@@ -109,7 +109,7 @@ stacks_device="/dev/${stacks_disk}"
 record_resources
 # Discovery commands can remain briefly after udev settles.
 timeout --kill-after=1s 10s udevadm settle --timeout=8 || fatal "T06 udev did not settle before setting the SCSI delay"
-assert_io_test_disk_identity "${stacks_disk}" || fatal "T06 SCSI disk ownership changed before setting its delay"
+io_test_disk_identity_matches "${stacks_disk}" || fatal "T06 SCSI disk ownership changed before setting its delay"
 [[ -w ${STACKS_SCSI_CONTROLS}/ndelay ]] || skip "T06 BLOCKED: scsi_debug ndelay control is unavailable"
 wait_until 2 0.1 stacks_set_completion_delay || fatal "T06 cannot set scsi_debug completion delay; inspect delay-setting.log"
 [[ $(< "${STACKS_SCSI_CONTROLS}/ndelay") == "${STACKS_DELAY_NS}" ]] \
@@ -183,7 +183,7 @@ capture_stacks() {
 	local name=$1 maximum=$2 target_pid started finished observed=0 workload_status=0
 	local output="${TOOL_WORK_DIR}/${name}.json"
 	# Clear only the private device cache before each independent capture.
-	assert_io_test_disk_identity "${stacks_disk}" || fatal "T06 SCSI disk ownership changed before capture"
+	io_test_disk_identity_matches "${stacks_disk}" || fatal "T06 SCSI disk ownership changed before capture"
 	timeout --kill-after=1s 5s blockdev --flushbufs "${stacks_device}" \
 		|| fatal "T06 cannot clear its delayed device cache"
 	read -r started _ < /proc/uptime

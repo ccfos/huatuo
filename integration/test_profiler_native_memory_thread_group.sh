@@ -62,7 +62,7 @@ kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=$
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}") &
 PROFILER_PID=$!
 
-wait_until 15 1 profiler_ready "${TOOL_OUT}" || fatal "profiler did not start the read loop"
+wait_until 15 1 profiler_read_loop_started "${TOOL_OUT}" || fatal "profiler did not start the read loop"
 kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture pid=${TARGET_PID}"
 
 wait "${PROFILER_PID}" || fatal "profiler exited non-zero (see ${TOOL_ERR})"

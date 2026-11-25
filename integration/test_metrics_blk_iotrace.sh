@@ -167,7 +167,7 @@ run_host_latency() {
 			"${blk_iotrace_device}" "${operation}" "${size}" "${before[*]}" > "${output}.diskstats.log"
 		if [[ ${operation} == write ]]; then
 			((io_test_disk_writable == 1)) || fatal "test disk is not authorized for writes: ${blk_iotrace_device}"
-			assert_io_test_disk_identity "${blk_iotrace_disk}" \
+			io_test_disk_identity_matches "${blk_iotrace_disk}" \
 				|| fatal "configured test disk identity changed: ${blk_iotrace_disk}"
 			index=4
 			flush=1

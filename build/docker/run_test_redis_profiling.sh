@@ -75,21 +75,25 @@ memtier_start() {
 	kubernetes_pod_wait_ready "$output_dir" "$namespace" memtier > /dev/null
 }
 
+memtier_progress_read() {
+	local output_dir=$1 namespace=$2
+	kubectl --request-timeout=10s -n "$namespace" get pod memtier -o json > "${output_dir}/benchmark.response.json" \
+		&& kubectl --request-timeout=10s -n "$namespace" logs memtier > "${output_dir}/benchmark.log" \
+		&& kubectl --request-timeout=10s -n "$namespace" exec memtier -- sh -c 'wc -l < /tmp/completed'
+}
+
 assert_memtier_progress() {
-	local output_dir=$1 namespace=$2 previous=${3:-0} batches
-	kubectl --request-timeout=10s -n "$namespace" get pod memtier -o json > "${output_dir}/benchmark.response.json" || return 1
-	kubectl --request-timeout=10s -n "$namespace" logs memtier > "${output_dir}/benchmark.log" || return 1
+	local output_dir=$1 previous=$2 batches=$3
 	jq -e '.status.phase == "Running" and all(.status.containerStatuses[]; .ready and .restartCount == 0)' \
 		"${output_dir}/benchmark.response.json" > /dev/null || {
-		printf 'Expected running memtier without restarts; inspect %s/benchmark.response.json and benchmark.log.\n' "$output_dir" >&2
+		printf 'Expected running memtier without restarts; inspect %s/benchmark.response.json.\n' "$output_dir" >&2
 		return 1
 	}
-	batches=$(kubectl --request-timeout=10s -n "$namespace" exec memtier -- sh -c 'wc -l < /tmp/completed') || return 1
 	if [[ ! $batches =~ ^[0-9]+$ ]] || ((batches <= previous)); then
 		printf 'Expected memtier batches above %s, got %s; inspect %s/benchmark.log.\n' "$previous" "$batches" "$output_dir" >&2
 		return 1
 	fi
-	printf '%s\n' "$batches"
+	return 0
 }
 
 memtier_stop() {
@@ -97,19 +101,6 @@ memtier_stop() {
 	kubectl --request-timeout=10s -n "$namespace" get pod memtier -o json > "${output_dir}/benchmark-at-exit.json"
 	redis_benchmark_saved=true
 	kubernetes_pod_delete "$output_dir" "$namespace" memtier
-}
-
-assert_redis_profile() {
-	local output_dir=$1 container_id=$2
-	jq -e --arg container "$container_id" '.items | length > 0 and all(.[]; .container_id == $container)' \
-		"${output_dir}/raw.json" > /dev/null || {
-		printf 'Expected windows from container %s; inspect %s/raw.json.\n' "$container_id" "$output_dir" >&2
-		return 1
-	}
-	jq -e '([.frames[]?.data.values[0] | length] | add // 0) > 0' "${output_dir}/flamegraph.json" > /dev/null || {
-		printf 'Expected a nonempty redis flame graph; inspect %s/flamegraph.response.json.\n' "$output_dir" >&2
-		return 1
-	}
 }
 
 redis_result_write() {
@@ -164,10 +155,10 @@ cleanup() {
 }
 
 main() {
-	local output_dir=$1 node address batches namespace container_id
+	local output_dir=$1 node address batches current_batches namespace container_id
 	require_commands kubectl ip curl crictl
 	redis_stage=development-stack
-	require_endpoints_ready "$output_dir" "$REDIS_NODE_BASE" "$REDIS_API_BASE"
+	require_endpoints_ready "$output_dir" "${REDIS_NODE_BASE}/readyz" "${REDIS_API_BASE}/readyz"
 	node=$(require_local_kubernetes_node "$output_dir")
 	redis_stage=image-pull
 	cri_images_ensure_present "$output_dir" "$REDIS_CRI_ENDPOINT" "$REDIS_IMAGE" "$REDIS_MEMTIER_IMAGE"
@@ -183,14 +174,16 @@ main() {
 	node_container_wait_discovered "$output_dir" "$REDIS_NODE_BASE" "$REDIS_NODE_TOKEN" "$container_id"
 	redis_stage=benchmark
 	memtier_start "$output_dir" "$namespace" "$node" "$address"
-	batches=$(assert_memtier_progress "$output_dir" "$namespace")
+	batches=$(memtier_progress_read "$output_dir" "$namespace") || return 1
+	assert_memtier_progress "$output_dir" 0 "$batches" || return 1
 	redis_stage=collection
 	jq -n --arg host "$REDIS_TARGET_HOST" --arg container "$container_id" --argjson duration "$REDIS_DURATION" \
 		'{type:"cpu",language:"c",mode:"oncpu",scope:"container",hostname:$host,container_id:$container,duration_seconds:$duration}' \
 		> "${output_dir}/create.request.json"
 	redis_job_id=$(profiling_task_create "$output_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id)
 	profiling_task_wait_completed "$output_dir" "$REDIS_API_BASE" "$REDIS_API_TOKEN" "$redis_job_id" "$((REDIS_DURATION + 120))" > "${output_dir}/task.json"
-	assert_memtier_progress "$output_dir" "$namespace" "$batches"
+	current_batches=$(memtier_progress_read "$output_dir" "$namespace") || return 1
+	assert_memtier_progress "$output_dir" "$batches" "$current_batches" || return 1
 	redis_stage=benchmark-stop
 	memtier_stop "$output_dir" "$namespace"
 	redis_stage=flamegraph
@@ -200,7 +193,11 @@ main() {
    to_ms:(.ended_at|sub("\\.[0-9]+Z$";"Z")|(fromdateiso8601+1)*1000)}}' \
 		"${output_dir}/task.json" > "${output_dir}/profile.json"
 	grafana_flamegraph_query "$output_dir" "$REDIS_GRAFANA_BASE" "$REDIS_GRAFANA_AUTH" "$REDIS_REGION" "${output_dir}/profile.json" > "${output_dir}/flamegraph.json"
-	assert_redis_profile "$output_dir" "$container_id"
+	assert_profile_windows "${output_dir}/raw.json" 1 "" "$container_id" \
+		&& assert_grafana_flamegraph "${output_dir}/flamegraph.json" || {
+		printf 'Invalid Redis profiling results; inspect %s/raw.json and flamegraph.json.\n' "$output_dir" >&2
+		return 1
+	}
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

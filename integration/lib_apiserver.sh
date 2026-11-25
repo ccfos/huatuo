@@ -92,7 +92,7 @@ start_node() {
 request() {
 	local method=$1 path=$2 expected=$3 body=${4:-}
 	REQUEST_NO=$((REQUEST_NO + 1))
-	RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/request-${REQUEST_NO}.json"
+	RESPONSE=${5:-"${HUATUO_BAMAI_TEST_TMPDIR}/request-${REQUEST_NO}.json"}
 	local args=() status curl_status=0 error_file="${RESPONSE%.json}.curl-error"
 	[[ -z "$body" ]] || args=(-H 'Content-Type: application/json' --data-binary "$body")
 	printf '%s %s\n%s\n' "$method" "$path" "$body" > "${RESPONSE%.json}.request"
@@ -130,18 +130,18 @@ wait_job() {
 	[[ $status -eq 0 ]] || fatal "job $id did not reach $outcome"
 }
 
-assert_error() { jq -e --arg code "$1" '.error.code == $code' "$RESPONSE" > /dev/null || fatal "unexpected error: $(cat "$RESPONSE")"; }
-assert_reason() { jq -e --arg reason "$2" '.data.terminal.reason == $reason' "${HUATUO_BAMAI_TEST_TMPDIR}/status-$1.json" > /dev/null || fatal "job $1 did not fail with $2"; }
-verify_result() {
-	local id=$1 minimum=${2:-2} expected_type=${3:-process_cpu:cpu:nanoseconds:cpu:nanoseconds}
-	wait_job "$id" completed
-	request GET "/v1/profiling/$id/raw?limit=100" 200
-	cp "$RESPONSE" "${HUATUO_BAMAI_TEST_TMPDIR}/raw-${id}.json"
-	jq -e --argjson minimum "$minimum" '(.data.items | length) >= $minimum and all(.data.items[]; .profile != null and .profile_type != null)' "$RESPONSE" > /dev/null || fatal "missing profiling windows for $id"
-	jq -e --arg expected "$expected_type" 'all(.data.items[]; .profile_type == $expected)' "$RESPONSE" > /dev/null || fatal "unexpected profile type for $id: expected $expected_type"
-	"$PROBE" flamegraph "$APISERVER_ADDR" "$id" "$RESPONSE" "$expected_type" > "${HUATUO_BAMAI_TEST_TMPDIR}/flamegraph-${id}.json"
-	jq -e '.flamegraph | (.total | tonumber) > 0 and (.names | length) > 0 and (.levels | length) > 0' \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/flamegraph-${id}.json" > /dev/null || fatal "empty flamegraph for $id"
+assert_error_code() {
+	jq -e --arg code "$1" '.error.code == $code' "$RESPONSE" > /dev/null || return 1
+}
+assert_terminal_reason() {
+	jq -e --arg reason "$2" '.data.terminal.reason == $reason' \
+		"${HUATUO_BAMAI_TEST_TMPDIR}/status-$1.json" > /dev/null || return 1
+}
+profiling_results_fetch() {
+	local id=$1 output_dir=$2 expected_type=$3
+	request GET "/v1/profiling/$id/raw?limit=100" 200 '' "${output_dir}/raw-${id}.json" || return 1
+	"$PROBE" flamegraph "$APISERVER_ADDR" "$id" "$RESPONSE" "$expected_type" \
+		> "${output_dir}/flamegraph-${id}.json" || return 1
 }
 stop_job() {
 	request POST "/v1/profiling/$1/stop" 200

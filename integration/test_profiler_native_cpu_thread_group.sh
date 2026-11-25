@@ -81,7 +81,7 @@ run_case() {
 		> "${tool_out}" 2> "${tool_err}") &
 	PROFILER_PID=$!
 
-	wait_until 15 0.1 profiler_ready "${tool_out}" || fatal "profiler did not start the read loop"
+	wait_until 15 0.1 profiler_read_loop_started "${tool_out}" || fatal "profiler did not start the read loop"
 	kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture pid=${TARGET_PID}"
 	wait "${PROFILER_PID}" || fatal "profiler exited non-zero (see ${tool_err})"
 	PROFILER_PID=""

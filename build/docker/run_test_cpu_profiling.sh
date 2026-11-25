@@ -75,21 +75,14 @@ if [[ $cpu_profiler_offcpu == true ]]; then cpu_profiler_modes+=(offcpu); fi
 require_commands curl jq
 
 assert_cpu_profile() {
-	local output_dir=$1 scope=$2 container_id=$3 mode=$4 profile_type=$5
-	jq -e --arg type "$profile_type" \
-		'.items | length > 0 and all(.[]; .profile_type == $type)' "${output_dir}/raw.json" > /dev/null || {
-		printf 'Expected %s profile windows; inspect %s/raw.json.\n' "$profile_type" "$output_dir" >&2
-		return 1
-	}
+	local output_dir=$1 container_id=$2 mode=$3 profile_type=$4
+	assert_profile_windows "${output_dir}/raw.json" 1 "$profile_type" "$container_id" || return 1
 	if [[ $mode == offcpu ]]; then
 		jq -e 'any(.items[]; .profile as $p | any($p.sample[]?.label[]?; $p.string_table[.key] == "offcpu_reason"))' \
 			"${output_dir}/raw.json" > /dev/null || {
 			printf 'Expected offcpu_reason sample labels; inspect %s/raw.json.\n' "$output_dir" >&2
 			return 1
 		}
-	fi
-	if [[ $scope == container ]]; then
-		jq -e --arg container "$container_id" '.items | length > 0 and all(.[]; .container_id == $container)' "${output_dir}/raw.json" > /dev/null || return 1
 	fi
 }
 
@@ -100,7 +93,7 @@ run_scope() {
 	oncpu) profile_type='process_cpu:cpu:nanoseconds:cpu:nanoseconds' ;;
 	offcpu) profile_type='process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds' ;;
 	esac
-	require_endpoints_ready "$output_dir" "$CPU_PROFILER_NODE_BASE" "$CPU_PROFILER_API_BASE" || return 1
+	require_endpoints_ready "$output_dir" "${CPU_PROFILER_NODE_BASE}/readyz" "${CPU_PROFILER_API_BASE}/readyz" || return 1
 	container_id=''
 	if [[ "$scope" == "$CPU_PROFILER_SCOPE_CONTAINER" ]]; then
 		node=$(require_local_kubernetes_node "$output_dir") || return 1
@@ -134,7 +127,10 @@ run_scope() {
 	job_id=$(profiling_task_create "$output_dir" "$CPU_PROFILER_API_BASE" "$CPU_PROFILER_API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id) || return 1
 	profiling_task_wait_completed "$output_dir" "$CPU_PROFILER_API_BASE" "$CPU_PROFILER_API_TOKEN" "$job_id" "$((CPU_PROFILER_DURATION_SECONDS + 120))" > "${output_dir}/task.json" || return 1
 	profiling_raw_query "$output_dir" "$CPU_PROFILER_API_BASE" "$CPU_PROFILER_API_TOKEN" "$job_id" > "${output_dir}/raw.json" || return 1
-	assert_cpu_profile "$output_dir" "$scope" "$container_id" "$mode" "$profile_type" || return 1
+	assert_cpu_profile "$output_dir" "$container_id" "$mode" "$profile_type" || {
+		printf 'Invalid %s CPU profile for %s scope; inspect %s/raw.json.\n' "$mode" "$scope" "$output_dir" >&2
+		return 1
+	}
 
 	jq --arg type "$profile_type" '{request_id,hostname,scope,container_id,mode,profile_type:$type,time_range:{
  from_ms:(.created_at|sub("\\.[0-9]+Z$";"Z")|fromdateiso8601*1000),

@@ -77,8 +77,14 @@ pgbench_start() {
 
 assert_pgbench_progress() {
 	local output_dir=$1 namespace=$2
-	kubectl --request-timeout=10s -n "$namespace" get pod pgbench -o json > "${output_dir}/benchmark.response.json" || return 1
-	kubectl --request-timeout=10s -n "$namespace" logs pgbench > "${output_dir}/benchmark.log" || return 1
+	kubectl --request-timeout=10s -n "$namespace" get pod pgbench -o json > "${output_dir}/benchmark.response.json" || {
+		printf 'Cannot read pgbench progress; inspect %s/benchmark.response.json and benchmark.log.\n' "$output_dir" >&2
+		return 1
+	}
+	kubectl --request-timeout=10s -n "$namespace" logs pgbench > "${output_dir}/benchmark.log" || {
+		printf 'Cannot read pgbench progress; inspect %s/benchmark.response.json and benchmark.log.\n' "$output_dir" >&2
+		return 1
+	}
 	jq -e '.status.phase == "Running" and all(.status.containerStatuses[]; .ready and .restartCount == 0)' \
 		"${output_dir}/benchmark.response.json" > /dev/null || {
 		printf 'Expected running pgbench without restarts; inspect %s/benchmark.response.json and benchmark.log.\n' "$output_dir" >&2
@@ -102,12 +108,7 @@ pgbench_stop() {
 
 assert_postgres_profile() {
 	local output_dir=$1 container_id=$2 mode=$3 profile_type=$4
-	jq -e --arg container "$container_id" --arg type "$profile_type" \
-		'.items | length > 0 and all(.[]; .container_id == $container and .profile_type == $type)' \
-		"${output_dir}/raw.json" > /dev/null || {
-		printf 'Expected %s windows from container %s; inspect %s/raw.json.\n' "$profile_type" "$container_id" "$output_dir" >&2
-		return 1
-	}
+	assert_profile_windows "${output_dir}/raw.json" 1 "$profile_type" "$container_id" || return 1
 	if [[ $mode == offcpu ]]; then
 		jq -e '
  [.items[].profile | . as $p | .sample[]? | {value:.value,labels:
@@ -122,10 +123,7 @@ assert_postgres_profile() {
 			return 1
 		}
 	fi
-	jq -e '([.frames[]?.data.values[0] | length] | add // 0) > 0' "${output_dir}/flamegraph.json" > /dev/null || {
-		printf 'Expected a nonempty postgres flame graph; inspect %s/flamegraph.response.json.\n' "$output_dir" >&2
-		return 1
-	}
+	assert_grafana_flamegraph "${output_dir}/flamegraph.json" || return 1
 }
 
 postgres_result_write() {
@@ -186,7 +184,7 @@ main() {
 	offcpu) profile_type='process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds' ;;
 	esac
 	require_commands kubectl ip curl crictl
-	require_endpoints_ready "$output_dir" "$POSTGRES_NODE_BASE" "$POSTGRES_API_BASE"
+	require_endpoints_ready "$output_dir" "${POSTGRES_NODE_BASE}/readyz" "${POSTGRES_API_BASE}/readyz"
 	node=$(require_local_kubernetes_node "$output_dir")
 	cri_images_ensure_present "$output_dir" "$POSTGRES_CRI_ENDPOINT" "$POSTGRES_IMAGE"
 	namespace="huatuo-postgres-${output_dir##*.}"
@@ -199,13 +197,13 @@ main() {
 	address=$(jq -er .pod_ip "${output_dir}/target.json")
 	node_container_wait_discovered "$output_dir" "$POSTGRES_NODE_BASE" "$POSTGRES_NODE_TOKEN" "$container_id"
 	pgbench_start "$output_dir" "$namespace" "$node" "$address"
-	assert_pgbench_progress "$output_dir" "$namespace"
+	assert_pgbench_progress "$output_dir" "$namespace" || return 1
 	jq -n --arg host "$POSTGRES_TARGET_HOST" --arg container "$container_id" --argjson duration "$POSTGRES_DURATION" --arg mode "$postgres_mode" \
 		'{type:"cpu",language:"c",mode:$mode,scope:"container",hostname:$host,container_id:$container,duration_seconds:$duration}' \
 		> "${output_dir}/create.request.json"
 	postgres_job_id=$(profiling_task_create "$output_dir" "$POSTGRES_API_BASE" "$POSTGRES_API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id)
 	profiling_task_wait_completed "$output_dir" "$POSTGRES_API_BASE" "$POSTGRES_API_TOKEN" "$postgres_job_id" "$((POSTGRES_DURATION + 120))" > "${output_dir}/task.json"
-	assert_pgbench_progress "$output_dir" "$namespace"
+	assert_pgbench_progress "$output_dir" "$namespace" || return 1
 	pgbench_stop "$output_dir" "$namespace"
 	profiling_raw_query "$output_dir" "$POSTGRES_API_BASE" "$POSTGRES_API_TOKEN" "$postgres_job_id" > "${output_dir}/raw.json"
 	jq --arg type "$profile_type" --arg mode "$postgres_mode" '{request_id,hostname,scope,container_id,mode,profile_type:$type,time_range:{
@@ -213,7 +211,10 @@ main() {
    to_ms:(.ended_at|sub("\\.[0-9]+Z$";"Z")|(fromdateiso8601+1)*1000)}}' \
 		"${output_dir}/task.json" > "${output_dir}/profile.json"
 	grafana_flamegraph_query "$output_dir" "$POSTGRES_GRAFANA_BASE" "$POSTGRES_GRAFANA_AUTH" "$POSTGRES_REGION" "${output_dir}/profile.json" > "${output_dir}/flamegraph.json"
-	assert_postgres_profile "$output_dir" "$container_id" "$postgres_mode" "$profile_type"
+	assert_postgres_profile "$output_dir" "$container_id" "$postgres_mode" "$profile_type" || {
+		printf 'Invalid PostgreSQL %s profiling results; inspect %s/raw.json and flamegraph.json.\n' "$postgres_mode" "$output_dir" >&2
+		return 1
+	}
 }
 
 usage() {

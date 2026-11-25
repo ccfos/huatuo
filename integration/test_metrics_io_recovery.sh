@@ -485,14 +485,14 @@ run_io_recovery() {
 				confirmed=1
 				for index in 0 1; do
 					if [[ ${collector} != blk_iotrace && -n ${baseline} ]]; then
-						assert_io_wait_slowdown "${baseline}/${index}.json" "${directory}/${index}.json" \
+						io_wait_compare_workload_durations "${baseline}/${index}.json" "${directory}/${index}.json" \
 							> "${directory}/${index}.timing.json" || fatal "${collector} slowdown was not independently established"
 					fi
 					if [[ ${collector} == blk_iotrace ]]; then
 						jq -e '.ready' "${metrics}.latency-${index}.json" > /dev/null || confirmed=0
 					else
 						summary="${directory}/${index}.${collector}.json"
-						assert_io_wait_metrics --json --collector "${collector}" --disk "${recovery_disks[index]}" \
+						io_wait_analyze_metrics --json --collector "${collector}" --disk "${recovery_disks[index]}" \
 							--operation "${operation}" --container-groups 0 "${metrics}.json" > "${summary}" \
 							|| fatal "invalid ${collector} output during ${phase} recovery"
 						io_wait_host_positive "${summary}" || confirmed=0

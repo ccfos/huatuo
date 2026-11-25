@@ -152,3 +152,23 @@ continuous_profiling_start_stack() {
 		write_config_apiserver_continuous_profiling \
 		"$@"
 }
+
+profiling_publication_ready() {
+	local index_pattern=$1 task_id=$2 profile_type=$3 output_dir=$4
+	jq -nc --arg id "$task_id" '
+ {}, {query:{bool:{filter:[
+  {term:{"tracer_id.keyword":$id}}, {term:{"tracer_type.keyword":"profiling"}}
+ ]}}}, {}, {query:{ids:{values:["profiling-publication:"+$id]}}}' \
+		> "${output_dir}/profiling-publication-request.ndjson" || return 1
+	storage_curl --fail -H 'Content-Type: application/x-ndjson' \
+		"${STORAGE_ADDR}/${index_pattern}/_msearch" \
+		--data-binary "@${output_dir}/profiling-publication-request.ndjson" \
+		> "${output_dir}/profiling-publication.json" || return 1
+	jq -e --arg type "$profile_type" '
+ .responses | length == 2 and all(.[]; .error == null) and
+ (.[0].hits.hits | length > 0 and all(.[]._source;
+  .tracer_name == "profiler" and .profile_data.profile_type == $type and
+  .profile_data.profile.time_nanos > 0 and .profile_data.profile.duration_nanos > 0 and
+  (.profile_data.profile.sample | length > 0))) and
+ (.[1].hits.hits | length == 1)' "${output_dir}/profiling-publication.json" > /dev/null
+}

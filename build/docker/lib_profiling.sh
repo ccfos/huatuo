@@ -14,6 +14,7 @@
 # limitations under the License.
 
 # Common operations return data; callers own test orchestration and cleanup.
+source "${ROOT_DIR}/build/lib_profiling_assert.sh"
 
 require_commands() {
 	local command
@@ -26,17 +27,19 @@ require_commands() {
 }
 
 http_request() {
-	local output_dir=$1 label=$2 url=$3
+	local output_dir=$1 label=$2 url=$3 status curl_status=0
 	shift 3
 	# A transport failure may leave no response, or an earlier polling response.
 	: > "${output_dir}/${label}.response.json"
-	curl --noproxy 127.0.0.1,localhost --fail-with-body -sS --connect-timeout 2 --max-time 60 \
-		-o "${output_dir}/${label}.response.json" "$@" "$url" 2> "${output_dir}/${label}.log" || {
-		printf '%s request to %s failed; inspect %s/%s.log.\n' "$label" "$url" "$output_dir" "$label" >&2
+	status=$(curl --noproxy 127.0.0.1,localhost -sS --connect-timeout 2 --max-time 60 \
+		-o "${output_dir}/${label}.response.json" -w '%{http_code}' "$@" "$url" \
+		2> "${output_dir}/${label}.log") || curl_status=$?
+	if [[ $curl_status != 0 || ! $status =~ ^[123][0-9]{2}$ ]]; then
+		printf '%s request to %s failed (curl=%s HTTP=%s); inspect %s/%s.log.\n' "$label" "$url" "$curl_status" "$status" "$output_dir" "$label" >&2
 		cat "${output_dir}/${label}.log" >&2
 		[[ ! -s "${output_dir}/${label}.response.json" ]] || cat "${output_dir}/${label}.response.json" >&2
 		return 1
-	}
+	fi
 	cat "${output_dir}/${label}.response.json"
 }
 
@@ -141,11 +144,16 @@ kubernetes_pod_delete() {
 }
 
 node_container_wait_discovered() {
-	local output_dir=$1 node_base=$2 token=$3 container_id=$4 timeout=${5:-90} deadline
+	local output_dir=$1 node_base=$2 token=$3 container_id=$4 timeout=${5:-90} deadline status
 	# Pod readiness precedes the Agent kubelet cache refresh.
 	deadline=$((SECONDS + timeout))
-	until curl --noproxy 127.0.0.1,localhost --fail-with-body -sS --connect-timeout 2 --max-time 5 -H "Authorization: Bearer ${token}" \
-		"${node_base}/v1/containers/${container_id}" -o "${output_dir}/container.response.json" 2> "${output_dir}/container.log"; do
+	while :; do
+		if status=$(curl --noproxy 127.0.0.1,localhost -sS --connect-timeout 2 --max-time 5 \
+			-H "Authorization: Bearer ${token}" "${node_base}/v1/containers/${container_id}" \
+			-o "${output_dir}/container.response.json" -w '%{http_code}' 2> "${output_dir}/container.log") \
+			&& [[ $status =~ ^[123][0-9]{2}$ ]]; then
+			return 0
+		fi
 		if ((SECONDS >= deadline)); then
 			printf 'Agent did not discover container %s.\n' "$container_id" >&2
 			return 1
@@ -219,12 +227,19 @@ grafana_profiling_url_build() {
 }
 
 require_endpoints_ready() {
-	local output_dir=$1 node_base=$2 api_base=$3
-	if ! curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 2 --max-time 3 "${node_base}/readyz" \
-		> "${output_dir}/node-ready.response" 2> "${output_dir}/node-ready.log" \
-		|| ! curl --noproxy 127.0.0.1,localhost -fsS --connect-timeout 2 --max-time 3 "${api_base}/readyz" \
-			> "${output_dir}/api-ready.response" 2> "${output_dir}/api-ready.log"; then
-		printf 'Node or API server readiness endpoint check failed. Run make compose-dev-up first; inspect %s/*ready.log if it still fails.\n' "$output_dir" >&2
-		return 1
-	fi
+	local output_dir=$1 url status index=0 prefix
+	shift
+	for url in "$@"; do
+		index=$((index + 1))
+		prefix="${output_dir}/endpoint-${index}-ready"
+		status=$(curl -sS --noproxy 127.0.0.1,localhost --connect-timeout 2 --max-time 3 \
+			-o "${prefix}.body" -w '%{http_code}' "$url" 2> "${prefix}.err") || {
+			printf 'Readiness request to %s failed; run make compose-dev-up and inspect %s.err.\n' "$url" "$prefix" >&2
+			return 1
+		}
+		if [[ ! $status =~ ^[123][0-9]{2}$ ]]; then
+			printf 'Readiness endpoint %s returned HTTP %s; inspect %s.body.\n' "$url" "$status" "$prefix" >&2
+			return 1
+		fi
+	done
 }

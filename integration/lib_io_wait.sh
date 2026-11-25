@@ -18,7 +18,7 @@
 # cases. Workload durations qualify the input; they are not per-wait references.
 set -euo pipefail
 
-assert_io_wait_slowdown() {
+io_wait_compare_workload_durations() {
 	local evidence
 	evidence=$(jq -s -e '
 		def valid_receipt:
@@ -41,7 +41,7 @@ assert_io_wait_slowdown() {
 	fi
 }
 
-assert_io_wait_metrics() {
+io_wait_analyze_metrics() {
 	local collector="" disk="" operation="" namespace="" positive_windows=0 container_groups=null
 	local expected_containers=null
 	local is_idle=false is_warmup=false requires_other=false is_json=false document documents summary path
@@ -92,14 +92,14 @@ assert_io_wait_metrics() {
 			shift
 			;;
 		--*)
-			log_error "unknown wait assertion option: $1"
+			log_error "unknown IO metrics analysis option: $1"
 			return 1
 			;;
 		*) break ;;
 		esac
 	done
 	(($#)) || {
-		log_error "wait assertion requires metric files"
+		log_error "IO metrics analysis requires metric files"
 		return 1
 	}
 	documents=$(for path in "$@"; do

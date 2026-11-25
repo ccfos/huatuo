@@ -300,7 +300,7 @@ test_md_health_events() {
 	cp "${md_sysfs}/md/degraded" "${MD_WORK}/degraded.before"
 
 	io_test_start_bamai write_config_bamai_blk_device_health --region dev --disable-kubelet --log-debug
-	assert_blk_device_health_md_observer_ready "${MD_EVENT}" || fatal "MD observer is not ready for fault injection"
+	blk_device_health_md_probe_observer "${MD_EVENT}" || fatal "MD observer is not ready for fault injection"
 	blk_device_health_md_wait_udev || fatal "udev did not settle before member fault injection"
 	blk_device_health_md_array_is_healthy || fatal "RAID1 is not healthy and writable before fault; inspect ${MD_WORK}/array-health.txt"
 	assert_md_initial_events || fatal "healthy initial RAID1 state produced a member or degraded transition"

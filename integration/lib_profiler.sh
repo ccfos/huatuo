@@ -24,9 +24,23 @@ require_native_pid_profiling() {
 	fi
 }
 
-profiler_ready() {
+profiler_read_loop_started() {
 	local stdout=$1
 	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
+}
+
+assert_folded_stack() {
+	local expected=$1 pattern=$2 status=0
+	shift 2
+	case $expected in
+	present | absent) ;;
+	*) return 1 ;;
+	esac
+	grep -hE -- "$pattern" /dev/null "$@" > /dev/null || status=$?
+	case ${expected}:${status} in
+	present:0 | absent:1) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 # Shared CPU sampling setup; scenario choices and fault injection stay in the

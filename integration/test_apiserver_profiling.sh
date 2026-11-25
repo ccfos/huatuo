@@ -51,7 +51,13 @@ assert_offcpu_reason_filters() {
 	continuous_profiling_start_native_cpu_fixture TARGET_PID "${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 	create 12 '{"mode":"offcpu"}'
 	job_id=$JOB_ID
-	verify_result "$job_id" 2 "$profile_type"
+	wait_job "$job_id" completed
+	profiling_results_fetch "$job_id" "$HUATUO_BAMAI_TEST_TMPDIR" "$profile_type" \
+		|| fatal "failed to fetch profiling results"
+	jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$job_id.json" | assert_profile_windows - 2 "$profile_type" \
+		|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$job_id.json"
+	assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$job_id.json" \
+		|| fatal "profiling flamegraph validation failed"
 	selector=$(jq -nr --arg id "$job_id" --arg type "$profile_type" --arg pid "$TARGET_PID" \
 		'"{scope=\"host\",id="+($id|tojson)+",pid="+($pid|tojson)+",__profile_type__="+($type|tojson)+"}"')
 	request_json=$(jq -nc --arg s "$selector" '{matchers:[$s],end:"4102444800000"}')
@@ -93,7 +99,7 @@ functional_cases() {
 		create 60
 		first=$JOB_ID
 		request POST /v1/profiling 429 '{"hostname":"127.0.0.1","duration_seconds":12,"scope":"host","type":"cpu","language":"c","mode":"oncpu"}'
-		assert_error quota_exceeded
+		assert_error_code quota_exceeded
 		stop_job "$first"
 		pass
 	done
@@ -111,7 +117,7 @@ functional_cases() {
 	wait_job "$first" running
 	create 12
 	wait_job "$JOB_ID" failed
-	assert_reason "$JOB_ID" execution_capacity_exceeded
+	assert_terminal_reason "$JOB_ID" execution_capacity_exceeded
 	stop_job "$first"
 	pass
 
@@ -119,7 +125,13 @@ functional_cases() {
 	# Pagination validation needs a completed task after lifecycle cases moved to e2e.
 	create
 	local completed=$JOB_ID
-	verify_result "$completed"
+	wait_job "$completed" completed
+	profiling_results_fetch "$completed" "$HUATUO_BAMAI_TEST_TMPDIR" 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+		|| fatal "failed to fetch profiling results"
+	jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json" | assert_profile_windows - 2 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+		|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json"
+	assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$completed.json" \
+		|| fatal "profiling flamegraph validation failed"
 	CURRENT_CASE=sample-label-filters
 	assert_sample_label_filters "$completed"
 	pass
@@ -130,7 +142,7 @@ functional_cases() {
 		'{"scope":"container"}' '{"hostname":""}' '{"type":"memory","mode":"virtual_alloc"}' '{"language":"java"}'; do
 		body=$(jq -nc --argjson extra "$extra" '{hostname:"127.0.0.1",duration_seconds:12,scope:"host",type:"cpu",language:"c",mode:"oncpu"}+$extra')
 		request POST /v1/profiling 400 "$body"
-		assert_error invalid_request
+		assert_error_code invalid_request
 	done
 	request POST /v1/profiling 400 '{'
 	request GET '/v1/profiling?limit=0' 400
@@ -148,19 +160,19 @@ functional_cases() {
 	CURRENT_CASE=missing-container
 	create 12 '{"scope":"container","container_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
 	wait_job "$JOB_ID" failed
-	assert_reason "$JOB_ID" execution_start_failed
+	assert_terminal_reason "$JOB_ID" execution_start_failed
 	pass
 	CURRENT_CASE=unreachable-host
 	# No server is bound here; avoids DNS and external network dependencies.
 	create 12 '{"hostname":"127.0.0.2"}'
 	wait_job "$JOB_ID" failed
-	assert_reason "$JOB_ID" node_unavailable
+	assert_terminal_reason "$JOB_ID" node_unavailable
 	pass
 	CURRENT_CASE=node-offline-before-create
 	huatuo_bamai_stop
 	create
 	wait_job "$JOB_ID" failed
-	assert_reason "$JOB_ID" node_unavailable
+	assert_terminal_reason "$JOB_ID" node_unavailable
 	start_node
 	pass
 }

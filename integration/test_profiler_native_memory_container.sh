@@ -108,6 +108,6 @@ assert_process_message "${profiler_output_fd}" "${TOOL_OUT}" 'data reading loop 
 timeout --kill-after=2 10 docker kill --signal=USR1 "${container_id}" > "${TOOL_WORK_DIR}/signal.log"
 assert_process_message "${container_log_fd}" "${TOOL_WORK_DIR}/container.log" 'final allocation complete'
 assert_process_shutdown_by_pid "${profiler_pid}" 35 INT || fatal "container memory profiler did not finalize"
-assert_process_alive "${container_pid}" "${container_start_time}" "container workload after profiling"
+assert_process_alive "${container_pid}" "${container_start_time}" "container workload after profiling" || fatal "workload process identity validation failed"
 
 assert_container_memory_profile "${TOOL_WORK_DIR}/result.folded" "${container_pid}" "${TOOL_WORK_DIR}/container-logs.err"

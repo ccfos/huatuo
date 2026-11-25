@@ -38,7 +38,13 @@ assert_huatuo_apiserver_shutdown_with_signal TERM
 assert_node_operation_running "$first" before-restart
 start_server
 assert_node_operation_running "$first" after-restart
-verify_result "$first"
+wait_job "$first" completed
+profiling_results_fetch "$first" "$HUATUO_BAMAI_TEST_TMPDIR" 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "failed to fetch profiling results"
+jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$first.json" | assert_profile_windows - 2 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$first.json"
+assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$first.json" \
+	|| fatal "profiling flamegraph validation failed"
 request GET /metrics 200
 grep -q '^huatuo_apiserver_jobs_recovered_total 1$' "$RESPONSE" || fatal 'recovery counter is not one'
 pass

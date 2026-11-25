@@ -67,7 +67,8 @@ assert_metrics_endpoint() {
 
 integration_huatuo_apiserver_start write_config_apiserver_base \
 	--log-debug
-assert_readiness_endpoint
+assert_readiness_endpoint "${APISERVER_ADDR}/readyz" "${HUATUO_BAMAI_TEST_TMPDIR}/readyz" \
+	|| fatal "apiserver readiness contract failed"
 assert_metrics_endpoint
 assert_build_info "${APISERVER_ADDR}" huatuo_apiserver "" ""
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver

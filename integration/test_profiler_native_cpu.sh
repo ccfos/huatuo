@@ -96,9 +96,5 @@ mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded'
 
 log_info "found ${#FOLDED_FILES[@]} folded file(s); asserting f1->f2->f3 chain"
 
-MATCH_COUNT=$(grep -hE "${CHAIN_PATTERN}" "${FOLDED_FILES[@]}" | wc -l) || true
-if [[ "${MATCH_COUNT}" -eq 0 ]]; then
-	fatal "f1->f2->f3 chain not found in folded output"
-fi
-
-log_info "matched stack lines ending in ;f1;f2;f3: got ${MATCH_COUNT}, want >= 1"
+assert_folded_stack present "$CHAIN_PATTERN" "${FOLDED_FILES[@]}" \
+	|| fatal "expected native CPU call chain is missing"

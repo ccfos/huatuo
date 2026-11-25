@@ -21,6 +21,7 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_storage.sh"
+source "${ROOT_DIR}/integration/lib_continuous_profiling.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
 require_commands jq ss docker
@@ -30,8 +31,6 @@ require_readable /sys/kernel/btf/vmlinux
 readonly CPU_PROFILER_FIXTURE="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-profiler-fixture"
 readonly CPU_PROFILER_STAT="${CPU_PROFILER_FIXTURE}/proc/stat"
 readonly CPU_PROFILER_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/cpusys"
-readonly CPU_PROFILER_RESULT="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-profile.json"
-readonly CPU_PROFILER_PUBLICATION="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-publication.json"
 cpu_profiler_load_pid=""
 cpu_profiler_stat_writer_pid=""
 
@@ -73,34 +72,16 @@ serve_cpu_profiler_stat_samples() {
 	done
 }
 
-assert_cpu_profile_published() {
-	[[ -s "${CPU_PROFILER_EVENT}" ]] || return 1
+cpusys_trigger_ready() {
+	local event_file=$1
+	[[ -s $event_file ]] || return 1
 	jq -e '
         .tracer_name == "cpusys" and .tracer_type == "autotracing" and
         .tracer_data.system_percent == 80 and
         .tracer_data.system_percent_delta == 70 and
         .tracer_data.flamedata == null and
         (.tracer_id | length > 0)
-    ' "${CPU_PROFILER_EVENT}" > /dev/null || return 1
-	local task_id
-	task_id=$(jq -r '.tracer_id' "${CPU_PROFILER_EVENT}")
-	storage_curl --fail -H 'Content-Type: application/json' \
-		"${STORAGE_ADDR}/cpu-profiler-integration*/_search" \
-		-d "$(jq -nc --arg id "${task_id}" '{query:{bool:{filter:[
-            {term:{"tracer_id.keyword":$id}}, {term:{"tracer_type.keyword":"profiling"}}
-        ]}}}')" > "${CPU_PROFILER_RESULT}" || return 1
-	storage_curl --fail -H 'Content-Type: application/json' \
-		"${STORAGE_ADDR}/cpu-profiler-integration*/_search" \
-		-d "$(jq -nc --arg id "profiling-publication:${task_id}" '{query:{ids:{values:[$id]}}}')" \
-		> "${CPU_PROFILER_PUBLICATION}" || return 1
-	jq -e '.hits.hits | length > 0 and all(.[]._source;
-        .tracer_name == "profiler" and
-        .profile_data.profile_type == "process_cpu:cpu:nanoseconds:cpu:nanoseconds" and
-        .profile_data.profile.time_nanos > 0 and
-	.profile_data.profile.duration_nanos > 0 and
-	(.profile_data.profile.sample | length > 0))
-    ' "${CPU_PROFILER_RESULT}" > /dev/null || return 1
-	jq -e '.hits.hits | length == 1' "${CPU_PROFILER_PUBLICATION}" > /dev/null
+    ' "$event_file" > /dev/null || return 1
 }
 
 mkdir -p "${CPU_PROFILER_FIXTURE}/proc" "${CPU_PROFILER_FIXTURE}/sys"
@@ -126,7 +107,13 @@ integration_huatuo_bamai_start \
 	--disable-kubelet \
 	--log-debug
 
-wait_until 45 1 assert_cpu_profile_published \
-	|| fatal "CPU profile, correlated trigger event, or publication marker missing; inspect cpu-profile.json and cpu-publication.json"
+cpu_profiler_deadline=$((SECONDS + 45))
+wait_until 45 1 cpusys_trigger_ready "$CPU_PROFILER_EVENT" \
+	|| fatal "CPU trigger event missing; inspect ${CPU_PROFILER_EVENT}"
+cpu_profiler_task_id=$(jq -er .tracer_id "$CPU_PROFILER_EVENT")
+wait_until "$((cpu_profiler_deadline - SECONDS))" 1 profiling_publication_ready \
+	'cpu-profiler-integration*' "$cpu_profiler_task_id" \
+	'process_cpu:cpu:nanoseconds:cpu:nanoseconds' "$HUATUO_BAMAI_TEST_TMPDIR" \
+	|| fatal "CPU profile or publication marker missing; inspect profiling-publication.json"
 cat "${CPU_PROFILER_EVENT}"
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

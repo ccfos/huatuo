@@ -16,6 +16,8 @@
 
 set -euo pipefail
 
+source "${ROOT_DIR}/build/lib_profiling_assert.sh"
+
 # Bash does not export arrays; every test subprocess needs its own defaults.
 if ! declare -p CURL_TIMEOUT > /dev/null 2>&1; then
 	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
@@ -222,33 +224,27 @@ require_build_output() {
 }
 
 assert_eq() {
-	local actual=$1 expect=$2 msg=${3:-""}
+	local actual=$1 expect=$2 msg=${3:-values}
 	[[ "$actual" == "$expect" ]] && return 0
-	log_info "assert_eq: ${msg} actual=${actual}, expect=${expect}"
+	printf '%s: expected=%q, actual=%q\n' "$msg" "$expect" "$actual" >&2
 	return 1
 }
 
 assert_readiness_endpoint() {
-	local body="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.body"
-	local error_file="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.curl-error"
-	local curl_status=0 status
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${body}" -w '%{http_code}' \
-		"${APISERVER_ADDR}/readyz" 2> "${error_file}") || curl_status=$?
-	log_info "GET /readyz: curl exit=${curl_status}, HTTP status=${status}"
-	report_http_response "GET /readyz" "${body}" "${error_file}"
-	[[ ${curl_status} -eq 0 ]] || fatal "GET /readyz: curl exited ${curl_status}"
-	assert_eq "${status}" "204" "GET /readyz status" \
-		|| fatal "GET /readyz returned status ${status}, expected 204"
-	if [[ -s "${body}" ]]; then
-		fatal "GET /readyz returned a non-empty response body"
-	fi
+	local url=$1 prefix=$2 status
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${prefix}.headers" -o "${prefix}.body" \
+		-w '%{http_code}' "$url" 2> "${prefix}.err") || return 1
+	[[ $status == 204 && ! -s ${prefix}.body ]]
 }
 
 # assert_process_alive <pid> <start_time> <description>
 assert_process_alive() {
 	local pid=$1 start_time=$2 description=$3
-	! process_exited "${pid}" "${start_time}" \
-		|| fatal "${description}: PID ${pid} exited or its identity changed"
+	if process_exited "$pid" "$start_time"; then
+		printf '%s: PID %s exited or its identity changed.\n' "$description" "$pid" >&2
+		return 1
+	fi
+	return 0
 }
 
 assert_log_has_no_failure() {
@@ -598,7 +594,7 @@ huatuo_bamai_ready() {
 		fatal "huatuo-bamai pid=${pid} exited during startup; see ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	fi
 
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null || return 1
+	curl -sf "${CURL_TIMEOUT[@]}" "$HUATUO_BAMAI_METRICS_API" > /dev/null || return 1
 	# A successful HTTP response can come from an older daemon on the same port.
 	listeners=$(ss -H -ltnp "sport = :${port}") || return 1
 	grep -Fq "pid=${pid}," <<< "${listeners}" || return 1
@@ -975,24 +971,17 @@ huatuo_bamai_await_metrics() {
 # Save every attempt, including failed retries, without retaining an older body.
 fetch_metrics_response() {
 	local prefix=$1 status curl_status=0
-	: > "${prefix}.headers" || return 1
 	: > "${prefix}.txt" || return 1
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${prefix}.headers" -o "${prefix}.txt" \
-		-w '%{http_code}' "${HUATUO_BAMAI_METRICS_API}" 2> "${prefix}.err") || curl_status=$?
-	printf 'curl_exit=%s\nhttp_status=%s\n' "${curl_status}" "${status}" > "${prefix}.status" || return 1
-	[[ ${curl_status} -eq 0 && ${status} == 200 ]]
+		-w '%{http_code}' "$HUATUO_BAMAI_METRICS_API" 2> "${prefix}.err") || curl_status=$?
+	printf 'curl_exit=%s\nhttp_status=%s\n' "$curl_status" "$status" > "${prefix}.status" || return 1
+	[[ $curl_status == 0 && $status == 200 ]]
 }
 
 assert_metrics_response() {
 	local prefix=$1
-	if ! fetch_metrics_response "${prefix}"; then
-		cat "${prefix}.status" "${prefix}.headers" "${prefix}.txt" "${prefix}.err" >&2
-		fatal "/metrics: expected curl=0 HTTP=200; see ${prefix}.status"
-	fi
-	if ! grep -Eqi '^Content-Type:[[:blank:]]*text/plain([;[:space:]]|$)' "${prefix}.headers"; then
-		cat "${prefix}.headers" >&2
-		fatal "/metrics: expected text/plain; see ${prefix}.headers"
-	fi
+	fetch_metrics_response "$prefix" || return 1
+	grep -Eqi '^Content-Type:[[:blank:]]*text/plain([;[:space:]]|$)' "${prefix}.headers" || return 1
 }
 
 # assert_metrics <desc> <present_pattern>... [-- <absent_pattern>...]

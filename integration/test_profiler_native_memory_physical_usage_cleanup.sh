@@ -63,7 +63,7 @@ assert_physical_cleanup() (
 	physical_cleanup_profiler_waiting() {
 		local child comm
 		# The parent logs this wait only after recording PROFILER_PID.
-		grep -Fq '[profiler_ready ' "${workspace}/case.log" || return 1
+		grep -Fq '[profiler_read_loop_started ' "${workspace}/case.log" || return 1
 		[[ -r /proc/${pid}/task/${pid}/children ]] || return 1
 		for child in $(< "/proc/${pid}/task/${pid}/children"); do
 			[[ -r /proc/${child}/comm ]] || continue

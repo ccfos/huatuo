@@ -270,7 +270,7 @@ io_test_lock_disks() {
 	log_info "IO topology lock acquired: pid=${BASHPID} fd=${blk_device_health_md_lock_fd} wait_seconds=$((SECONDS - started))"
 }
 
-assert_io_test_disk_identity() {
+io_test_disk_identity_matches() {
 	local name=$1 owner
 	if [[ ${name} == "${io_test_disk_name}" ]]; then
 		[[ -b ${TEST_IO_DISK} && $(readlink -f "${TEST_IO_DISK}") == "/dev/${name}" &&
@@ -448,7 +448,7 @@ io_test_cleanup_scsi_disks() {
 io_test_cleanup_disks() {
 	local index
 	for index in "${!io_test_cost_files[@]}"; do
-		assert_io_test_disk_identity "${io_test_disk_name}" || return 1
+		io_test_disk_identity_matches "${io_test_disk_name}" || return 1
 		printf '%s\n' "${io_test_cost_settings[index]}" > "${io_test_cost_files[index]}" || return 1
 	done
 	io_test_cost_files=()
@@ -456,7 +456,7 @@ io_test_cleanup_disks() {
 	io_test_cleanup_scsi_disks || return 1
 	if [[ -n ${io_test_storage_dir} ]]; then
 		if mountpoint -q "${io_test_storage_dir}"; then
-			assert_io_test_disk_identity "${io_test_disk_name}" || return 1
+			io_test_disk_identity_matches "${io_test_disk_name}" || return 1
 			[[ $(findmnt -n -o SOURCE --target "${io_test_storage_dir}") -ef ${TEST_IO_DISK} ]] || return 1
 			timeout --kill-after=2s 10s umount "${io_test_storage_dir}" || {
 				log_error "IO backing filesystem remains: ${io_test_storage_dir}; stop its users before reclaiming TEST_IO_DISK=${TEST_IO_DISK}"

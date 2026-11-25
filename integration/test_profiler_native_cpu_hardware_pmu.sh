@@ -96,8 +96,5 @@ mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded'
 [[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal \
 	"no perf_*.folded file produced in ${WORK_DIR}"
 
-MATCH_COUNT=$(grep -hE "${CHAIN_PATTERN}" "${FOLDED_FILES[@]}" | wc -l) || true
-[[ "${MATCH_COUNT}" -gt 0 ]] || fatal \
-	"f1->f2->f3 chain not found in hardware PMU output"
-
-log_info "matched hardware PMU stack lines: got ${MATCH_COUNT}, want >= 1"
+assert_folded_stack present "$CHAIN_PATTERN" "${FOLDED_FILES[@]}" \
+	|| fatal "expected native CPU call chain is missing"

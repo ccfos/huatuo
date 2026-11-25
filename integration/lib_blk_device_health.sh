@@ -74,7 +74,7 @@ blk_device_health_md_stop_daemon() {
 	printf 'daemon_pid=%s shutdown_status=%s\n' "${pid}" "${status}" >> "${blk_device_health_md_work_dir}/resources.txt"
 }
 
-assert_blk_device_health_md_no_owned_refs() {
+blk_device_health_md_owner_refs_released() {
 	local pid="${blk_device_health_md_owner_pid}" descriptor target number device path held
 	: > "${blk_device_health_md_work_dir}/owner-refs.txt"
 	process_exited "${pid}" && return 0
@@ -291,7 +291,7 @@ blk_device_health_md_cleanup() {
 		blk_device_health_md_ref_ids[${disk}]=$(stat -Lc '%t:%T' "${disk}" 2> /dev/null || true)
 		blk_device_health_md_ref_paths[${disk}]=$(readlink -f "/sys/class/block/${disk##*/}" 2> /dev/null || true)
 	done
-	assert_blk_device_health_md_no_owned_refs || return 1
+	blk_device_health_md_owner_refs_released || return 1
 	blk_device_health_md_wait_udev || return 1
 	# udev may reassemble the same UUID under a different MD name. Names alone
 	# never authorize teardown; verify the UUID and every member before stopping.
@@ -306,7 +306,7 @@ blk_device_health_md_cleanup() {
 		if ! blk_device_health_md_array_is_owned; then
 			log_error "MD cleanup: refusing array ${md_device}; member ownership differs from UUID ${md_uuid}"
 			failed=1
-		elif ! assert_blk_device_health_md_no_owned_refs; then
+		elif ! blk_device_health_md_owner_refs_released; then
 			failed=1
 		elif ! blk_device_health_md_command mdadm --stop --force "${md_device}" \
 			|| ! wait_until 5 0.2 blk_device_health_md_is_disassembled; then
@@ -351,7 +351,7 @@ blk_device_health_md_cleanup() {
 	for md_sysfs in "${stopped_arrays[@]}"; do
 		md_device="/dev/${md_sysfs##*/}"
 		if [[ -d ${md_sysfs} ]]; then
-			if assert_blk_device_health_md_no_owned_refs; then
+			if blk_device_health_md_owner_refs_released; then
 				log_info "MD cleanup: stop and member cleanup completed; disk ${md_device} awaits kernel release"
 			else
 				failed=1
@@ -391,10 +391,13 @@ blk_device_health_md_observer_transition() {
 	return 1
 }
 
-assert_blk_device_health_md_observer_ready() {
+blk_device_health_md_probe_observer() {
 	local blk_device_health_observer_event=$1 blk_device_health_observer_before=0 result=0
 	local blk_device_health_observer_polls=0
-	blk_device_health_md_array_is_owned || fatal "array ownership changed before observer readiness check"
+	blk_device_health_md_array_is_owned || {
+		log_error "array ownership changed before observer readiness check"
+		return 1
+	}
 	if [[ -s ${blk_device_health_observer_event} ]]; then
 		blk_device_health_observer_before=$(jq -s --arg array "${md_device##*/}" '
 			[.[] | select(.tracer_name == "blk_device_health" and .tracer_type == "event"
@@ -404,9 +407,11 @@ assert_blk_device_health_md_observer_ready() {
 	fi
 	# A controlled non-fault transition proves this array's observer is active
 	# without starting member evidence or warming its cooldown.
-	printf '1\n' > "${md_sysfs}/md/sync_speed_min"
-	printf '1\n' > "${md_sysfs}/md/sync_speed_max"
-	wait_until 20 0.2 blk_device_health_md_observer_transition || result=1
+	printf '1\n' > "${md_sysfs}/md/sync_speed_min" || result=1
+	printf '1\n' > "${md_sysfs}/md/sync_speed_max" || result=1
+	if ((result == 0)); then
+		wait_until 20 0.2 blk_device_health_md_observer_transition || result=1
+	fi
 	printf 'idle\n' > "${md_sysfs}/md/sync_action" || result=1
 	printf 'system\n' > "${md_sysfs}/md/sync_speed_min" || result=1
 	printf 'system\n' > "${md_sysfs}/md/sync_speed_max" || result=1

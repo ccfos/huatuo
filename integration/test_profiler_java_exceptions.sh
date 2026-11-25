@@ -132,13 +132,13 @@ for test_case in some-killed all-killed interrupt terminate; do
 				recovery_method=betaAfterFaultHotMethod
 			else
 				for index in "${!target_pids[@]}"; do
-					assert_process_alive "${target_pids[index]}" "${target_start_times[index]}" "Java target after profiler stop"
+					assert_process_alive "${target_pids[index]}" "${target_start_times[index]}" "Java target after profiler stop" || fatal "workload process identity validation failed"
 				done
 				recovery_pid=${target_pids[0]}
 				recovery_start_time=${target_start_times[0]}
 				recovery_method=alphaHotMethod
 			fi
-			assert_process_alive "${recovery_pid}" "${recovery_start_time}" "Java recovery target"
+			assert_process_alive "${recovery_pid}" "${recovery_start_time}" "Java recovery target" || fatal "workload process identity validation failed"
 			start_cpu_profiler "${case_dir}/recovery" java 1 1 \
 				--tool-path "${PROFILER_TOOL_DIR}" --pid "${recovery_pid}"
 			assert_profiler_exit 0

@@ -17,16 +17,25 @@ create
 completed=$JOB_ID
 create
 second=$JOB_ID
-verify_result "$completed"
-verify_result "$second"
+wait_job "$completed" completed
+profiling_results_fetch "$completed" "$HUATUO_BAMAI_TEST_TMPDIR" 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "failed to fetch profiling results"
+jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json" | assert_profile_windows - 2 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json"
+assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$completed.json" \
+	|| fatal "profiling flamegraph validation failed"
+wait_job "$second" completed
+profiling_results_fetch "$second" "$HUATUO_BAMAI_TEST_TMPDIR" 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "failed to fetch profiling results"
+jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$second.json" | assert_profile_windows - 2 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$second.json"
+assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$second.json" \
+	|| fatal "profiling flamegraph validation failed"
 # A valid on-CPU result must not satisfy an off-CPU matrix entry.
-if (
-	trap - EXIT
-	verify_result "$completed" 2 process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds
-) > "${HUATUO_BAMAI_TEST_TMPDIR}/wrong-profile-type.log" 2>&1; then
+if jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$completed.json" \
+	| assert_profile_windows - 2 process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds; then
 	fatal 'on-CPU result accepted as off-CPU'
 fi
-grep -q 'unexpected profile type' "${HUATUO_BAMAI_TEST_TMPDIR}/wrong-profile-type.log" || fatal 'profile type rejection failed for an unrelated reason'
 for offset in 0 1; do
 	if ((offset == 0)); then expected=$second; else expected=$completed; fi
 	request GET "/v1/profiling?limit=1&offset=$offset" 200

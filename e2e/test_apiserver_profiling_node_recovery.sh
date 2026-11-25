@@ -19,11 +19,17 @@ pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
 mapfile -t ORPHAN_PIDS < <(ps -eo pid=,ppid=,pgid= | awk -v parent="$pid" '$2 == parent && $1 == $3 {print $1}')
 assert_huatuo_bamai_shutdown_with_signal KILL
 wait_job "$JOB_ID" failed
-assert_reason "$JOB_ID" node_unavailable
+assert_terminal_reason "$JOB_ID" node_unavailable
 stop_orphans
 start_node
 create
-verify_result "$JOB_ID"
+wait_job "$JOB_ID" completed
+profiling_results_fetch "$JOB_ID" "$HUATUO_BAMAI_TEST_TMPDIR" 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "failed to fetch profiling results"
+jq -e .data "$HUATUO_BAMAI_TEST_TMPDIR/raw-$JOB_ID.json" | assert_profile_windows - 2 'process_cpu:cpu:nanoseconds:cpu:nanoseconds' \
+	|| fatal "invalid profiling windows; inspect $HUATUO_BAMAI_TEST_TMPDIR/raw-$JOB_ID.json"
+assert_profile_flamegraph "$HUATUO_BAMAI_TEST_TMPDIR/flamegraph-$JOB_ID.json" \
+	|| fatal "profiling flamegraph validation failed"
 pass
 # Node loss intentionally logs failures; runtime panics must still fail.
 if grep -Eiq 'panic:|fatal error:' "${HUATUO_BAMAI_TEST_TMPDIR}"/*.log; then fatal 'runtime panic found in service logs'; fi

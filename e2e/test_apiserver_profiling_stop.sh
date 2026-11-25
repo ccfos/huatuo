@@ -16,10 +16,10 @@ CURRENT_CASE=stop-and-result-access
 create 60
 wait_job "$JOB_ID" running
 request GET "/v1/profiling/$JOB_ID/raw" 409
-assert_error result_not_ready
+assert_error_code result_not_ready
 stop_job "$JOB_ID"
 request GET "/v1/profiling/$JOB_ID/raw" 409
-assert_error result_unavailable
+assert_error_code result_unavailable
 pass
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" apiserver
 cat "$SUMMARY"

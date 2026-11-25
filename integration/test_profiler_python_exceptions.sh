@@ -108,7 +108,7 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 			timeout --kill-after=1 5 "${PROFILER_REAL_PYSPY}" dump --pid "${target_pids[0]}" \
 				> "${case_dir}/py-spy-probe.out" 2> "${case_dir}/py-spy-probe.err" || probe_status=$?
 			if [[ ${probe_status} -ne 0 ]]; then
-				assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target during py-spy probe"
+				assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target during py-spy probe" || fatal "workload process identity validation failed"
 				probe_diagnostic="py-spy probe for $(python3 --version 2>&1) exited ${probe_status}: $(< "${case_dir}/py-spy-probe.err")"
 				[[ ${probe_status} -ne 124 ]] || fatal "${probe_diagnostic}; probe timed out"
 				if grep -qE 'Permission denied|Operation not permitted' "${case_dir}/py-spy-probe.err"; then
@@ -168,14 +168,14 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 				assert_profiler_stack "${pid}" controlled_hot_method
 			done
 			if [[ ${test_case} == some-killed ]]; then
-				assert_process_alive "${target_pids[1]}" "${target_start_times[1]}" "surviving Python target"
+				assert_process_alive "${target_pids[1]}" "${target_start_times[1]}" "surviving Python target" || fatal "workload process identity validation failed"
 			fi
 			;;
 		backend-killed)
 			kill -KILL "${collector_pids[0]}"
 			assert_profiler_exit 1
 			assert_python_collector_failed "${target_pids[0]}"
-			assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target after collector failure"
+			assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target after collector failure" || fatal "workload process identity validation failed"
 			;;
 		interrupt | terminate | kill)
 			case ${test_case} in
@@ -190,7 +190,7 @@ for test_case in some-killed all-killed interrupt-after-targets-exit backend-kil
 			else
 				assert_python_capture_has_no_samples
 			fi
-			assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target after profiler stop"
+			assert_process_alive "${target_pids[0]}" "${target_start_times[0]}" "Python target after profiler stop" || fatal "workload process identity validation failed"
 			;;
 		esac
 		assert_collectors_exited "${collector_fd}" "${case_dir}/collectors.out" collector_pids collector_start_times

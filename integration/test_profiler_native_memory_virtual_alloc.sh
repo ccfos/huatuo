@@ -95,7 +95,7 @@ PROFILER_PID=$!
 kill -0 "${PROFILER_PID}" 2> /dev/null || fatal "failed to launch profiler"
 
 wait_until "${PROFILER_READY_TIMEOUT}" "${PROFILER_READY_INTERVAL}" \
-	profiler_ready "${TOOL_OUT}" || fatal "profiler did not start the read loop"
+	profiler_read_loop_started "${TOOL_OUT}" || fatal "profiler did not start the read loop"
 
 log_info "sending SIGUSR1 to target pid=${TARGET_PID}"
 kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture pid=${TARGET_PID}"
@@ -176,7 +176,7 @@ TARGET_PID=$!
 	--output-format collapsed --output-path "${WORK_DIR}/final/result.folded" --verbose \
 	> "${WORK_DIR}/final/profiler.out" 2> "${WORK_DIR}/final/profiler.err" &
 PROFILER_PID=$!
-wait_until 15 0.01 profiler_ready "${WORK_DIR}/final/profiler.out" \
+wait_until 15 0.01 profiler_read_loop_started "${WORK_DIR}/final/profiler.out" \
 	|| fatal "final-burst profiler did not become ready"
 kill -USR1 "${TARGET_PID}" || fatal "failed to start final allocation burst"
 wait_until 5 0.01 grep -qx 'final allocation complete' "${WORK_DIR}/final/fixture.out" \

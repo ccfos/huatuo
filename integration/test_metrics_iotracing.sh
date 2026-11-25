@@ -253,7 +253,7 @@ EOF
 		local output="${HUATUO_BAMAI_TEST_TMPDIR}/${direction}-${size}.io.json"
 		if [[ ${direction} == write ]]; then
 			((io_test_disk_writable)) || fatal "writes are not authorized for /dev/${iotracing_disk}"
-			assert_io_test_disk_identity "${iotracing_disk}" \
+			io_test_disk_identity_matches "${iotracing_disk}" \
 				|| fatal "configured test disk identity changed: ${iotracing_disk}"
 			flush=1
 		fi
