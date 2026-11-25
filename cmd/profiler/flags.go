@@ -37,7 +37,7 @@ var appFlags = []cli.Flag{
 		Usage:   "Target PID(s), comma-separated for Java and Python; native supports one PID",
 	},
 	&cli.StringFlag{
-		Name:  "cpuid",
+		Name:  "cpu-list",
 		Usage: "CPU IDs to profile: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
 	},
 	&cli.StringFlag{

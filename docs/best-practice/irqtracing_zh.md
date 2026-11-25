@@ -30,7 +30,7 @@ sudo ./_output/bin/irqtracing \
   --output-format collapsed --output-path irqtracing.folded
 ```
 
-`--target-cpu` 可选，默认值为 `-1`，表示跟踪系统中的全部 CPU。工具只挂载 `irq/softirq_raise` / `irq/softirq_entry` tracepoint；全量模式聚合所有 CPU 的 source 和直接被抢占的 victim，指定非负 CPU 时只保留该 CPU 的数据。两种模式都采集 `--duration` 秒（默认 3）。
+`--cpu-list` 可选，省略或为空时跟踪全部 CPU。当前只支持单个 CPU，例如 `--cpu-list 1`；列表或范围解析后包含多个 CPU 时返回不支持错误。工具只挂载 `irq/softirq_raise` / `irq/softirq_entry` tracepoint；全量模式聚合所有 CPU 的 source 和直接被抢占的 victim，指定单个 CPU 时只保留该 CPU 的数据。两种模式都采集 `--duration` 秒（默认 3）。
 
 `--max-events-per-second-per-cpu N` 可选，用于限制每个被跟踪 CPU 每秒采集的 source 和 victim 栈样本总数。省略该参数或设置为 `0` 时不限速；启用时 `N` 必须在 2 到 8589934590 之间。每 CPU 额度在 `softirq_raise` 和 `softirq_entry` 之间尽量均分；奇数额度多出的一个样本分给 raise。全 CPU 模式下，系统总额度随被跟踪 CPU 数量增长。
 
@@ -99,7 +99,7 @@ CPU 和 softirq 向量标签；内核栈帧带 `_[k]` 后缀。
 
 守护进程的 `AutoTracing.IRQTracing` tracer 在其规则检测到某个 CPU 出现 irq/softirq 突增或持续高利用率时，会调用守护进程可执行文件旁的 `irqtracing` 二进制（`CoreBinDir` 由守护进程自身路径推导；源码构建树中即 `_output/bin/irqtracing`）。
 
-调用时传入 `--bpf-path <CoreBpfDir>/irqtracing.o`、`--target-cpu <cpu>`、`--duration <RunTracingToolTimeout>` 和 `--max-events-per-second-per-cpu <MaxEventsPerSecond>`。`MaxEventsPerSecond` 默认是 1000，因此 raise 和 entry 默认各限制为 500/s。
+调用时传入 `--bpf-path <CoreBpfDir>/irqtracing.o`、`--cpu-list <cpu>`、`--duration <RunTracingToolTimeout>` 和 `--max-events-per-second-per-cpu <MaxEventsPerSecond>`。`MaxEventsPerSecond` 默认是 1000，因此 raise 和 entry 默认各限制为 500/s。
 
 该路径要求配置 Elasticsearch，仅配置 tracing 本地文件存储不足以保存 IRQ profile。触发规则及命中 CPU 利用率保留在守护进程日志中。
 

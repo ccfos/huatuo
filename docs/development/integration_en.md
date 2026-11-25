@@ -177,7 +177,7 @@ sudo bash integration/run.sh test_profiler_java_memory_usage_alloc.sh
 sudo bash integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
-Java/Python cases need the corresponding collection tools in `PROFILER_TOOL_DIR`. Container, thread-group, and CPU-specific tests are `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`.
+Java/Python cases need the corresponding collection tools in `PROFILER_TOOL_DIR`. Container, thread-group, and CPU-specific tests are `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_list.sh`.
 
 ### Storage and Resource Limits
 

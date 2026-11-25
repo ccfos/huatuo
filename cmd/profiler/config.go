@@ -48,7 +48,7 @@ func loadConfig(cliCtx *cli.Context) (*commandConfig, error) {
 
 	outputPath := cliCtx.String("output-path")
 	var cpuIDs []int
-	if cpuidStr := cliCtx.String("cpuid"); cpuidStr != "" {
+	if cpuidStr := cliCtx.String("cpu-list"); cpuidStr != "" {
 		cpuIDs, err = parseCPUIDs(cpuidStr)
 		if err != nil {
 			return nil, err

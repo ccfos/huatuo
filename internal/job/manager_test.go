@@ -285,9 +285,14 @@ func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	}}
 	manager := testManager(newMemoryStore(), nodeClient)
 
-	first, err := manager.Create(t.Context(), testCreateRequest())
+	request := testCreateRequest()
+	request.Spec.Profiling.HostCPUList = "3,1-3"
+	first, err := manager.Create(t.Context(), request)
 	if err != nil {
 		t.Fatalf("first Create() error = %v", err)
+	}
+	if first.Spec.Profiling.HostCPUList != "1-3" || request.Spec.Profiling.HostCPUList != "3,1-3" {
+		t.Fatalf("CPU list normalization changed request or was not persisted: %+v", first.Spec.Profiling)
 	}
 	parsedID, err := uuid.Parse(first.ID)
 	if err != nil {

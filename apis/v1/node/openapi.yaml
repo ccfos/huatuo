@@ -513,6 +513,10 @@ components:
           $ref: '#/components/schemas/ProfilingLanguage'
         mode:
           $ref: '#/components/schemas/ProfilingMode'
+        host_cpu_list:
+          type: string
+          maxLength: 65536
+          description: Host logical CPU list for both host and container scopes, for example "1,3-10"; empty or omitted means all CPUs. Native CPU supports multiple CPUs; IRQ currently supports one. Java, Python and memory CPU targeting are unsupported.
         binary_match_path:
           type: string
           minLength: 1

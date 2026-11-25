@@ -29,14 +29,19 @@ import (
 const irqMaxEventsPerSecondPerCPU uint64 = 1000
 
 func buildCommand(request *StartRequest, config *Config) (executil.Spec, error) {
+	var command executil.Spec
 	switch request.Spec.Type {
 	case profilingdomain.TypeIRQ:
-		return buildIRQTracingCommand(request, config), nil
+		command = buildIRQTracingCommand(request, config)
 	case profilingdomain.TypeCPU, profilingdomain.TypeMemory:
-		return buildProfilerCommand(request, config), nil
+		command = buildProfilerCommand(request, config)
 	default:
 		return executil.Spec{}, fmt.Errorf("unsupported profiling type %q", request.Spec.Type)
 	}
+	if request.Spec.HostCPUList != "" {
+		command.Args = append(command.Args, "--cpu-list", request.Spec.HostCPUList)
+	}
+	return command, nil
 }
 
 func buildIRQTracingCommand(request *StartRequest, config *Config) executil.Spec {
@@ -44,7 +49,6 @@ func buildIRQTracingCommand(request *StartRequest, config *Config) executil.Spec
 		Path: filepath.Join(config.ToolBinDir, "irqtracing"),
 		Args: []string{
 			"--bpf-path", filepath.Join(config.BPFObjDir, "irqtracing.o"),
-			"--target-cpu", "-1",
 			"--duration", strconv.FormatInt(int64(request.Duration/time.Second), 10),
 			"--max-events-per-second-per-cpu", strconv.FormatUint(irqMaxEventsPerSecondPerCPU, 10),
 			"--output-format", "remote-store",

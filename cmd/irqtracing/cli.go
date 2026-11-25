@@ -22,6 +22,8 @@ import (
 	"github.com/urfave/cli/v2"
 
 	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
 // Older Clang versions emit the negative BTF enum as unsigned.
@@ -29,7 +31,7 @@ const allCPUsTarget int32 = -1
 
 const (
 	cliFlagBPFPath                  = "bpf-path"
-	cliFlagTargetCPU                = "target-cpu"
+	cliFlagCPUList                  = "cpu-list"
 	cliFlagDuration                 = "duration"
 	cliFlagMaxEventsPerSecondPerCPU = "max-events-per-second-per-cpu"
 	cliFlagOutputFormat             = "output-format"
@@ -43,7 +45,7 @@ const (
 
 type irqTracingConfig struct {
 	bpfPath                  string
-	targetCPU                int32
+	cpuID                    int32
 	duration                 int
 	maxEventsPerSecondPerCPU uint64
 	output                   profileroutput.OutputFormat
@@ -56,10 +58,9 @@ func appFlags() []cli.Flag {
 			Usage:    "path to the irqtracing BPF object file",
 			Required: true,
 		},
-		&cli.Int64Flag{
-			Name:  cliFlagTargetCPU,
-			Value: int64(allCPUsTarget),
-			Usage: "cpu to trace; omit or set to -1 to trace all CPUs",
+		&cli.StringFlag{
+			Name:  cliFlagCPUList,
+			Usage: "CPU list to trace; currently supports one CPU, empty for all CPUs",
 		},
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
@@ -116,8 +117,8 @@ func validateFlags(c *cli.Context) error {
 }
 
 func loadConfig(c *cli.Context) (irqTracingConfig, error) {
-	targetCPU := c.Int64(cliFlagTargetCPU)
-	if err := validateTargetCPU(targetCPU); err != nil {
+	cpuID, err := parseCPUListID(c.String(cliFlagCPUList))
+	if err != nil {
 		return irqTracingConfig{}, err
 	}
 
@@ -133,18 +134,29 @@ func loadConfig(c *cli.Context) (irqTracingConfig, error) {
 
 	return irqTracingConfig{
 		bpfPath:                  c.String(cliFlagBPFPath),
-		targetCPU:                int32(targetCPU),
+		cpuID:                    cpuID,
 		duration:                 duration,
 		maxEventsPerSecondPerCPU: limit,
 		output:                   profileroutput.OutputFormat(c.String(cliFlagOutputFormat)),
 	}, nil
 }
 
-func validateTargetCPU(targetCPU int64) error {
-	if targetCPU < int64(allCPUsTarget) || targetCPU > math.MaxInt32 {
-		return fmt.Errorf("--target-cpu must be -1 or between 0 and %d", math.MaxInt32)
+func parseCPUListID(list string) (int32, error) {
+	spec := profiling.Spec{
+		Type:        profiling.TypeIRQ,
+		HostCPUList: list,
 	}
-	return nil
+	ids, err := spec.ParseHostCPUList()
+	if err != nil {
+		return 0, fmt.Errorf("--cpu-list: %w", err)
+	}
+	if err := cpuutil.ValidateOnline(ids, cpuutil.SystemCPUOnlinePath); err != nil {
+		return 0, fmt.Errorf("--cpu-list: %w", err)
+	}
+	if len(ids) == 0 {
+		return allCPUsTarget, nil
+	}
+	return int32(ids[0]), nil
 }
 
 func validateDuration(duration int) error {

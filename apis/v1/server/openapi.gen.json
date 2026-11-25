@@ -180,6 +180,11 @@
             "minimum": 1,
             "type": "integer"
           },
+          "host_cpu_list": {
+            "description": "Host logical CPU list for both host and container scopes, for example \"1,3-10\"; empty or omitted means all CPUs. Native CPU supports multiple CPUs; IRQ currently supports one. Java, Python and memory CPU targeting are unsupported.",
+            "maxLength": 65536,
+            "type": "string"
+          },
           "hostname": {
             "minLength": 1,
             "type": "string"
@@ -422,6 +427,11 @@
             "additionalProperties": false,
             "properties": {
               "binary_match_path": {
+                "type": "string"
+              },
+              "host_cpu_list": {
+                "description": "Host logical CPU list for both host and container scopes, for example \"1,3-10\"; empty or omitted means all CPUs. Native CPU supports multiple CPUs; IRQ currently supports one. Java, Python and memory CPU targeting are unsupported.",
+                "maxLength": 65536,
                 "type": "string"
               },
               "language": {

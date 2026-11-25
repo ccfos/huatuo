@@ -20,7 +20,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 	"github.com/ccfos/huatuo/pkg/profiling"
 )
 
@@ -82,6 +82,11 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			wantError: `unsupported profiling type "mem"`,
 		},
 		{
+			name:      "removed CPU option",
+			args:      []string{"--cpuid", "1"},
+			wantError: "flag provided but not defined",
+		},
+		{
 			name:      "removed flags option",
 			args:      []string{"--type", "cpu", "--language", "c", "--flags", "ignored"},
 			wantError: "flag provided but not defined: -flags",
@@ -128,125 +133,6 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 	}
 }
 
-func TestParseCPUIDsWithLimit(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		numCPU  int
-		want    []int
-		wantErr bool
-	}{
-		{
-			numCPU: 8,
-			name:   "single CPU",
-			input:  "1",
-			want:   []int{1},
-		},
-		{
-			numCPU: 8,
-			name:   "comma separated",
-			input:  "1,3,5",
-			want:   []int{1, 3, 5},
-		},
-		{
-			numCPU: 8,
-			name:   "range",
-			input:  "1-3",
-			want:   []int{1, 2, 3},
-		},
-		{
-			numCPU: 8,
-			name:   "mixed",
-			input:  "1,3,5-7",
-			want:   []int{1, 3, 5, 6, 7},
-		},
-		{
-			numCPU: 8,
-			name:   "with spaces",
-			input:  "1, 3, 5-7",
-			want:   []int{1, 3, 5, 6, 7},
-		},
-		{
-			numCPU: 8,
-			name:   "duplicate removal",
-			input:  "1,1,2-3,3",
-			want:   []int{1, 2, 3},
-		},
-		{
-			numCPU: 8,
-			name:   "range with spaces",
-			input:  "1 - 3",
-			want:   []int{1, 2, 3},
-		},
-		{
-			numCPU:  8,
-			name:    "invalid range",
-			input:   "3-1",
-			wantErr: true,
-		},
-		{
-			numCPU:  8,
-			name:    "out of range",
-			input:   "8",
-			wantErr: true,
-		},
-		{
-			numCPU:  8,
-			name:    "negative",
-			input:   "-1",
-			wantErr: true,
-		},
-		{
-			numCPU:  8,
-			name:    "invalid format",
-			input:   "a,b",
-			wantErr: true,
-		},
-		{
-			numCPU:  8,
-			name:    "empty after trim",
-			input:   "  ",
-			wantErr: true,
-		},
-		{
-			numCPU: 8,
-			name:   "valid max CPU",
-			input:  "7",
-			want:   []int{7},
-		},
-		{
-			numCPU: 8,
-			name:   "valid full range",
-			input:  "0-7",
-			want:   []int{0, 1, 2, 3, 4, 5, 6, 7},
-		},
-		{
-			numCPU:  8,
-			name:    "range end out of range",
-			input:   "0-8",
-			wantErr: true,
-		},
-		{
-			name:    "invalid cpu count",
-			input:   "0",
-			numCPU:  0,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseCPUIDsWithLimit(tt.input, tt.numCPU)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestValidateProfilerFlagCompatibility(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -255,7 +141,12 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 		args      []string
 		wantError string
 	}{
-		{name: "native CPU cpuid", language: "go", typ: "cpu", args: []string{"--cpuid", "1"}},
+		{
+			name:     "native CPU cpuid",
+			language: "go",
+			typ:      "cpu",
+			args:     []string{"--cpu-list", "1"},
+		},
 		{name: "native hardware PMU", language: "go", typ: "cpu", args: []string{"--require-hardware-pmu"}},
 		{name: "native off-CPU", language: "go", typ: "cpu", args: []string{"--cpu-mode", "offcpu"}},
 		{
@@ -269,7 +160,7 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			name:     "native off-CPU cpuid",
 			language: "c",
 			typ:      "cpu",
-			args:     []string{"--cpu-mode", "offcpu", "--cpuid", "1"},
+			args:     []string{"--cpu-mode", "offcpu", "--cpu-list", "1"},
 		},
 		{
 			name:     "native off-CPU stats",
@@ -323,8 +214,8 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			name:      "Java cpuid",
 			language:  "java",
 			typ:       "cpu",
-			args:      []string{"--cpuid", "1"},
-			wantError: "--cpuid is supported only by native CPU profiling",
+			args:      []string{"--cpu-list", "1"},
+			wantError: `--cpu-list: CPU targeting is not supported for type "cpu" and language "java"`,
 		},
 		{
 			name:      "Java hardware PMU",
@@ -476,21 +367,16 @@ func newValidationCLIContext(t *testing.T, args ...string) *cli.Context {
 }
 
 func TestParseCPUIDs(t *testing.T) {
-	numCPU := runtime.NumCPU()
-
-	t.Run("out of range based on numCPU", func(t *testing.T) {
-		_, err := parseCPUIDs(strconv.Itoa(numCPU))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "out of range")
-	})
-
-	t.Run("valid max CPU", func(t *testing.T) {
-		if numCPU > 0 {
-			got, err := parseCPUIDs("0")
-			require.NoError(t, err)
-			assert.Equal(t, []int{0}, got)
-		}
-	})
+	data, err := os.ReadFile(cpuutil.SystemCPUOnlinePath)
+	require.NoError(t, err)
+	online, err := cpuutil.ParseList(string(data))
+	require.NoError(t, err)
+	require.NotEmpty(t, online)
+	got, err := parseCPUIDs(strconv.Itoa(online[0]))
+	require.NoError(t, err)
+	assert.Equal(t, online[:1], got)
+	_, err = parseCPUIDs("2147483647")
+	require.ErrorContains(t, err, "not online")
 }
 
 func TestValidateMemoryMode(t *testing.T) {

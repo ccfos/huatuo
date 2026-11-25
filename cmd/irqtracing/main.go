@@ -87,7 +87,7 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 	duration := time.Duration(cfg.duration) * time.Second
 	task := newIRQProfiler(&collector{
 		bpfPath:                  cfg.bpfPath,
-		cpuId:                    cfg.targetCPU,
+		cpuID:                    cfg.cpuID,
 		maxEventsPerSecondPerCPU: cfg.maxEventsPerSecondPerCPU,
 	})
 	return profile.Run(ctx, profile.RunConfig{

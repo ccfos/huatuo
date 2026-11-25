@@ -126,3 +126,65 @@ func TestIRQEnvironmentChecksOnlySelectedTool(t *testing.T) {
 		})
 	}
 }
+
+func TestCPUSelectionErrorsPrecedeToolDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec profilingdomain.Spec
+		want string
+	}{
+		{
+			name: "IRQ range",
+			spec: profilingdomain.Spec{
+				Type:        profilingdomain.TypeIRQ,
+				HostCPUList: "1-3",
+			},
+			want: "supports only one target CPU",
+		},
+		{
+			name: "Java",
+			spec: profilingdomain.Spec{
+				Type:        profilingdomain.TypeCPU,
+				Language:    profilingdomain.LanguageJava,
+				HostCPUList: "1",
+			},
+			want: "CPU targeting is not supported",
+		},
+		{
+			name: "Python",
+			spec: profilingdomain.Spec{
+				Type:        profilingdomain.TypeCPU,
+				Language:    profilingdomain.LanguagePython,
+				HostCPUList: "1",
+			},
+			want: "CPU targeting is not supported",
+		},
+		{
+			name: "memory",
+			spec: profilingdomain.Spec{
+				Type:        profilingdomain.TypeMemory,
+				Language:    profilingdomain.LanguageGo,
+				HostCPUList: "1",
+			},
+			want: "CPU targeting is not supported",
+		},
+		{
+			name: "offline",
+			spec: profilingdomain.Spec{
+				Type:        profilingdomain.TypeCPU,
+				Language:    profilingdomain.LanguageGo,
+				HostCPUList: "2147483647",
+			},
+			want: "not online",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := testProfilingRequest()
+			request.Spec = tc.spec
+			err := validateEnvironment(request, &Config{})
+			if !errors.Is(err, ErrEnvironmentUnsupported) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateEnvironment() = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

@@ -237,7 +237,7 @@ sudo _output/bin/profiler \
   --output-path ./profiles/go-cpu/
 ```
 
-Add `--thread-group` to include worker threads in the same process, or `--cpuid 2,4-7` to restrict CPUs. Native CPU collection also supports container and host scopes:
+Add `--thread-group` to include worker threads in the same process, or `--cpu-list 2,4-7` to restrict CPUs. Native CPU collection also supports container and host scopes:
 
 Native on-CPU collection prefers hardware CPU cycle events and falls back to software CPU clock when the hardware PMU is unavailable. `--freq` means samples per second with either source. Use `--require-hardware-pmu` if software-clock fallback would hide CPU time spent with IRQs disabled.
 
@@ -261,13 +261,13 @@ Use off-CPU mode to attribute time away from the CPU to the call path that cause
 sudo _output/bin/profiler \
   --type cpu --language go --pid 12345 --thread-group \
   --cpu-mode offcpu --offcpu-phase all \
-  --cpuid 2,4-7 \
+  --cpu-list 2,4-7 \
   --offcpu-min-duration-us 1000 \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/go-offcpu/
 ```
 
-Off-CPU collection is event-driven and does not use `--freq`. With `--cpuid`, only intervals starting with a switch-out on a target CPU are recorded; later wakeups or switch-ins on other CPUs do not change attribution. Flame graphs use nanosecond values directly and add roots such as `off-CPU blocked`, `scheduling delay (preempted)`, and `scheduling delay (yielded)`. Phase `all` accumulates both blocked and runqueue time while displaying them under separate roots.
+Off-CPU collection is event-driven and does not use `--freq`. With `--cpu-list`, only intervals starting with a switch-out on a target CPU are recorded; later wakeups or switch-ins on other CPUs do not change attribution. Flame graphs use nanosecond values directly and add roots such as `off-CPU blocked`, `scheduling delay (preempted)`, and `scheduling delay (yielded)`. Phase `all` accumulates both blocked and runqueue time while displaying them under separate roots.
 
 Native memory collection supports:
 

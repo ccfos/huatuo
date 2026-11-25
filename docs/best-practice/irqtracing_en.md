@@ -30,7 +30,7 @@ sudo ./_output/bin/irqtracing \
   --output-format collapsed --output-path irqtracing.folded
 ```
 
-The optional `--target-cpu` defaults to `-1`, tracing all CPUs. The tool attaches only to the `irq/softirq_raise` and `irq/softirq_entry` tracepoints. All-CPU mode aggregates sources and directly preempted victims across CPUs; a nonnegative CPU ID retains only that CPU's data. Both modes collect for `--duration` seconds (default: 3).
+The optional `--cpu-list` traces all CPUs when omitted or empty. Currently only one CPU is supported, for example `--cpu-list 1`; lists or ranges resolving to multiple CPUs return an unsupported error. The tool attaches only to the `irq/softirq_raise` and `irq/softirq_entry` tracepoints. All-CPU mode aggregates sources and directly preempted victims across CPUs; a single CPU ID retains only that CPU's data. Both modes collect for `--duration` seconds (default: 3).
 
 The optional `--max-events-per-second-per-cpu N` limits the total source and victim stack samples collected per tracked CPU per second. Omitting it or setting it to `0` disables the limit. When enabled, `N` must be between 2 and 8589934590. The per-CPU budget is split as evenly as possible between `softirq_raise` and `softirq_entry`; for odd budgets, raise gets the extra sample. In all-CPU mode, the system-wide budget grows with the number of tracked CPUs.
 
@@ -99,7 +99,7 @@ incomplete results; unreadable counters fail collection. Zero values may be omit
 
 When its rules detect a spike or sustained high irq/softirq utilization on a CPU, the daemon's `AutoTracing.IRQTracing` tracer invokes the `irqtracing` binary beside the daemon executable. `CoreBinDir` is derived from the daemon's path; in a source build, the tool is `_output/bin/irqtracing`.
 
-It passes `--bpf-path <CoreBpfDir>/irqtracing.o`, `--target-cpu <cpu>`, `--duration <RunTracingToolTimeout>`, and `--max-events-per-second-per-cpu <MaxEventsPerSecond>`. `MaxEventsPerSecond` defaults to 1000, giving raise and entry a default limit of 500/s each.
+It passes `--bpf-path <CoreBpfDir>/irqtracing.o`, `--cpu-list <cpu>`, `--duration <RunTracingToolTimeout>`, and `--max-events-per-second-per-cpu <MaxEventsPerSecond>`. `MaxEventsPerSecond` defaults to 1000, giving raise and entry a default limit of 500/s each.
 
 This path requires Elasticsearch configuration. Tracing local-file storage alone cannot save IRQ profiles. Trigger rules and the triggering CPU's utilization are recorded in daemon logs.
 

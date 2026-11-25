@@ -37,7 +37,7 @@ const (
 // The CLI validates collection settings before constructing a collector.
 type collector struct {
 	bpfPath                  string
-	cpuId                    int32
+	cpuID                    int32
 	maxEventsPerSecondPerCPU uint64
 	bpfObj                   bpf.BPF
 }
@@ -60,7 +60,7 @@ func (c *collector) Start(_ context.Context) error {
 	}
 
 	object, err := bpf.LoadBPFFromBytes(fmt.Sprintf("irqtracing_%d.o", time.Now().UnixNano()), data,
-		irqTracingBPFConstants(c.cpuId, c.maxEventsPerSecondPerCPU))
+		irqTracingBPFConstants(c.cpuID, c.maxEventsPerSecondPerCPU))
 	if err != nil {
 		return fmt.Errorf("load IRQ BPF: %w", err)
 	}
@@ -126,8 +126,8 @@ func (c *collector) Stop() error {
 	return err
 }
 
-func irqTracingBPFConstants(targetCPU int32, maxEventsPerSecondPerCPU uint64) map[string]any {
-	constants := map[string]any{"target_cpu": targetCPU}
+func irqTracingBPFConstants(cpuID int32, maxEventsPerSecondPerCPU uint64) map[string]any {
+	constants := map[string]any{"target_cpu": cpuID}
 	if maxEventsPerSecondPerCPU != 0 {
 		constants[sourceRateLimitConstant] = uint32(maxEventsPerSecondPerCPU/2 + maxEventsPerSecondPerCPU%2)
 		constants[victimRateLimitConstant] = uint32(maxEventsPerSecondPerCPU / 2)

@@ -17,10 +17,13 @@ package profiling
 import (
 	"fmt"
 	"slices"
+
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 )
 
 // Spec contains stable profiling service parameters.
 type Spec struct {
+	HostCPUList     string   `json:"host_cpu_list,omitempty"`
 	Type            Type     `json:"type"`
 	Language        Language `json:"language,omitempty"`
 	Mode            Mode     `json:"mode"`
@@ -28,7 +31,10 @@ type Spec struct {
 }
 
 // Validate checks the profiling parameter combination against static capabilities.
-func (s Spec) Validate() error {
+func (s *Spec) Validate() error {
+	if _, err := cpuutil.ParseList(s.HostCPUList); err != nil {
+		return fmt.Errorf("invalid host_cpu_list: %w", err)
+	}
 	if _, err := ParseType(string(s.Type)); err != nil {
 		return err
 	}
@@ -68,4 +74,26 @@ func (s Spec) Validate() error {
 	}
 
 	return nil
+}
+
+// ParseHostCPUList validates collector support separately from API syntax.
+// Nodes can report unsupported selections through the existing startup error path.
+func (s *Spec) ParseHostCPUList() ([]int, error) {
+	ids, err := cpuutil.ParseList(s.HostCPUList)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if s.Type == TypeIRQ {
+		if len(ids) > 1 {
+			return nil, fmt.Errorf("irqtracing supports only one target CPU; requested %q", s.HostCPUList)
+		}
+		return ids, nil
+	}
+	if s.Type == TypeCPU && (s.Language == LanguageC || s.Language == LanguageCPP || s.Language == LanguageGo) {
+		return ids, nil
+	}
+	return nil, fmt.Errorf("CPU targeting is not supported for type %q and language %q", s.Type, s.Language)
 }

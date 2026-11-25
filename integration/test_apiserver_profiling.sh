@@ -139,7 +139,7 @@ functional_cases() {
 	local extra body
 	for extra in '{"duration_seconds":0}' '{"duration_seconds":-1}' '{"duration_seconds":9223372036854775807}' \
 		'{"language":"python","type":"memory","mode":"object_alloc"}' '{"mode":"object_alloc"}' \
-		'{"scope":"container"}' '{"hostname":""}' '{"type":"memory","mode":"virtual_alloc"}' '{"language":"java"}'; do
+		'{"target_cpu_list":"1"}' '{"host_cpu_list":"3-1"}' '{"host_cpu_list":"1,,2"}' '{"host_cpu_list":"-1"}' '{"scope":"container"}' '{"hostname":""}' '{"type":"memory","mode":"virtual_alloc"}' '{"language":"java"}'; do
 		body=$(jq -nc --argjson extra "$extra" '{hostname:"127.0.0.1",duration_seconds:12,scope:"host",type:"cpu",language:"c",mode:"oncpu"}+$extra')
 		request POST /v1/profiling 400 "$body"
 		assert_error_code invalid_request
@@ -153,8 +153,32 @@ functional_cases() {
 	stop_job "$JOB_ID"
 	pass
 
+	CURRENT_CASE=cpu-list-range
+	local cpu_list
+	cpu_list=$(cat /sys/devices/system/cpu/online)
+	create 12 "$(jq -nc --arg cpus "${cpu_list}" '{host_cpu_list:$cpus}')"
+	local cpu_job=$JOB_ID
+	verify_result "$cpu_job"
+	request GET "/v1/profiling/${cpu_job}" 200
+	jq -e --arg cpus "${cpu_list}" '.data.host_cpu_list == $cpus' "$RESPONSE" > /dev/null || fatal "CPU range was not preserved"
+	pass
+
 	CURRENT_CASE=offcpu-reason-filters
 	assert_offcpu_reason_filters
+	pass
+
+	CURRENT_CASE=unsupported-cpu-targets
+	local spec
+	for spec in \
+		'{"type":"cpu","language":"java","mode":"oncpu"}' \
+		'{"type":"cpu","language":"python","mode":"oncpu"}' \
+		'{"type":"memory","language":"c","mode":"virtual_alloc"}'; do
+		create 12 "$(jq -nc --argjson spec "$spec" '$spec + {scope:"container",container_id:("a" * 64),host_cpu_list:"1"}')"
+		wait_job "$JOB_ID" failed
+		assert_reason "$JOB_ID" execution_start_failed
+		jq -e '.data.terminal.message | contains("CPU targeting is not supported")' \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/status-${JOB_ID}.json" > /dev/null || fatal "unsupported CPU target was ignored"
+	done
 	pass
 
 	CURRENT_CASE=missing-container

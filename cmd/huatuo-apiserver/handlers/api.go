@@ -130,6 +130,7 @@ func (h *APIHandler) CreateProfilingJob(
 			Language:        profilingdomain.Language(optionalValue(request.Body.Language)),
 			Mode:            profilingdomain.Mode(request.Body.Mode),
 			BinaryMatchPath: optionalValue(request.Body.BinaryMatchPath),
+			HostCPUList:     optionalValue(request.Body.HostCPUList),
 		},
 	})
 	if err != nil {
@@ -457,6 +458,7 @@ func mapProfilingJob(source *job.Job) serverapi.ProfilingJob {
 		Language:        optionalString(serverapi.ProfilingLanguage(source.Spec.Profiling.Language)),
 		Mode:            serverapi.ProfilingMode(source.Spec.Profiling.Mode),
 		BinaryMatchPath: optionalString(source.Spec.Profiling.BinaryMatchPath),
+		HostCPUList:     optionalString(source.Spec.Profiling.HostCPUList),
 	}
 }
 

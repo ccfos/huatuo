@@ -15,7 +15,7 @@ Define consistent semantics before naming event fields according to each layer's
 | BPF C | Reflect raw kernel semantics and units | `tgid`, `kernel_observed_ns` |
 | Go | MixedCaps; keep initialisms uppercase | `TGID`, `KernelObservedNS` |
 | JSON | Use user-facing measurement semantics | `pid`, `observed_timestamp` |
-| CLI flags | Lowercase with hyphens | `--pid`, `--cpuid` |
+| CLI flags | Lowercase with hyphens | `--pid`, `--cpu-list` |
 | CLI text and column headers | Use standard uppercase abbreviations | `PID`, `CPU`, `COMM` |
 
 ## CPUs and Tasks

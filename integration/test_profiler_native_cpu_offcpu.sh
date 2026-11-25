@@ -19,27 +19,9 @@ require_readable /sys/kernel/btf/vmlinux
 bpf_tool_setup profiler native_offcpu_profiler profiler-offcpu
 readonly PROFILER_FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 
-require_commands taskset
+require_commands taskset awk
 
-allowed_cpu_ids() {
-	local allowed_list segment start end cpu
-	allowed_list=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status)
-	[[ -n "${allowed_list}" ]] || return
-
-	while IFS= read -r segment; do
-		if [[ "${segment}" == *-* ]]; then
-			start=${segment%-*}
-			end=${segment#*-}
-			for ((cpu = start; cpu <= end; cpu++)); do
-				echo "${cpu}"
-			done
-		else
-			echo "${segment}"
-		fi
-	done < <(tr ',' '\n' <<< "${allowed_list}")
-}
-
-mapfile -t profiler_cpu_ids < <(allowed_cpu_ids)
+mapfile -t profiler_cpu_ids < <(profiler_allowed_cpu_ids)
 [[ ${#profiler_cpu_ids[@]} -ge 2 ]] || skip "need at least 2 CPUs in the current affinity set"
 readonly PROFILER_SELECTED_CPU=${profiler_cpu_ids[0]}
 readonly PROFILER_EXCLUDED_CPU=${profiler_cpu_ids[1]}
@@ -62,9 +44,9 @@ trap cleanup EXIT
 
 compile_user_fixture "${PROFILER_FIXTURE_SRC}" "${profiler_fixture_bin}"
 
-assert_profiler_offcpu_cpuid() {
-	local cpuid=$1 expected=$2
-	local output_dir="${profiler_work_dir}/cpu-${cpuid}"
+run_offcpu_cpu_list_case() {
+	local cpu_list=$1 expected=$2
+	local output_dir="${profiler_work_dir}/cpu-${cpu_list}"
 	local tool_out="${output_dir}/profiler.out"
 	local tool_err="${output_dir}/profiler.err"
 	local blocked_prefix process_prefix
@@ -82,14 +64,14 @@ assert_profiler_offcpu_cpuid() {
 	blocked_prefix="${process_prefix}offcpu_reason=\"blocked\";pid=\"${profiler_target_pid}\";"
 	kill -0 "${profiler_target_pid}" 2> /dev/null || fatal "fixture exited immediately (pid=${profiler_target_pid})"
 
-	log_info "fixture on CPU ${PROFILER_SELECTED_CPU}; profiler --cpuid ${cpuid}; expect ${expected} event"
+	log_info "fixture on CPU ${PROFILER_SELECTED_CPU}; profiler --cpu-list ${cpu_list}; expect ${expected} event"
 	if ! "${TOOL_BIN}" \
 		--type cpu \
 		--language c \
 		--cpu-mode offcpu \
 		--offcpu-phase blocked \
 		--offcpu-min-duration-us 100 \
-		--cpuid "${cpuid}" \
+		--cpu-list "${cpu_list}" \
 		--pid "${profiler_target_pid}" \
 		--duration "${PROFILER_DURATION}" \
 		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
@@ -109,20 +91,21 @@ assert_profiler_offcpu_cpuid() {
 	fi
 	case "${expected}" in
 	present)
-		[[ "${match_count}" -gt 0 ]] || fatal "blocked event not found for CPU ${cpuid}"
+		[[ "${match_count}" -gt 0 ]] || fatal "blocked event not found for CPU ${cpu_list}"
 		;;
 	absent)
 		if compgen -G "${output_dir}/perf_*.folded" > /dev/null; then
 			! grep -hF "pid=\"${profiler_target_pid}\";" "${output_dir}"/perf_*.folded \
-				|| fatal "event unexpectedly found for excluded CPU ${cpuid}"
+				|| fatal "event unexpectedly found for excluded CPU ${cpu_list}"
 		fi
 		;;
 	esac
 	profiler_target_pid=""
 }
 
-assert_profiler_offcpu_cpuid "${PROFILER_SELECTED_CPU}" present
-assert_profiler_offcpu_cpuid "${PROFILER_EXCLUDED_CPU}" absent
+run_offcpu_cpu_list_case "${PROFILER_SELECTED_CPU}" present
+run_offcpu_cpu_list_case "${PROFILER_EXCLUDED_CPU}" absent
+run_offcpu_cpu_list_case "${PROFILER_SELECTED_CPU}-${PROFILER_EXCLUDED_CPU}" present
 
 profiler_migration_stopped() {
 	local observations=$1
@@ -139,7 +122,7 @@ assert_profiler_offcpu_migration() {
 	wait_until 5 0.1 profiler_migration_stopped 1 || fatal "migration fixture did not stop initially"
 
 	"${TOOL_BIN}" --type cpu --language c --cpu-mode offcpu --offcpu-phase all \
-		--offcpu-min-duration-us 0 --cpuid "${PROFILER_SELECTED_CPU}" --pid "${profiler_target_pid}" \
+		--offcpu-min-duration-us 0 --cpu-list "${PROFILER_SELECTED_CPU}" --pid "${profiler_target_pid}" \
 		--duration "${PROFILER_DURATION}" --aggr-interval "${PROFILER_AGGR_INTERVAL}" \
 		--log-level debug --log-file stdout --output-format collapsed --output-path "${output_dir}" \
 		> "${output_dir}/profiler.out" 2> "${output_dir}/profiler.err" &

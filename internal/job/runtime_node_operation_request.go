@@ -45,6 +45,9 @@ func buildStartOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error
 		if spec.BinaryMatchPath != "" {
 			profilingSpec.BinaryMatchPath = &spec.BinaryMatchPath
 		}
+		if spec.HostCPUList != "" {
+			profilingSpec.HostCPUList = &spec.HostCPUList
+		}
 		request.Kind = nodeapi.OperationKindProfiling
 		return request, request.Spec.FromProfilingOperationSpec(profilingSpec)
 	case KindTracing:

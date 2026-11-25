@@ -180,3 +180,108 @@ func TestIRQSpecValidation(t *testing.T) {
 		t.Fatal("IRQ was exposed as a profiler implementation")
 	}
 }
+
+func TestSpecCPUListValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, list string
+		wantErr    bool
+	}{
+		{name: "all"}, {
+			name: "range",
+			list: "1,3-10",
+		}, {
+			name:    "invalid",
+			list:    "3-1",
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := Spec{
+				Type:        TypeIRQ,
+				Mode:        ModeSoftIRQ,
+				HostCPUList: tc.list,
+			}
+			if err := spec.Validate(); (err != nil) != tc.wantErr {
+				t.Fatalf("Validate() = %v", err)
+			}
+		})
+	}
+}
+
+func TestParseHostCPUList(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		spec    Spec
+		wantErr bool
+	}{
+		{
+			name: "IRQ all",
+			spec: Spec{Type: TypeIRQ},
+		},
+		{
+			name: "IRQ singleton",
+			spec: Spec{
+				Type:        TypeIRQ,
+				HostCPUList: "1,1-1",
+			},
+		},
+		{
+			name: "IRQ multiple",
+			spec: Spec{
+				Type:        TypeIRQ,
+				HostCPUList: "1-3",
+			},
+			wantErr: true,
+		},
+		{
+			name: "native range",
+			spec: Spec{
+				Type:        TypeCPU,
+				Language:    LanguageGo,
+				HostCPUList: "1-3",
+			},
+		},
+		{
+			name: "Java",
+			spec: Spec{
+				Type:        TypeCPU,
+				Language:    LanguageJava,
+				HostCPUList: "1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Python",
+			spec: Spec{
+				Type:        TypeCPU,
+				Language:    LanguagePython,
+				HostCPUList: "1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "memory",
+			spec: Spec{
+				Type:        TypeMemory,
+				Language:    LanguageGo,
+				HostCPUList: "1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "syntax",
+			spec: Spec{
+				Type:        TypeIRQ,
+				HostCPUList: "-1",
+			},
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.spec.ParseHostCPUList()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ParseHostCPUList() error = %v", err)
+			}
+		})
+	}
+}

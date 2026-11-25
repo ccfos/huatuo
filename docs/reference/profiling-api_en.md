@@ -92,6 +92,11 @@ JSON parameters for `POST /v1/profiling`:
 | `scope` | Yes | `host` or `container`, as allowed by the capability table |
 | `container_id` | For container scope | Target container ID |
 | `binary_match_path` | No | Executable-path match, when allowed by the capability table |
+| `host_cpu_list` | No | Target host logical CPU list, such as `"1,3-10"`; omitted or empty means all CPUs |
+
+`host_cpu_list` uses the target host's logical CPU IDs for both `host` and `container` scopes. Container and CPU filters are intersected without changing the container cpuset or process affinity. It accepts one ID, comma-separated lists and inclusive ranges. Lists are sorted, deduplicated and adjacent IDs merged before storage. Leading and trailing whitespace is allowed; internal whitespace, negative IDs, reversed ranges and empty components are rejected. Input is limited to 65536 bytes and 65536 expanded entries before deduplication; IDs must be between 0 and 2147483647. The target node checks that selected CPUs are online at startup.
+
+Native CPU oncpu/offcpu supports multiple CPUs; offcpu attribution uses the switch-out CPU. IRQ currently supports one CPU, including equivalent singleton forms such as `"1,1"` and `"1-1"`. Java, Python and memory CPU targeting are unsupported. Valid lists are accepted at creation even when unsupported by the backend; backend rejection terminates the task with a failure and reports the reason in `terminal.message`.
 
 Every request creates a new task, even with identical content. Exceeding per-node or process-wide active task quotas returns HTTP 429.
 
@@ -144,8 +149,8 @@ curl -sS -i \
 ```
 
 IRQ supports only `scope=host` and `mode=softirq`; omit `language`, `container_id`,
-and `binary_match_path`. It traces all CPUs, allowing 500 source and 500 victim
-samples per CPU per second, with no CPU selection or rate-limit parameter.
+and `binary_match_path`. It traces all CPUs by default; `host_cpu_list` selects one CPU. The limits are 500 source and 500 victim
+samples per CPU per second, with no rate-limit parameter.
 Results are published once after collection with profile type
 `irqtracing:irq:count:irq:count` and count units. Hardware interrupt stacks are not collected.
 
@@ -218,6 +223,7 @@ Task information is in `data`:
 | `language` | Target process language; omitted for IRQ |
 | `mode` | Profiling mode selected from the capability table |
 | `binary_match_path` | Executable match path; omitted when unused |
+| `host_cpu_list` | Normalized CPU selection; omitted when unrestricted |
 | `status` | Current task status |
 | `terminal` | Terminal details `{outcome, reason, message}`; omitted before termination |
 | `created_at` | Task creation time |

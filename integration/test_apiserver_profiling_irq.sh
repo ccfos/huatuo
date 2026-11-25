@@ -11,6 +11,7 @@ source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/integration/config.sh"
 source "${ROOT_DIR}/integration/lib_continuous_profiling.sh"
 source "${ROOT_DIR}/integration/lib_apiserver_query.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 readonly IRQ_PROFILE_TYPE='irqtracing:irq:count:irq:count'
 readonly IRQ_PROFILE_DURATION=8
@@ -21,7 +22,7 @@ API_TOKEN=integration-admin
 OTHER_API_TOKEN=integration-other
 ES_PASSWORD=huatuo-integration
 
-require_commands curl jq ss docker python3 timeout
+require_commands curl jq ss docker python3 timeout taskset awk
 docker info > /dev/null 2>&1 || skip "docker daemon is unavailable"
 tracepoint_available irq softirq_raise || skip "irq/softirq_raise is unavailable"
 tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable"
@@ -78,14 +79,27 @@ write_config_bamai_irq_profiling() {
 mkdir -p "${IRQ_PROFILE_TOOL_DIR}"
 cp "${ROOT_DIR}/_output/bin/irqtracing" "${IRQ_PROFILE_TOOL_DIR}/irqtracing"
 cp -a "${ROOT_DIR}/_output/bpf" "${IRQ_PROFILE_BPF_DIR}"
+mapfile -t irq_profile_cpu_ids < <(profiler_allowed_cpu_ids)
+[[ ${#irq_profile_cpu_ids[@]} -gt 0 ]] || fatal "no allowed CPU for IRQ workload"
+readonly IRQ_PROFILE_CPU=${irq_profile_cpu_ids[0]}
 storage_start
 integration_huatuo_bamai_start write_config_bamai_irq_profiling \
 	--region integration --disable-kubelet \
 	--tools-bin-dir "${IRQ_PROFILE_TOOL_DIR}" --bpf-dir "${IRQ_PROFILE_BPF_DIR}"
 integration_huatuo_apiserver_start write_config_apiserver_continuous_profiling
 
+# Nodes and the standalone CLI share the single-CPU limit; the API accepts ranges.
+irq_profile_request POST /v1/profiling 201 \
+	'{"hostname":"127.0.0.1","duration_seconds":8,"scope":"host","type":"irq","mode":"softirq","host_cpu_list":"3,1-3"}'
+irq_profile_rejected_id=$(jq -er '.data.request_id' "${irq_profile_response}")
+jq -e '.data.host_cpu_list == "1-3"' "${irq_profile_response}" > /dev/null || fatal "IRQ CPU list was not normalized"
+wait_until 30 1 continuous_profile_status_is "${irq_profile_rejected_id}" failed \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-rejected.json" || fatal "IRQ multi-CPU request did not fail"
+jq -e '.data.terminal.message | contains("supports only one target CPU")' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-rejected.json" > /dev/null || fatal "IRQ selection error was not propagated"
+
 # Keep loopback softirq activity present throughout collection without requiring PMU sampling.
-timeout 120 python3 -c '
+timeout 120 taskset -c "${IRQ_PROFILE_CPU}" python3 -c '
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("127.0.0.1", 0))
@@ -96,10 +110,10 @@ while True:
 irq_profile_load_pid=$!
 
 irq_profile_request POST /v1/profiling 201 \
-	"{\"hostname\":\"127.0.0.1\",\"duration_seconds\":${IRQ_PROFILE_DURATION},\"scope\":\"host\",\"type\":\"irq\",\"mode\":\"softirq\"}"
+	"{\"hostname\":\"127.0.0.1\",\"duration_seconds\":${IRQ_PROFILE_DURATION},\"scope\":\"host\",\"type\":\"irq\",\"mode\":\"softirq\",\"host_cpu_list\":\"${IRQ_PROFILE_CPU},${IRQ_PROFILE_CPU}-${IRQ_PROFILE_CPU}\"}"
 cp "${irq_profile_response}" "${HUATUO_BAMAI_TEST_TMPDIR}/create-irq.json"
 irq_profile_id=$(jq -er '.data.request_id' "${irq_profile_response}")
-jq -e '.data | .type == "irq" and .mode == "softirq" and (has("language") | not)' \
+jq -e --arg cpu "${IRQ_PROFILE_CPU}" '.data | .host_cpu_list == $cpu and .type == "irq" and .mode == "softirq" and (has("language") | not)' \
 	"${irq_profile_response}" > /dev/null || fatal "IRQ creation metadata is invalid"
 irq_profile_started=${SECONDS}
 wait_until 90 1 continuous_profile_status_is "${irq_profile_id}" completed \
@@ -108,6 +122,7 @@ wait_until 90 1 continuous_profile_status_is "${irq_profile_id}" completed \
 record_test_timing irq-profiling collection-and-publication "${irq_profile_started}"
 
 irq_profile_request GET "/v1/profiling/${irq_profile_id}" 200
+jq -e --arg cpu "${IRQ_PROFILE_CPU}" '.data.host_cpu_list == $cpu' "${irq_profile_response}" > /dev/null || fatal "IRQ task lost its CPU condition"
 jq -e '.data.result_url | contains("irqtracing%3Airq%3Acount%3Airq%3Acount")' \
 	"${irq_profile_response}" > /dev/null || fatal "IRQ result URL is missing its profile type"
 irq_profile_request GET "/v1/profiling/${irq_profile_id}/raw" 200
@@ -130,6 +145,8 @@ for irq_profile_label in irq softirq_vector cpu; do
 	jq -e '.names | length > 0' "${HUATUO_BAMAI_TEST_TMPDIR}/irq-${irq_profile_label}.json" > /dev/null \
 		|| fatal "IRQ label ${irq_profile_label} has no values"
 done
+jq -e --arg cpu "${IRQ_PROFILE_CPU}" '.names == [$cpu]' \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-cpu.json" > /dev/null || fatal "IRQ collected a CPU outside the selection"
 irq_profile_query=$(jq -nc --arg type "${IRQ_PROFILE_TYPE}" --arg id "${irq_profile_id}" \
 	'{profileTypeID:$type,labelSelector:("{scope=\"host\",id="+($id|tojson)+",irq=\"source\"}"),end:"4102444800000"}')
 assert_profile_query "${APISERVER_ADDR}" "${API_TOKEN}" SelectMergeStacktraces "${irq_profile_query}" \

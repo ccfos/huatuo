@@ -184,12 +184,15 @@ func (e TracingType) Valid() bool {
 
 // CreateProfilingJobRequest defines model for CreateProfilingJobRequest.
 type CreateProfilingJobRequest struct {
-	BinaryMatchPath *string            `json:"binary_match_path,omitempty"`
-	ContainerID     *string            `json:"container_id,omitempty"`
-	DurationSeconds int64              `json:"duration_seconds"`
-	Hostname        string             `json:"hostname"`
-	Language        *ProfilingLanguage `json:"language,omitempty"`
-	Mode            ProfilingMode      `json:"mode"`
+	BinaryMatchPath *string `json:"binary_match_path,omitempty"`
+	ContainerID     *string `json:"container_id,omitempty"`
+	DurationSeconds int64   `json:"duration_seconds"`
+
+	// HostCPUList Host logical CPU list for both host and container scopes, for example "1,3-10"; empty or omitted means all CPUs. Native CPU supports multiple CPUs; IRQ currently supports one. Java, Python and memory CPU targeting are unsupported.
+	HostCPUList *string            `json:"host_cpu_list,omitempty"`
+	Hostname    string             `json:"hostname"`
+	Language    *ProfilingLanguage `json:"language,omitempty"`
+	Mode        ProfilingMode      `json:"mode"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope externalRef0.ObservationScope `json:"scope"`
@@ -259,16 +262,19 @@ type ProfilingCapability struct {
 
 // ProfilingJob defines model for ProfilingJob.
 type ProfilingJob struct {
-	BinaryMatchPath *string            `json:"binary_match_path,omitempty"`
-	ContainerID     *string            `json:"container_id,omitempty"`
-	CreatedAt       time.Time          `json:"created_at"`
-	DurationSeconds int64              `json:"duration_seconds"`
-	EndedAt         *time.Time         `json:"ended_at,omitempty"`
-	Hostname        string             `json:"hostname"`
-	Language        *ProfilingLanguage `json:"language,omitempty"`
-	Mode            ProfilingMode      `json:"mode"`
-	RequestID       string             `json:"request_id"`
-	ResultURL       *string            `json:"result_url,omitempty"`
+	BinaryMatchPath *string    `json:"binary_match_path,omitempty"`
+	ContainerID     *string    `json:"container_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DurationSeconds int64      `json:"duration_seconds"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+
+	// HostCPUList Host logical CPU list for both host and container scopes, for example "1,3-10"; empty or omitted means all CPUs. Native CPU supports multiple CPUs; IRQ currently supports one. Java, Python and memory CPU targeting are unsupported.
+	HostCPUList *string            `json:"host_cpu_list,omitempty"`
+	Hostname    string             `json:"hostname"`
+	Language    *ProfilingLanguage `json:"language,omitempty"`
+	Mode        ProfilingMode      `json:"mode"`
+	RequestID   string             `json:"request_id"`
+	ResultURL   *string            `json:"result_url,omitempty"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope     externalRef0.ObservationScope `json:"scope"`

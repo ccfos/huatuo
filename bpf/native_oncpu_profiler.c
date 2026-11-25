@@ -11,7 +11,7 @@
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 /*
- * CPU filtering (--cpuid) is handled entirely at the PMU layer.
+ * CPU filtering (--cpu-list) is handled entirely at the PMU layer.
  * No BPF-side cpuid check is needed.
  */
 

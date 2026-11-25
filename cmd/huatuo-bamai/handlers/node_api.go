@@ -112,6 +112,7 @@ func (h *NodeAPIHandler) startProfilingOperation(
 			Language:        profilingdomain.Language(optionalString(spec.Language)),
 			Mode:            profilingdomain.Mode(spec.Mode),
 			BinaryMatchPath: optionalString(spec.BinaryMatchPath),
+			HostCPUList:     optionalString(spec.HostCPUList),
 		},
 	}
 	snapshot, created, err := h.profiling.Start(ctx, &request)

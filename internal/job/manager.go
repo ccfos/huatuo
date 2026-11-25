@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 
 	"github.com/google/uuid"
 )
@@ -157,6 +158,17 @@ func newManagerWithStore(
 func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, error) {
 	if err := request.validate(); err != nil {
 		return nil, fmt.Errorf("%w: create job: %w", ErrInvalidQuery, err)
+	}
+	if request.Spec.Profiling != nil {
+		spec := *request.Spec.Profiling
+		normalized, err := cpuutil.NormalizeList(spec.HostCPUList)
+		if err != nil {
+			return nil, fmt.Errorf("%w: host_cpu_list: %w", ErrInvalidQuery, err)
+		}
+		spec.HostCPUList = normalized
+		copied := *request
+		copied.Spec.Profiling = &spec
+		request = &copied
 	}
 	now := m.runtimeDeps.now()
 	newJob := &Job{

@@ -123,7 +123,7 @@ func TestRunIRQTracingCLIPassesArguments(t *testing.T) {
 	args := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
 	want := []string{
 		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
-		"--target-cpu", "4",
+		"--cpu-list", "4",
 		"--duration", "3",
 		"--max-events-per-second-per-cpu", "1000",
 		"--output-format", "remote-store",
@@ -241,10 +241,10 @@ func TestShouldCareSpikeRule(t *testing.T) {
 	t.Run("matches when enough cpus spike", func(t *testing.T) {
 		prev := []cpuIrqUtil{{cpu: 0, util: 10}, {cpu: 1, util: 10}, {cpu: 2, util: 10}}
 		now := []cpuIrqUtil{{cpu: 0, util: 30}, {cpu: 1, util: 30}, {cpu: 2, util: 10}}
-		rule, triggerCPU, hits, ok := shouldCareThisIRQTracing(newTestSpikeThreshold(), prev, now, nil)
+		rule, cpuID, hits, ok := shouldCareThisIRQTracing(newTestSpikeThreshold(), prev, now, nil)
 		assert.True(t, ok)
 		assert.Equal(t, irqTracingRuleSpike, rule)
-		assert.Equal(t, 0, triggerCPU) // cpu0 has same delta as cpu1, first wins
+		assert.Equal(t, 0, cpuID) // cpu0 has same delta as cpu1, first wins
 		assert.Len(t, hits, 2)
 	})
 
@@ -286,10 +286,10 @@ func TestShouldCareSpikeRule(t *testing.T) {
 	t.Run("zero prev allows abs delta alone to decide", func(t *testing.T) {
 		prev := []cpuIrqUtil{{cpu: 0}, {cpu: 1}, {cpu: 2}}
 		now := []cpuIrqUtil{{cpu: 0, util: 20}, {cpu: 1, util: 20}, {cpu: 2}}
-		rule, triggerCPU, hits, ok := shouldCareThisIRQTracing(newTestSpikeThreshold(), prev, now, nil)
+		rule, cpuID, hits, ok := shouldCareThisIRQTracing(newTestSpikeThreshold(), prev, now, nil)
 		assert.True(t, ok)
 		assert.Equal(t, irqTracingRuleSpike, rule)
-		assert.Equal(t, 0, triggerCPU)
+		assert.Equal(t, 0, cpuID)
 		assert.Len(t, hits, 2)
 	})
 

@@ -274,10 +274,13 @@ type ProfilingMode string
 
 // ProfilingOperationSpec defines model for ProfilingOperationSpec.
 type ProfilingOperationSpec struct {
-	BinaryMatchPath *string            `json:"binary_match_path,omitempty"`
-	Language        *ProfilingLanguage `json:"language,omitempty"`
-	Mode            ProfilingMode      `json:"mode"`
-	Type            ProfilingType      `json:"type"`
+	BinaryMatchPath *string `json:"binary_match_path,omitempty"`
+
+	// HostCPUList Host logical CPU list for both host and container scopes, for example "1,3-10"; empty or omitted means all CPUs. Native CPU supports multiple CPUs; IRQ currently supports one. Java, Python and memory CPU targeting are unsupported.
+	HostCPUList *string            `json:"host_cpu_list,omitempty"`
+	Language    *ProfilingLanguage `json:"language,omitempty"`
+	Mode        ProfilingMode      `json:"mode"`
+	Type        ProfilingType      `json:"type"`
 }
 
 // ProfilingType defines model for ProfilingType.

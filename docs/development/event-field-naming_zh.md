@@ -15,7 +15,7 @@ weight: 31
 | BPF C | 名称体现内核原始语义和单位 | `tgid`、`kernel_observed_ns` |
 | Go | MixedCaps；缩写保持全大写 | `TGID`、`KernelObservedNS` |
 | JSON | 使用面向用户的统计语义 | `pid`、`observed_timestamp` |
-| CLI 参数 | 小写短横线 | `--pid`、`--cpuid` |
+| CLI 参数 | 小写短横线 | `--pid`、`--cpu-list` |
 | CLI 文本和表头 | 使用标准大写缩写 | `PID`、`CPU`、`COMM` |
 
 ## CPU 和任务

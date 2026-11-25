@@ -17,10 +17,10 @@
 # Profiler scenarios load lib.sh before this library.
 set -euo pipefail
 
-# Native PID filters use host PIDs; container-local PIDs cannot select targets.
+# These fixtures pass local PIDs without mapping them to host PIDs used by BPF.
 require_native_pid_profiling() {
 	if is_container; then
-		skip "native PID profiling is unsupported inside containers; run on the host"
+		skip "cannot verify eBPF PID filtering in containers: fixture PIDs may differ from host PIDs; run on the host"
 	fi
 }
 
@@ -196,3 +196,15 @@ assert_java_profiler_streams() (
 	profile_windows_are_ready \
 		|| fatal "expected multiple non-empty Java windows in ${out_dir}/windows.json"
 )
+
+# Respect the test process affinity when choosing CPUs for pinned workloads.
+profiler_allowed_cpu_ids() {
+	awk '/^Cpus_allowed_list:/ {
+  n = split($2, parts, ",");
+  for (i = 1; i <= n; i++) {
+   m = split(parts[i], bounds, "-");
+   last = m == 2 ? bounds[2] : bounds[1];
+   for (cpu = bounds[1]; cpu <= last; cpu++) print cpu;
+  }
+ }' /proc/self/status
+}

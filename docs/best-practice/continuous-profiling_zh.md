@@ -233,7 +233,7 @@ sudo _output/bin/profiler \
   --output-path ./profiles/go-cpu/
 ```
 
-如需包含同一进程的工作线程，增加 `--thread-group`。如需限定 CPU，增加 `--cpuid 2,4-7`。原生 CPU 也支持容器和宿主机级采样：
+如需包含同一进程的工作线程，增加 `--thread-group`。如需限定 CPU，增加 `--cpu-list 2,4-7`。原生 CPU 也支持容器和宿主机级采样：
 
 原生 on-CPU 采集优先使用硬件 CPU cycle event；硬件 PMU 不可用时回退软件
 CPU clock。两种采样源下 `--freq` 均表示每秒采样次数。若软件时钟回退会掩盖
@@ -259,13 +259,13 @@ sudo _output/bin/profiler \
 sudo _output/bin/profiler \
   --type cpu --language go --pid 12345 --thread-group \
   --cpu-mode offcpu --offcpu-phase all \
-  --cpuid 2,4-7 \
+  --cpu-list 2,4-7 \
   --offcpu-min-duration-us 1000 \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/go-offcpu/
 ```
 
-off-CPU 是事件驱动采集，因此不使用 `--freq`。指定 `--cpuid` 时，仅记录任务从目标 CPU 切出后开始的区间；后续在其他 CPU 唤醒或切入不会改变该归属。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`all` 阶段同时累计阻塞与 runqueue 等待时间，但仍按这些根节点分开显示。
+off-CPU 是事件驱动采集，因此不使用 `--freq`。指定 `--cpu-list` 时，仅记录任务从目标 CPU 切出后开始的区间；后续在其他 CPU 唤醒或切入不会改变该归属。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`all` 阶段同时累计阻塞与 runqueue 等待时间，但仍按这些根节点分开显示。
 
 原生内存支持以下维度：
 

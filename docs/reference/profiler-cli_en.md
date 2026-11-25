@@ -42,7 +42,7 @@ Native on-CPU and memory collection require Linux `MEMBARRIER_CMD_GLOBAL` suppor
 | Parameter | Default | Applies To | Description |
 | --- | --- | --- | --- |
 | `--memory-mode` | None | Native and Java memory | Memory measurement; required with `--type memory` |
-| `--cpuid` | All CPUs | Native CPU | CPU list or ranges; off-CPU filtering uses the CPU where the task switches out |
+| `--cpu-list` | All CPUs | Native CPU | CPU list or ranges; off-CPU filtering uses the CPU where the task switches out |
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` samples by frequency; `offcpu` attributes blocked and runnable scheduling delays |
 | `--require-hardware-pmu` | `false` | Native on-CPU | Require hardware PMU sampling; fail if unavailable without falling back to software CPU clock |
 | `--offcpu-phase` | `all` | Native off-CPU | Accumulate `all`, `blocked`, or `runqueue` time |
@@ -53,6 +53,8 @@ Native on-CPU and memory collection require Linux `MEMBARRIER_CMD_GLOBAL` suppor
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for routine collection |
 
 When the hardware PMU event or sampling is unsupported, the command exits with code `1` and identifies the error on stderr with `Error: hardware_pmu_unavailable:`. Permission and other startup errors do not use this marker.
+
+`--cpu-list` replaces `--cpuid` without an alias. The IRQ tool also uses `--cpu-list`; its former `--target-cpu` option is removed. Upgrade calling scripts together with the tools.
 
 ## Logging
 

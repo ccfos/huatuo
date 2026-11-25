@@ -138,14 +138,18 @@ func TestRawProfilesRejectsOversizedEncodedPage(t *testing.T) {
 
 func TestIRQJobAndCapabilitiesOmitLanguage(t *testing.T) {
 	spec := profiling.Spec{
-		Type: profiling.TypeIRQ,
-		Mode: profiling.ModeSoftIRQ,
+		Type:        profiling.TypeIRQ,
+		Mode:        profiling.ModeSoftIRQ,
+		HostCPUList: "1",
 	}
 	source := &job.Job{
 		Kind: job.KindProfiling,
 		Spec: job.Spec{Profiling: &spec},
 	}
 	mapped := mapProfilingJob(source)
+	if mapped.HostCPUList == nil || *mapped.HostCPUList != "1" {
+		t.Fatalf("CPU list missing from response: %+v", mapped)
+	}
 	data, err := json.Marshal(mapped)
 	if err != nil {
 		t.Fatal(err)

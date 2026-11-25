@@ -125,7 +125,7 @@ func procStatTicks(seconds float64) uint64 {
 
 // computeUtil returns the per-cpu irq+softirq utilization (percent) between two
 // samples, correlated by the kernel CPU id so sparse CPU topologies map to the
-// right --target-cpu. A nil slice is returned when there is no usable previous
+// right --cpu-list. A nil slice is returned when there is no usable previous
 // sample.
 func computeUtil(prev, now []cpuIrqRaw) []cpuIrqUtil {
 	if len(prev) == 0 {
@@ -180,7 +180,7 @@ type irqTracingThreshold struct {
 // spike rule first (delta-based), then the sustained rule (history-based).
 // Returns the first matching rule name, the single CPU with the largest impact
 // among the hit CPUs, and the hit CPU list. ok is false when neither fires.
-func shouldCareThisIRQTracing(th *irqTracingThreshold, prev, now []cpuIrqUtil, history map[int][]int64) (rule string, triggerCPU int, hits []HitCPUInfo, ok bool) {
+func shouldCareThisIRQTracing(th *irqTracingThreshold, prev, now []cpuIrqUtil, history map[int][]int64) (rule string, cpuID int, hits []HitCPUInfo, ok bool) {
 	prevByCPU := make(map[int]int64, len(prev))
 	for _, u := range prev {
 		prevByCPU[u.cpu] = u.util
@@ -369,19 +369,19 @@ func (c *irqTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			rule, triggerCPU, hits, ok := shouldCareThisIRQTracing(&c.threshold, prevUtil, util, c.utilHistory)
+			rule, cpuID, hits, ok := shouldCareThisIRQTracing(&c.threshold, prevUtil, util, c.utilHistory)
 			if !ok {
 				continue
 			}
 
 			c.lastTraceAt = sampledAt
 			log.WithField("rule", rule).
-				WithField("trigger_cpu", triggerCPU).
+				WithField("trigger_cpu", cpuID).
 				WithField("hit_cpus", hits).
 				Info("irqtracing triggered")
 
-			if err := runIRQTracingCLI(ctx, triggerCPU, int64(c.traceDuration/time.Second), c.maxEventsPerSecond); err != nil {
-				log.Warnf("irqtracing trace cpu %d: %v", triggerCPU, err)
+			if err := runIRQTracingCLI(ctx, cpuID, int64(c.traceDuration/time.Second), c.maxEventsPerSecond); err != nil {
+				log.Warnf("irqtracing trace cpu %d: %v", cpuID, err)
 			}
 		}
 	}
@@ -390,7 +390,7 @@ func (c *irqTracing) Start(ctx context.Context) error {
 // runIRQTracingCLI waits for query-visible profiling windows and their publication marker.
 func runIRQTracingCLI(
 	parent context.Context,
-	triggerCPU int,
+	cpuID int,
 	runTracingToolTimeout int64,
 	maxEventsPerSecond uint64,
 ) error {
@@ -404,7 +404,7 @@ func runIRQTracingCLI(
 
 	args := []string{
 		"--bpf-path", filepath.Join(internalconfig.CoreBpfDir, "irqtracing.o"),
-		"--target-cpu", strconv.Itoa(triggerCPU),
+		"--cpu-list", strconv.Itoa(cpuID),
 		"--duration", strconv.FormatInt(runTracingToolTimeout, 10),
 		"--max-events-per-second-per-cpu", strconv.FormatUint(maxEventsPerSecond, 10),
 		"--output-format", "remote-store",
@@ -416,7 +416,7 @@ func runIRQTracingCLI(
 		return err
 	}
 
-	log.WithField("task_id", taskID).WithField("trigger_cpu", triggerCPU).Info("IRQ profiling result published")
+	log.WithField("task_id", taskID).WithField("trigger_cpu", cpuID).Info("IRQ profiling result published")
 	return nil
 }
 

@@ -155,7 +155,6 @@ func TestBuildIRQCommandUsesCommonPublicationAndFixedCollectionPolicy(t *testing
 	}
 	expected := []string{
 		"--bpf-path", "/opt/huatuo/bpf/irqtracing.o",
-		"--target-cpu", "-1",
 		"--duration", "60",
 		"--max-events-per-second-per-cpu", "1000",
 		"--output-format", "remote-store",
@@ -172,5 +171,23 @@ func TestBuildIRQCommandUsesCommonPublicationAndFixedCollectionPolicy(t *testing
 	request.ContainerID = strings.Repeat("a", 64)
 	if err := validateRequest(request); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("container IRQ request error = %v", err)
+	}
+}
+
+func TestBuildCommandPassesCPUList(t *testing.T) {
+	for _, typ := range []profilingdomain.Type{profilingdomain.TypeCPU, profilingdomain.TypeIRQ} {
+		t.Run(string(typ), func(t *testing.T) {
+			request := testProfilingRequest()
+			request.Spec.Type = typ
+			request.Spec.HostCPUList = "1,3-10"
+			command, err := buildCommand(request, testProfilingConfig(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			index := slices.Index(command.Args, "--cpu-list")
+			if index < 0 || index+1 >= len(command.Args) || command.Args[index+1] != "1,3-10" {
+				t.Fatalf("missing CPU list: %q", command.Args)
+			}
+		})
 	}
 }

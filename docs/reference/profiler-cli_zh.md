@@ -42,7 +42,7 @@ weight: 6
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
-| `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围；off-CPU 样本按任务切出时所在 CPU 过滤 |
+| `--cpu-list` | 全部 CPU | 原生 CPU | CPU 列表或范围；off-CPU 样本按任务切出时所在 CPU 过滤 |
 | `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
 | `--require-hardware-pmu` | `false` | 原生 on-CPU | 强制使用硬件 PMU 采样；不可用时失败，不回退软件 CPU clock |
 | `--offcpu-phase` | `all` | 原生 off-CPU | 累计 `all`、`blocked` 或 `runqueue` 时间 |
@@ -53,6 +53,8 @@ weight: 6
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
 
 硬件 PMU 事件或采样不受支持时，命令退出码为 `1`，标准错误以 `Error: hardware_pmu_unavailable:` 标识该错误；权限及其他启动错误不使用此标识。
+
+`--cpu-list` 替代原 `--cpuid`，不保留旧入口。IRQ 工具同样改用 `--cpu-list`，原 `--target-cpu` 已移除；调用脚本与工具需配套升级。
 
 ## 日志参数
 

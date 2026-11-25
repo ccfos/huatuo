@@ -97,6 +97,11 @@ curl -sS \
 | `scope` | 是 | 能力表允许的 `host` 或 `container` |
 | `container_id` | container 范围必需 | 目标容器 ID |
 | `binary_match_path` | 否 | 能力表允许时使用的可执行文件路径匹配条件 |
+| `host_cpu_list` | 否 | 目标宿主机的逻辑 CPU 列表，如 `"1,3-10"`；省略或空字符串表示全部 CPU |
+
+`host_cpu_list` 使用目标宿主机的逻辑 CPU 编号，同时适用于 `host` 和 `container` scope。容器条件与 CPU 条件取交集，不改变容器 cpuset 或进程亲和性。支持单个编号、逗号列表及包含两端的范围；去重、排序并合并相邻编号后保存。允许首尾空白，不允许内部空白、负数、倒序范围或空片段。输入最多 65536 字节，各片段展开后的条目累计最多 65536 个（去重前），编号为 0～2147483647；目标节点启动时检查指定 CPU 是否在线。
+
+原生 CPU 的 oncpu/offcpu 支持多个 CPU；offcpu 按线程切出 CPU 归属。IRQ 当前仅支持单 CPU，等价单元素写法 `"1,1"`、`"1-1"` 也允许。Java、Python 和 memory 暂不支持指定 CPU。合法集合不因后端限制而在创建时拒绝；底层不支持时任务进入失败终态，通过 `terminal.message` 返回具体原因。
 
 即使请求内容相同，每次请求也会创建一个新 Job。超过每节点或进程级活动 Job
 配额时返回 HTTP 429。
@@ -150,8 +155,8 @@ curl -sS -i \
 ```
 
 IRQ 仅支持 `scope=host`、`mode=softirq`，不传 `language`、`container_id`
-或 `binary_match_path`。采集全部 CPU，source、victim 各限 500 样本/CPU/秒，
-不提供 CPU 选择或限速参数。结果在结束后一次发布，profile type 为
+或 `binary_match_path`。默认采集全部 CPU，可用 `host_cpu_list` 指定单个 CPU；source、victim 各限 500 样本/CPU/秒，
+不提供限速参数。结果在结束后一次发布，profile type 为
 `irqtracing:irq:count:irq:count`，单位为次数；不采集硬中断调用栈。
 
 创建成功返回 `201 Created`，`Location` 响应头指向新任务，响应体包含后续查询所需的任务 ID：
@@ -225,6 +230,7 @@ curl -sS \
 | `language` | 目标进程语言；IRQ 不返回此字段 |
 | `mode` | 从能力表中选择的剖析模式 |
 | `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
+| `host_cpu_list` | 规范化后的 CPU 选择条件；未限制时不返回该字段 |
 | `status` | 当前任务状态 |
 | `terminal` | 终态详情 `{outcome, reason, message}`；非终态不返回 |
 | `created_at` | 任务创建时间 |

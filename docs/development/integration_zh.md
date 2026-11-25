@@ -177,7 +177,7 @@ sudo bash integration/run.sh test_profiler_java_memory_usage_alloc.sh
 sudo bash integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
-Java/Python 用例需在 `PROFILER_TOOL_DIR` 中准备对应采集工具。容器、线程组和指定 CPU 的测试分别为 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh`、`test_profiler_native_cpu_cpuid.sh`。
+Java/Python 用例需在 `PROFILER_TOOL_DIR` 中准备对应采集工具。容器、线程组和指定 CPU 的测试分别为 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh`、`test_profiler_native_cpu_list.sh`。
 
 ### 存储与资源限额
 

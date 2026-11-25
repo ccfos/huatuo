@@ -80,7 +80,7 @@ func TestLoadConfig(t *testing.T) {
 	set.String("task-id", "trace-123", "")
 	set.String("tool-path", "/opt/huatuo/tools", "")
 	set.String("pid", "123,456", "")
-	set.String("cpuid", "0", "")
+	set.String("cpu-list", "0", "")
 	set.Int("duration", 30, "")
 	set.Int("aggr-interval", 10, "")
 	set.Bool("offcpu-stats", true, "")

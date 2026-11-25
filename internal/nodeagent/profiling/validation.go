@@ -22,6 +22,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/profiling/toolpath"
+	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 	"github.com/ccfos/huatuo/pkg/observation"
 	profilingdomain "github.com/ccfos/huatuo/pkg/profiling"
 )
@@ -76,6 +77,14 @@ func validateRequest(request *StartRequest) error {
 }
 
 func validateEnvironment(request *StartRequest, config *Config) error {
+	cpuIDs, err := request.Spec.ParseHostCPUList()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
+	}
+	if err := cpuutil.ValidateOnline(cpuIDs, cpuutil.SystemCPUOnlinePath); err != nil {
+		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
+	}
+
 	if request.Spec.Type == profilingdomain.TypeIRQ {
 		if err := validateExecutable(filepath.Join(config.ToolBinDir, "irqtracing")); err != nil {
 			return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)

@@ -275,8 +275,9 @@ func TestIRQJobRoundTripAndNodeRequest(t *testing.T) {
 	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 	source := storedTestJob("irq-job", "user-1", "node-1", StatusPending, now)
 	source.Spec.Profiling = &profiling.Spec{
-		Type: profiling.TypeIRQ,
-		Mode: profiling.ModeSoftIRQ,
+		Type:        profiling.TypeIRQ,
+		Mode:        profiling.ModeSoftIRQ,
+		HostCPUList: "1,3-10",
 	}
 	if err := store.Create(t.Context(), source); err != nil {
 		t.Fatal(err)
@@ -296,7 +297,7 @@ func TestIRQJobRoundTripAndNodeRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(spec.Type) != "irq" || string(spec.Mode) != "softirq" || spec.Language != nil || request.RequestID != got.ID {
+	if spec.HostCPUList == nil || *spec.HostCPUList != "1,3-10" || string(spec.Type) != "irq" || string(spec.Mode) != "softirq" || spec.Language != nil || request.RequestID != got.ID {
 		t.Fatalf("node request = %+v, spec %+v", request, spec)
 	}
 	listed, err := store.List(t.Context(), &Query{

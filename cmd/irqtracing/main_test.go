@@ -64,7 +64,7 @@ func TestValidateFlags(t *testing.T) {
 }
 
 func TestRemovedOutputFlags(t *testing.T) {
-	for _, name := range []string{"output", "output-storage"} {
+	for _, name := range []string{"output", "output-storage", "target-cpu"} {
 		t.Run(name, func(t *testing.T) {
 			app := &cli.App{Flags: appFlags(), Writer: io.Discard, ErrWriter: io.Discard}
 			err := app.Run([]string{"irqtracing", "--" + name, "value"})
@@ -79,7 +79,7 @@ func TestLoadConfig(t *testing.T) {
 	ctx := newOutputFlagContext(
 		t,
 		"--bpf-path", "/tmp/irqtracing.o",
-		"--target-cpu", "4",
+		"--cpu-list", "0",
 		"--duration", "5",
 		"--max-events-per-second-per-cpu", "1000",
 		"--output-format", "svg",
@@ -89,7 +89,7 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig() error = %v", err)
 	}
-	if cfg.bpfPath != "/tmp/irqtracing.o" || cfg.targetCPU != 4 ||
+	if cfg.bpfPath != "/tmp/irqtracing.o" || cfg.cpuID != 0 ||
 		cfg.duration != 5 || cfg.maxEventsPerSecondPerCPU != 1000 ||
 		cfg.output != profileroutput.FormatSVG {
 		t.Fatalf("loadConfig() = %+v", cfg)
@@ -106,27 +106,55 @@ func TestDefaultOutputIsCollapsed(t *testing.T) {
 	}
 }
 
-func TestValidateTargetCPU(t *testing.T) {
-	tests := []struct {
-		name    string
-		cpu     int64
-		wantErr bool
+func TestParseTargetCPU(t *testing.T) {
+	for _, tc := range []struct {
+		name, list string
+		want       int32
+		wantErr    string
 	}{
-		{name: "all CPUs", cpu: -1},
-		{name: "CPU zero", cpu: 0},
-		{name: "largest supported CPU", cpu: 1<<31 - 1},
-		{name: "invalid negative CPU", cpu: -2, wantErr: true},
-		{name: "CPU exceeds BPF value", cpu: 1 << 31, wantErr: true},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateTargetCPU(test.cpu)
-			if test.wantErr && err == nil {
-				t.Fatal("validateTargetCPU() error = nil")
+		{
+			name: "all",
+			want: allCPUsTarget,
+		},
+		{
+			name: "zero",
+			list: "0",
+		},
+		{
+			name: "deduplicated",
+			list: "0,0-0",
+		},
+		{
+			name:    "multiple",
+			list:    "1,3-10",
+			wantErr: "supports only one",
+		},
+		{
+			name:    "negative",
+			list:    "-1",
+			wantErr: "invalid CPU ID",
+		},
+		{
+			name:    "overflow",
+			list:    "2147483648",
+			wantErr: "between 0 and",
+		},
+		{
+			name:    "offline",
+			list:    "2147483647",
+			wantErr: "not online",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseCPUListID(tc.list)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
 			}
-			if !test.wantErr && err != nil {
-				t.Fatalf("validateTargetCPU() error = %v", err)
+			if err != nil || got != tc.want {
+				t.Fatalf("parseCPUListID() = %d, %v; want %d", got, err, tc.want)
 			}
 		})
 	}
