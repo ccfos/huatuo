@@ -36,12 +36,14 @@ The optional `--max-events-per-second-per-cpu N` limits the total source and vic
 
 ## Output
 
-Explicitly specify both `--output-path` and `--output-format`. Supported formats are `collapsed` (the default shown in help), `flamegraph`, `svg`, `json`, and `remote-store`. Local results go to the specified file, directory, or `stdout`. With `stdout`, terminals, redirection, or log systems may retain collected data. A nonexistent path is treated as a new file unless it ends with `/`, which creates a directory. `collapsed` emits folded stacks for flame graph tools:
+Explicitly specify `--output-format`. Supported formats are `collapsed` (the default shown in help), `flamegraph`, `svg`, `tui`, `json`, and `remote-store`. Only `tui` can omit `--output-path`. Local results go to the specified file, directory, or `stdout`. With `stdout`, terminals, redirection, or log systems may retain collected data. A nonexistent path is treated as a new file unless it ends with `/`, which creates a directory. `collapsed` emits folded stacks for flame graph tools:
 
 ```text
 source;source[raiser,NET_RX];raise_softirq_[k] 12
 victim;victim[worker(123),NET_RX];work 4
 ```
+
+Use `--output-format tui` in an interactive terminal to explore all collected call stacks after collection. The viewer combines weights for identical stacks by default. Omit `--output-path` for terminal-only viewing, or specify a local file or directory and press `q` to save a gob report. Replay the saved file with `profiler --tui-report FILE`.
 
 Use `--output-format flamegraph` or `--output-format svg` to produce an SVG flame graph directly:
 

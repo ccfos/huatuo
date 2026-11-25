@@ -36,13 +36,15 @@ sudo ./_output/bin/irqtracing \
 
 ## 输出
 
-必须显式同时指定 `--output-path` 和 `--output-format`。支持 `collapsed`（帮助中显示的默认值）、`flamegraph`、`svg`、`json`、`remote-store`。本地结果写入指定文件、目录或 `stdout`。使用 `stdout` 时，终端、重定向或日志系统可能保留采集数据。不存在的路径默认作为新文件，以 `/` 结尾则创建目录。`collapsed`
+必须显式指定 `--output-format`，支持 `collapsed`（帮助中显示的默认值）、`flamegraph`、`svg`、`tui`、`json`、`remote-store`。只有 `tui` 可省略 `--output-path`。本地结果写入指定文件、目录或 `stdout`。使用 `stdout` 时，终端、重定向或日志系统可能保留采集数据。不存在的路径默认作为新文件，以 `/` 结尾则创建目录。`collapsed`
 输出可供火焰图工具使用的 folded stack：
 
 ```text
 source;source[raiser,NET_RX];raise_softirq_[k] 12
 victim;victim[worker(123),NET_RX];work 4
 ```
+
+在交互终端使用 `--output-format tui`，可在采集结束后浏览所有采集到的调用栈。默认合并相同调用栈的权重。省略 `--output-path` 时仅在终端查看，指定本地文件或目录后按 `q` 保存 gob 报告，再用 `profiler --tui-report FILE` 回看。
 
 使用 `--output-format flamegraph` 或 `--output-format svg` 可直接输出 SVG 火焰图：
 
