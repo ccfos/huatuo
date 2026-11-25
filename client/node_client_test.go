@@ -247,6 +247,44 @@ func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 	}
 }
 
+func TestStartOperationRejectsMismatchedResponseKind(t *testing.T) {
+	client, err := NewNode(&NodeConfig{
+		BearerToken: "node-secret",
+		HTTPClient: &http.Client{Transport: nodeRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			body := nodeOperationJSONForKind("job-1", "pending", "tracing")
+			return nodeJSONResponse(http.StatusAccepted, body), nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewNode() error = %v", err)
+	}
+
+	request := &nodeapi.StartOperationRequest{
+		RequestID:       "job-1",
+		DurationSeconds: 60,
+		Scope:           "host",
+		Kind:            nodeapi.OperationKindProfiling,
+	}
+	if err := request.Spec.FromProfilingOperationSpec(nodeapi.ProfilingOperationSpec{
+		Type: "cpu", Language: "go", Mode: "oncpu",
+	}); err != nil {
+		t.Fatalf("set profiling spec: %v", err)
+	}
+
+	_, err = client.StartOperation(
+		t.Context(),
+		NodeAddress{HostPort: "node-1:21970", Scheme: "https"},
+		request,
+	)
+	var nodeErr *NodeError
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("StartOperation() error = %v, want *NodeError", err)
+	}
+	if nodeErr.Code != NodeErrorCodeProtocol || nodeErr.StatusCode != http.StatusAccepted {
+		t.Fatalf("Node client error = %+v", nodeErr)
+	}
+}
+
 func TestGetOperationReturnsStableNodeError(t *testing.T) {
 	client, err := NewNode(&NodeConfig{
 		BearerToken: "node-secret",
