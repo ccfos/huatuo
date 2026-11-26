@@ -225,20 +225,51 @@ func (w *EvidenceWorker) collectSCSI(
 		return nil, []string{CollectionReasonToolUnavailable}
 	}
 
-	result := w.execute(ctx, executable, []string{
+	device := dev.Path(target)
+	args := []string{
 		"--health",
 		"--attributes",
 		"--log=error",
 		"--json=c",
-		dev.Path(target),
-	})
-	if reason := commandFailureReasonBeforeExit(&result); reason != "" {
+		device,
+	}
+	if w.isSmartctlJSONUnsupported {
+		args = []string{"-H", device}
+	} else {
+		// The first JSON attempt and any fallback share one deadline.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, w.commandTimeout)
+		defer cancel()
+	}
+
+	result := w.execute(ctx, executable, args)
+	reason := commandFailureReasonBeforeExit(&result)
+	optionRejected := []byte("UNRECOGNIZED OPTION: json=c\n")
+	rejectsJSON := result.exitCode == 1 &&
+		(bytes.Contains(result.stdout, optionRejected) || bytes.Contains(result.stderr, optionRejected))
+	canFallback := !w.isSmartctlJSONUnsupported && reason == ""
+	if canFallback && rejectsJSON {
+		w.isSmartctlJSONUnsupported = true
+		result = w.execute(ctx, executable, []string{"-H", device})
+		reason = commandFailureReasonBeforeExit(&result)
+	}
+	if reason != "" {
 		return nil, []string{reason}
 	}
 
-	evidence, trusted, complete, reportedExit := parseSCSIHealth(result.stdout)
+	var evidence *types.SCSIHealthEvidence
+	var hasEvidence, isComplete bool
+	var reportedExit *uint8
+	if w.isSmartctlJSONUnsupported {
+		evidence = parseSmartctlHealthText(result.stdout, result.exitCode)
+		hasEvidence = evidence != nil
+		isComplete = hasEvidence
+	} else {
+		evidence, hasEvidence, isComplete, reportedExit = parseSCSIHealth(result.stdout)
+	}
+
 	reasons := reasonSet{}
-	if !trusted || !complete {
+	if !hasEvidence || !isComplete {
 		reasons.add(CollectionReasonParseError)
 	}
 
@@ -253,7 +284,7 @@ func (w *EvidenceWorker) collectSCSI(
 		reasons.add(CollectionReasonExecError)
 	}
 
-	if !trusted {
+	if !hasEvidence {
 		return nil, reasons.values
 	}
 	return evidence, reasons.values

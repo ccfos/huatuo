@@ -106,6 +106,10 @@ test_real_scsi_evidence() {
 		> "${EVIDENCE_WORK}/smartctl-baseline.json" 2> "${EVIDENCE_WORK}/smartctl-baseline.err" || status=$?
 	printf 'smartctl_baseline_exit=%s\n' "${status}" >> "${EVIDENCE_WORK}/resources.txt"
 	((status != 124 && status != 137)) || fatal "H06 real smartctl qualification did not finish (exit ${status})"
+	if ((status == 1)) && grep -Fxq '=======> UNRECOGNIZED OPTION: j' "${EVIDENCE_WORK}"/smartctl-baseline.{json,err}; then
+		log_info "NOT_RUN H06 real SCSI evidence: smartctl does not support JSON output"
+		return
+	fi
 	jq -e 'type == "object"' "${EVIDENCE_WORK}/smartctl-baseline.json" > /dev/null \
 		|| fatal "H06 real smartctl qualification did not return JSON (exit ${status})"
 	if ! jq -e '(.smart_status.passed | type) == "boolean"
