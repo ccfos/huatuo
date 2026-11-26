@@ -17,7 +17,6 @@ package flamegraph
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,112 +55,57 @@ func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
 	}
 }
 
-func TestTUIKeepsSignedTotalsAcrossWindows(t *testing.T) {
+func TestTUICombinesSignedWindows(t *testing.T) {
 	f := &tuiFormatter{aggregator: aggregation.New()}
 	w := &types.AggregationWindow{Aggregated: types.AggregatedProfile{
-		Frames: []types.ProfileFrame{{Name: "root"}, {Name: "leaf"}},
-		Stacks: [][]uint32{{0, 1}},
-		Samples: []types.AggregatedSample{{
-			UserStack: 1,
-			Value:     10,
-		}},
+		Frames:  []types.ProfileFrame{{Name: "main"}},
+		Stacks:  [][]uint32{{0}},
+		Samples: []types.AggregatedSample{{UserStack: 1}},
 	}}
-	if err := f.Add(t.Context(), w); err != nil {
-		t.Fatal(err)
-	}
+	w.Aggregated.Samples[0].Value = 10
+	require.NoError(t, f.Add(t.Context(), w))
+	require.False(t, f.aggregator.Empty(), "positive window must be collected")
 	w.Aggregated.Samples[0].Value = -10
-	if err := f.Add(t.Context(), w); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Complete(t.Context()); err != nil {
-		t.Fatalf("balanced profile must not open a viewer: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if !f.aggregator.Empty() {
-		t.Fatal("close retained profile")
-	}
-}
+	require.NoError(t, f.Add(t.Context(), w))
+	require.NoError(t, f.Complete(t.Context()))
+	require.Nil(t, f.model, "balanced windows must produce no viewer")
 
-func TestTUICancellationDoesNotPublish(t *testing.T) {
-	f := &tuiFormatter{aggregator: aggregation.New()}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := f.Add(ctx, nil); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Add cancellation=%v", err)
-	}
-	if err := f.Complete(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("Complete cancellation=%v", err)
-	}
-	if !f.aggregator.Empty() {
-		t.Fatal("cancellation changed the profile")
-	}
+	require.ErrorIs(t, f.Add(ctx, nil), context.Canceled)
+	require.ErrorIs(t, f.Complete(ctx), context.Canceled)
+	require.True(t, f.aggregator.Empty())
 }
 
-func TestTUICompletePreparesWithoutOpeningTerminal(t *testing.T) {
+func TestTUICompletionPreservesFrames(t *testing.T) {
 	f := &tuiFormatter{aggregator: aggregation.New()}
-	if err := f.aggregator.Add(&aggregation.Sample{
-		UserFrames: []types.ProfileFrame{{Name: "main"}},
-		Value:      1,
-	}); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"foo;bar", "foo:bar", "foo\nbar", "foo\rbar", "foo bar"} {
+		require.NoError(t, f.aggregator.Add(&aggregation.Sample{
+			UserFrames: []types.ProfileFrame{{Name: "main"}, {Name: name}},
+			Value:      10,
+		}))
 	}
-	if err := f.Complete(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if f.model == nil || !strings.Contains(f.model.View(), "main") {
-		t.Fatal("completion did not prepare the sampled frame")
+	require.NoError(t, f.Complete(t.Context()))
+	require.NotNil(t, f.model)
+	var model tea.Model = f.model
+	require.Contains(t, model.View(), "children: 5")
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	for _, name := range []string{`foo\nbar`, `foo\rbar`, "foo bar", "foo:bar", "foo;bar"} {
+		view := model.View()
+		require.Contains(t, view, "selected: "+name+"\n")
+		require.Contains(t, view, "value: 10  self: 10  focus: 20.00%")
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRight})
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := f.View(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled viewing must not open a terminal: %v", err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if f.model != nil || !f.aggregator.Empty() {
-		t.Fatal("close retained the prepared model or samples")
-	}
+	require.ErrorIs(t, f.View(ctx), context.Canceled)
+	require.NoError(t, f.Close())
+	require.Nil(t, f.model)
+	require.True(t, f.aggregator.Empty())
 }
 
-func TestTUIPreservesFrameNamesThroughCompletion(t *testing.T) {
-	f := &tuiFormatter{aggregator: aggregation.New()}
-	t.Cleanup(func() { _ = f.Close() })
-	for _, name := range []string{"foo;bar", "foo:bar", "foo\nbar", "foo bar"} {
-		if err := f.aggregator.Add(&aggregation.Sample{
-			UserFrames: []types.ProfileFrame{{Name: "main"}, {Name: name}},
-			Value:      10,
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := f.Complete(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if f.model == nil || !strings.Contains(f.model.View(), "children: 4") {
-		t.Fatal("completion merged distinct source frames")
-	}
-
-	var model tea.Model = f.model
-	for i, name := range []string{`foo\nbar`, "foo bar", "foo:bar", "foo;bar"} {
-		key := tea.KeyRight
-		if i == 0 {
-			key = tea.KeyDown
-		}
-		model, _ = model.Update(tea.KeyMsg{Type: key})
-		view := model.View()
-		if !strings.Contains(view, "selected: "+name) || !strings.Contains(view, "value: 10  self: 10  focus: 25.00%") {
-			t.Fatalf("frame %q lost its name or independent weight: %q", name, view)
-		}
-	}
-}
-
-func TestTUIReportReplayGroupsLabelsAndSortsTopTable(t *testing.T) {
-	t.Parallel()
-
+func TestTUIReportReplay(t *testing.T) {
 	report := tuiReport{
 		Version:     tuiReportVersion,
 		ProfileType: profiling.ProfileTypeCpuSample,
@@ -179,106 +123,82 @@ func TestTUIReportReplayGroupsLabelsAndSortsTopTable(t *testing.T) {
 			},
 		},
 	}
-	path := filepath.Join(t.TempDir(), "profile.gob")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profile.gob")
 	var data bytes.Buffer
 	require.NoError(t, writeTUIReport(&data, &report))
 	require.NoError(t, os.WriteFile(path, data.Bytes(), 0o600))
-
 	saved, err := readTUIReport(path)
 	require.NoError(t, err)
+	require.Equal(t, report, saved)
+	_, err = readTUIReport(dir)
+	require.ErrorContains(t, err, "report must be a regular file")
+
 	model, err := prepareViewer(t.Context(), &saved.Aggregated, "nanoseconds")
 	require.NoError(t, err)
 	require.NotNil(t, model)
-	require.Contains(t, model.View(), "focus=main")
-	require.Contains(t, model.View(), "groups: none")
-	require.Contains(t, model.View(), "value: 6")
-	require.NotContains(t, model.View(), "cpu0")
-
 	var viewer tea.Model = model
-	key := func(keyType tea.KeyType) tea.Cmd {
+	update := func(key tea.KeyType, runes ...rune) tea.Cmd {
 		var cmd tea.Cmd
-		viewer, cmd = viewer.Update(tea.KeyMsg{Type: keyType})
+		viewer, cmd = viewer.Update(tea.KeyMsg{
+			Type:  key,
+			Runes: runes,
+		})
+
 		return cmd
 	}
-	typeText := func(value string) {
-		viewer, _ = viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(value)})
+	submit := func(tags string) tea.Cmd {
+		update(tea.KeyRunes, 'g')
+		update(tea.KeyCtrlU)
+		update(tea.KeyRunes, []rune(tags)...)
+		return update(tea.KeyEnter)
 	}
-	submit := func(value string) tea.Cmd {
-		typeText("g")
-		key(tea.KeyCtrlU)
-		typeText(value)
-		return key(tea.KeyEnter)
-	}
-	complete := func(cmd tea.Cmd) {
+	adopt := func(cmd tea.Cmd) {
 		t.Helper()
 		require.NotNil(t, cmd)
 		viewer, _ = viewer.Update(cmd())
 	}
-
-	cmd := submit("cpu")
-	require.Contains(t, viewer.View(), "grouping stacks")
-	require.Contains(t, viewer.View(), "focus=main")
-	typeText("g")
-	require.Nil(t, key(tea.KeyEnter), "an in-flight grouping cannot start a second build")
-	complete(cmd)
-	require.Contains(t, viewer.View(), "groups: cpu (g edit)")
-	require.Contains(t, viewer.View(), "value: 6")
-	for _, group := range []string{"cpu0", "cpu7", "cpu=?"} {
-		require.Contains(t, viewer.View(), group)
-	}
-	key(tea.KeyDown)
-	require.Nil(t, submit("  cpu  "), "submitting the current grouping does not rebuild")
-	require.Contains(t, viewer.View(), "selected: cpu0")
-	require.Nil(t, submit("q"))
-	require.Contains(t, viewer.View(), `invalid grouping label "q"`)
-	key(tea.KeyEsc)
-	require.Nil(t, submit("cpu,cpu"))
-	require.Contains(t, viewer.View(), `duplicate grouping label "cpu"`)
-	key(tea.KeyEsc)
-
-	complete(submit("cpu, comm"))
-	key(tea.KeyDown)
-	key(tea.KeyDown)
-	require.Contains(t, viewer.View(), `path: total > cpu0 > comm="api"`)
-	complete(submit("comm,cpu,pid"))
-	key(tea.KeyDown)
-	key(tea.KeyDown)
-	key(tea.KeyDown)
-	require.Contains(t, viewer.View(), `path: total > comm="api" > cpu0 > pid="10"`)
-	require.Contains(t, viewer.View(), "value: 2")
-
-	viewKey := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}}
-	viewer, _ = viewer.Update(viewKey)
-	viewer, _ = viewer.Update(viewKey)
-	selectedRow := func(view string) []string {
+	show := func(parts ...string) {
 		t.Helper()
-		_, selected, ok := strings.Cut(view, "\n> ")
-		require.True(t, ok, "table has no selected row")
-		row, _, _ := strings.Cut(selected, "\n")
-		return strings.Fields(row)
+		view := viewer.View()
+		for _, part := range parts {
+			require.Contains(t, view, part)
+		}
 	}
-	require.Contains(t, viewer.View(), "sort: Self")
-	require.Equal(t, []string{"work", "5", "5"}, selectedRow(viewer.View()))
 
-	viewer, _ = viewer.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
-	require.Contains(t, viewer.View(), "sort: Total")
-	require.Equal(t, []string{"main", "0", "6"}, selectedRow(viewer.View()))
+	show("groups: none", "focus=main", "value: 6")
+	require.NotContains(t, viewer.View(), "cpu0")
+	cmd := submit("comm,cpu,pid")
+	show("grouping stacks", "focus=main")
+	require.Nil(t, submit("cpu"), "a pending grouping cannot start another build")
+	adopt(cmd)
+	show("groups: comm,cpu,pid", "cpu0", "cpu7", "cpu=?", "value: 6")
+	for range 3 {
+		update(tea.KeyDown)
+	}
+	require.Nil(t, submit(" comm, cpu, pid "), "same grouping must retain the view")
+	show(`path: total > comm="api" > cpu0 > pid="10"`, "value: 2")
+	for input, want := range map[string]string{
+		"q":       `invalid grouping label "q"`,
+		"cpu,cpu": `duplicate grouping label "cpu"`,
+	} {
+		require.Nil(t, submit(input))
+		show(want)
+		update(tea.KeyEsc)
+	}
+	update(tea.KeyRunes, 'v')
+	update(tea.KeyRunes, 'v')
+	show("sort: Self")
+	require.Regexp(t, `(?m)^> work[ \t]+5[ \t]+5[ \t]*$`, viewer.View())
+	update(tea.KeyRunes, 's')
+	show("sort: Total")
+	require.Regexp(t, `(?m)^> main[ \t]+0[ \t]+6[ \t]*$`, viewer.View())
 
-	typeText("v")
-	require.Nil(t, submit(""), "clearing the grouping reuses the default tree")
-	require.Contains(t, viewer.View(), "focus=main")
-	require.Contains(t, viewer.View(), "groups: none")
-	require.Contains(t, viewer.View(), "value: 6")
-
+	update(tea.KeyRunes, 'v')
+	require.Nil(t, submit(""), "clearing grouping reuses the default tree")
+	show("groups: none", "focus=main", "value: 6")
 	cmd = submit("cpu")
-	typeText("q")
-	complete(cmd)
-	require.Contains(t, viewer.View(), "focus=main", "a grouping result cannot replace the view after q")
-}
-
-func TestReadTUIReportRejectsDirectory(t *testing.T) {
-	t.Parallel()
-
-	_, err := readTUIReport(t.TempDir())
-	require.ErrorContains(t, err, "report must be a regular file")
+	update(tea.KeyRunes, 'q')
+	adopt(cmd)
+	show("focus=main")
 }
