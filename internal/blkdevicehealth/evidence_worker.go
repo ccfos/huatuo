@@ -116,6 +116,9 @@ type EvidenceWorker struct {
 	commandTimeout time.Duration
 	maxOutputBytes int
 	queueCapacity  int
+
+	// The serial command loop shares this capability across all disks.
+	isSmartctlJSONUnsupported bool
 }
 
 func NewEvidenceWorker(options EvidenceWorkerOptions) *EvidenceWorker {

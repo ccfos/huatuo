@@ -670,6 +670,7 @@ Block errors, NVMe timeouts, SCSI errors, and MD members entering `faulty`,
 resolved NVMe target uses read-only `nvme-cli` commands; SCSI uses read-only
 `smartctl` commands. Ambiguous targets retain the event without scanning other
 devices. MD monitoring does not require `mdadm`.
+Older `smartctl` versions without JSON support report only the overall SMART health result.
 Evidence commands use the resolved physical disk or NVMe controller; the
 event's `device` can retain an MD member's partition name.
 Evidence commands for the same device are suppressed while running and for

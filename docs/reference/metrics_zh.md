@@ -641,6 +641,7 @@ block 错误、NVMe 超时、SCSI 异常及 MD 成员进入 `faulty`、`blocked`
 `write_error` 或 `removed` 状态会触发只读健康取证：NVMe 使用 `nvme-cli`，
 SCSI 使用 `smartctl`，结果随事件保存。无法唯一确定目标时仅保留事件，不扫描
 其他设备。MD 监测不需要 `mdadm`。
+旧版 `smartctl` 不支持 JSON 时，仅采集 SMART 总体健康状态。
 事件中的 `device` 可保留 MD 成员的分区名；取证目标归整为唯一物理磁盘或
 NVMe controller。
 同设备取证执行中及结束后的 60 秒冷却期内不重复取证，原始事件仍独立保存。
