@@ -283,6 +283,12 @@ func TestEvidenceWorkerCommandResults(t *testing.T) {
 	mediaErrors := uint64(12)
 	emptyErrorLog := []types.NVMeErrorLogEntry{}
 	failedHealth := false
+	passedHealth := true
+	jsonOptionRejected := commandExecution{
+		stdout:   []byte("smartctl 6.6\n\n=======> UNRECOGNIZED OPTION: json=c\n"),
+		exitCode: 1,
+		err:      errors.New("invalid smartctl option"),
+	}
 
 	for _, test := range []struct {
 		name         string
@@ -392,6 +398,50 @@ func TestEvidenceWorkerCommandResults(t *testing.T) {
 			wantSCSI:   &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
 		},
 		{
+			name:     "scsi legacy smartctl reports healthy ata disk",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{
+				jsonOptionRejected,
+				{stdout: []byte("smartctl 6.6\n\nSMART overall-health self-assessment test result: PASSED\n")},
+			},
+			wantStatus: "ok",
+			wantSCSI:   &types.SCSIHealthEvidence{SmartPassed: &passedHealth},
+		},
+		{
+			name:     "scsi legacy smartctl reports healthy scsi disk",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{
+				jsonOptionRejected,
+				{stdout: []byte("SMART Health Status: OK\n")},
+			},
+			wantStatus: "ok",
+			wantSCSI:   &types.SCSIHealthEvidence{SmartPassed: &passedHealth},
+		},
+		{
+			name:     "scsi legacy smartctl retains failed health evidence",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{
+				jsonOptionRejected,
+				{
+					stdout:   []byte("SMART overall-health self-assessment test result: FAILED!\n"),
+					exitCode: 8,
+					err:      errors.New("smartctl reported failing health"),
+				},
+			},
+			wantStatus: "ok",
+			wantSCSI:   &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi legacy smartctl does not infer health from exit zero",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{
+				jsonOptionRejected,
+				{stdout: []byte("SMART Health Status: UNKNOWN!\n")},
+			},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonParseError},
+		},
+		{
 			name:     "scsi oversized output is not trusted",
 			protocol: EvidenceProtocolSCSI,
 			executions: []commandExecution{{
@@ -417,6 +467,7 @@ func TestEvidenceWorkerCommandResults(t *testing.T) {
 				worker.commandTimeout = 20 * time.Millisecond
 			}
 			calls := 0
+			var smartctlDeadline time.Time
 			worker.runCommand = func(
 				ctx context.Context,
 				_ string,
@@ -427,11 +478,22 @@ func TestEvidenceWorkerCommandResults(t *testing.T) {
 				if test.protocol == EvidenceProtocolNVMe {
 					target = "nvme0"
 				}
-				if got, want := args[len(args)-1], filepath.Join(root, "dev", target); got != want {
-					t.Errorf("command device = %q, want %q", got, want)
+				device := filepath.Join(root, "dev", target)
+				if got := args[len(args)-1]; got != device {
+					t.Errorf("command device = %q, want %q", got, device)
 				}
 				if test.protocol == EvidenceProtocolSCSI {
-					want := []string{"--health", "--attributes", "--log=error", "--json=c", filepath.Join(root, "dev", target)}
+					want := []string{"--health", "--attributes", "--log=error", "--json=c", device}
+					deadline, hasDeadline := ctx.Deadline()
+					if calls == 0 {
+						smartctlDeadline = deadline
+					} else {
+						want = []string{"-H", device}
+						if !hasDeadline || !deadline.Equal(smartctlDeadline) {
+							t.Errorf("fallback deadline = %v, want initial deadline %v", deadline, smartctlDeadline)
+						}
+					}
+
 					if !reflect.DeepEqual(args, want) {
 						t.Errorf("smartctl command = %q, want %q", args, want)
 					}
@@ -499,6 +561,43 @@ func TestEvidenceWorkerCommandResults(t *testing.T) {
 				t.Fatal("one accepted request produced duplicate callbacks")
 			}
 		})
+	}
+}
+
+func TestEvidenceWorkerRemembersLegacySmartctl(t *testing.T) {
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{})
+	worker.lookupPath = func(string) (string, error) { return "/usr/sbin/smartctl", nil }
+	options := [][]string{}
+	worker.runCommand = func(_ context.Context, _ string, args []string, _ int) commandExecution {
+		options = append(options, args[:len(args)-1])
+		if args[0] == "--health" {
+			return commandExecution{
+				stdout:   []byte("=======> UNRECOGNIZED OPTION: json=c\n"),
+				exitCode: 1,
+			}
+		}
+
+		return commandExecution{stdout: []byte("SMART Health Status: OK\n")}
+	}
+
+	for _, disk := range []string{"sda", "sdb"} {
+		evidence, reasons := worker.collectSCSI(t.Context(), disk)
+		hasHealth := evidence != nil && evidence.SmartPassed != nil
+		if !hasHealth || !*evidence.SmartPassed {
+			t.Fatalf("%s: missing successful SMART result, reasons = %v", disk, reasons)
+		}
+		if len(reasons) != 0 {
+			t.Fatalf("%s: unexpected collection errors %v", disk, reasons)
+		}
+	}
+
+	want := [][]string{
+		{"--health", "--attributes", "--log=error", "--json=c"},
+		{"-H"},
+		{"-H"},
+	}
+	if !reflect.DeepEqual(options, want) {
+		t.Fatalf("smartctl options = %q, want %q", options, want)
 	}
 }
 

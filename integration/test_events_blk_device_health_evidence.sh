@@ -73,7 +73,19 @@ blk_device_health_real_scsi_evidence_saved() {
 }
 
 assert_real_scsi_evidence_matches_command() {
-	local output
+	local legacy_health=$1 output
+	if [[ -n ${legacy_health} ]]; then
+		assert_evidence_command_count 2 "H06 legacy SCSI evidence must try JSON and then query overall health"
+		jq -se --arg target "/dev/${evidence_target}" '
+		[.[] | select(.phase == "start") | .args][-1] == ["-H", $target]
+	' "${evidence_case_dir}/commands.jsonl" > /dev/null || fatal "H06 legacy smartctl did not fall back to -H"
+		jq -se --arg member "${evidence_member}" --argjson passed "${legacy_health}" '
+		any(.[]; .tracer_data.member == $member and .tracer_data.scsi.smart_passed == $passed
+			and (.tracer_data.collection_status == "ok" or .tracer_data.collection_status == "partial"))
+	' "${EVIDENCE_EVENT}" > /dev/null || fatal "H06 legacy SCSI evidence differs from the overall SMART result (${legacy_health})"
+		return
+	fi
+
 	assert_evidence_command_count 1 "H06 real SCSI evidence must execute once"
 	output=$(jq -rs '[.[] | select(.phase == "end")][0].output // empty' "${evidence_case_dir}/commands.jsonl")
 	[[ -n ${output} && ${output} != */* ]] || fatal "H06 real smartctl output was not recorded"
@@ -96,19 +108,33 @@ assert_real_scsi_evidence_matches_command() {
 }
 
 test_real_scsi_evidence() {
-	local status=0
+	local status=0 legacy_health=""
 	if ! evidence_real_command=$(command -v smartctl); then
 		log_info "NOT_RUN H06 real SCSI evidence: smartctl is unavailable"
 		return
 	fi
 	target_is_owned || fatal "H06 SCSI ownership changed before real smartctl qualification"
-	timeout --kill-after=1s 8s "${evidence_real_command}" -x -j "/dev/${evidence_target}" \
+	timeout --kill-after=1s 8s "${evidence_real_command}" --health --attributes --log=error --json=c "/dev/${evidence_target}" \
 		> "${EVIDENCE_WORK}/smartctl-baseline.json" 2> "${EVIDENCE_WORK}/smartctl-baseline.err" || status=$?
 	printf 'smartctl_baseline_exit=%s\n' "${status}" >> "${EVIDENCE_WORK}/resources.txt"
 	((status != 124 && status != 137)) || fatal "H06 real smartctl qualification did not finish (exit ${status})"
-	jq -e 'type == "object"' "${EVIDENCE_WORK}/smartctl-baseline.json" > /dev/null \
-		|| fatal "H06 real smartctl qualification did not return JSON (exit ${status})"
-	if ! jq -e '(.smart_status.passed | type) == "boolean"
+	if ((status == 1)) && grep -Fq 'UNRECOGNIZED OPTION: json=c' "${EVIDENCE_WORK}"/smartctl-baseline.{json,err}; then
+		status=0
+		timeout --kill-after=1s 8s "${evidence_real_command}" -H "/dev/${evidence_target}" \
+			> "${EVIDENCE_WORK}/smartctl-baseline.txt" 2> "${EVIDENCE_WORK}/smartctl-legacy.err" || status=$?
+		printf 'smartctl_legacy_exit=%s\n' "${status}" >> "${EVIDENCE_WORK}/resources.txt"
+		((status != 124 && status != 137)) || fatal "H06 legacy smartctl qualification did not finish (exit ${status})"
+		if ((status & 8)); then
+			legacy_health=false
+		elif grep -Fxq 'SMART Health Status: OK' "${EVIDENCE_WORK}/smartctl-baseline.txt"; then
+			legacy_health=true
+		else
+			log_info "NOT_RUN H06 real SCSI evidence: owned scsi_debug target has no overall SMART result (exit ${status})"
+			return
+		fi
+	elif ! jq -e 'type == "object"' "${EVIDENCE_WORK}/smartctl-baseline.json" > /dev/null; then
+		fatal "H06 real smartctl qualification did not return JSON (exit ${status})"
+	elif ! jq -e '(.smart_status.passed | type) == "boolean"
 		or (.scsi_grown_defect_list | type) == "number"
 		or (.temperature.current | type) == "number"' "${EVIDENCE_WORK}/smartctl-baseline.json" > /dev/null; then
 		log_info "NOT_RUN H06 real SCSI evidence: owned scsi_debug target provides no supported SMART fields (exit ${status})"
@@ -118,7 +144,7 @@ test_real_scsi_evidence() {
 	start_case real
 	fault_member
 	wait_until 20 0.2 blk_device_health_real_scsi_evidence_saved || fatal "H06 member event lacks real SCSI evidence; inspect smartctl output and events"
-	assert_real_scsi_evidence_matches_command
+	assert_real_scsi_evidence_matches_command "${legacy_health}"
 	finish_case
 	log_info "H06: real smartctl evidence matches its captured response on the owned SCSI disk"
 }

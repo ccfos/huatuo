@@ -194,6 +194,24 @@ func nvmeStatus(root map[string]json.RawMessage) (uint64, uint64, bool) {
 	return statusField >> 8 & 0x7, statusField & 0xff, true
 }
 
+func parseSmartctlHealthText(data []byte, exitCode int) *types.SCSIHealthEvidence {
+	// Bit 3 reports a failing SMART health check independently of wording.
+	if exitCode&(1<<3) != 0 {
+		passed := false
+		return &types.SCSIHealthEvidence{SmartPassed: &passed}
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		switch strings.TrimSpace(line) {
+		case "SMART overall-health self-assessment test result: PASSED", "SMART Health Status: OK":
+			passed := true
+			return &types.SCSIHealthEvidence{SmartPassed: &passed}
+		}
+	}
+
+	return nil
+}
+
 func parseSCSIHealth(
 	data []byte,
 ) (*types.SCSIHealthEvidence, bool, bool, *uint8) {
