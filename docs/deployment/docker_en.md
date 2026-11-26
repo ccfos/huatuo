@@ -120,8 +120,9 @@ Run `make compose-dev-up` before these scripts. They require `curl`, `jq`, `kube
 `ip`, `crictl`, a Kubernetes node on the local host, and access to its containerd runtime.
 They preload missing workload images with `crictl`. The runtime endpoint defaults to
 `unix:///run/containerd/containerd.sock`; override it with `CONTAINER_RUNTIME_ENDPOINT`.
-They use `redis` with
-`redislabs/memtier_benchmark`, or `postgres`; no benchmark tools need installing on the host.
+They use `redis` with `redislabs/memtier_benchmark`, or
+`ubuntu/postgres:18-26.04_edge` with pgbench from `postgres:18.7-bookworm`.
+The host needs no benchmark tools.
 Redis runs mixed reads and writes with a 30-second profile. Each PostgreSQL mode profiles for
 60 seconds. CPU modes initialize temporary data and run read-only queries; memory modes reconnect
 and materialize queries to allocate, touch, and briefly retain memory. Tasks are created through the apiserver;

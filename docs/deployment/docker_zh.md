@@ -115,7 +115,9 @@ Grafana 的 **Profile type** 分别显示两种分配模式，类型为
 运行前先执行 `make compose-dev-up` 启动开发栈。脚本需要 `curl`、`jq`、`kubectl`、`ip`、`crictl`
 和本机 Kubernetes 节点，以及本机 containerd 的访问权限。脚本通过 `crictl` 预拉取缺少的业务镜像，
 默认运行时地址为 `unix:///run/containerd/containerd.sock`，可通过 `CONTAINER_RUNTIME_ENDPOINT` 修改。
-镜像分别为 `redis` + `redislabs/memtier_benchmark`、`postgres`；
+Redis 使用 `redis` 和 `redislabs/memtier_benchmark` 镜像。
+PostgreSQL 服务端使用 `ubuntu/postgres:18-26.04_edge`，压测端使用
+`postgres:18.7-bookworm` 中的 pgbench。
 无需在宿主机安装压测工具。Redis 使用混合读写，采样 30 秒；PostgreSQL 每种模式采样 60 秒，
 CPU 模式初始化临时数据后执行只读查询，内存模式通过重连和物化查询持续分配、触碰并短暂保留内存。
 采样任务由 apiserver 创建，完成后停止压测，再生成火焰图地址。

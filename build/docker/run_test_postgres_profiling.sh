@@ -19,8 +19,8 @@ set -euo pipefail
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 readonly ROOT_DIR
 source "${ROOT_DIR}/build/docker/lib_profiling.sh"
-readonly POSTGRES_IMAGE='m.daocloud.io/docker.io/library/postgres:18.7-bookworm'
-readonly POSTGRES_PGBENCH_IMAGE="$POSTGRES_IMAGE"
+readonly POSTGRES_IMAGE='docker.io/ubuntu/postgres:18-26.04_edge'
+readonly POSTGRES_PGBENCH_IMAGE='m.daocloud.io/docker.io/library/postgres:18.7-bookworm'
 readonly POSTGRES_DURATION=60
 readonly POSTGRES_API_BASE='http://127.0.0.1:12740'
 readonly POSTGRES_API_TOKEN='huatuo-dev-api-token'
@@ -35,12 +35,18 @@ readonly POSTGRES_CRI_ENDPOINT=${CONTAINER_RUNTIME_ENDPOINT:-unix:///run/contain
 write_config_postgres_pod() {
 	jq -n --arg node "$1" --arg image "$POSTGRES_IMAGE" '{
  apiVersion:"v1",kind:"Pod",metadata:{name:"postgres"},
- spec:{nodeName:$node,restartPolicy:"Never",terminationGracePeriodSeconds:5,
+ spec:{nodeName:$node,restartPolicy:"Never",terminationGracePeriodSeconds:5,securityContext:{runAsUser:584792,runAsGroup:584792,fsGroup:584792},
  containers:[{name:"postgres",image:$image,imagePullPolicy:"Never",
- env:[{name:"POSTGRES_PASSWORD",value:"huatuo-benchmark"},{name:"POSTGRES_DB",value:"benchmark"}],
+ env:[{name:"PGDATA",value:"/pgdata/db"},{name:"POSTGRES_PASSWORD",value:"huatuo-benchmark"}],
+ command:["sh","-ec"],args:["
+ umask 077
+ printf \"%s\\n\" \"$POSTGRES_PASSWORD\" > /tmp/pg-password
+ initdb -A scram-sha-256 --pwfile=/tmp/pg-password -U postgres
+ printf \"%s\\n\" \"host all all all scram-sha-256\" >> \"$PGDATA/pg_hba.conf\"
+ exec postgres -c listen_addresses=\"*\" -c unix_socket_directories=/tmp"],
  resources:{requests:{cpu:"100m",memory:"256Mi"},limits:{cpu:"2",memory:"1Gi"}},
- startupProbe:{exec:{command:["pg_isready","-h","127.0.0.1","-U","postgres","-d","benchmark"]},periodSeconds:2,failureThreshold:150},
- volumeMounts:[{name:"data",mountPath:"/var/lib/postgresql"}]}],volumes:[{name:"data",emptyDir:{sizeLimit:"2Gi"}}]}}
+ startupProbe:{exec:{command:["pg_isready","-h","127.0.0.1","-U","postgres","-d","postgres"]},periodSeconds:2,failureThreshold:150},
+ volumeMounts:[{name:"data",mountPath:"/pgdata"}]}],volumes:[{name:"data",emptyDir:{sizeLimit:"2Gi"}}]}}
  '
 }
 
@@ -77,7 +83,7 @@ SQL"
  apiVersion:"v1",kind:"Pod",metadata:{name:"pgbench"},
  spec:{nodeName:$node,restartPolicy:"Never",terminationGracePeriodSeconds:2,
  containers:[{name:"pgbench",image:$image,imagePullPolicy:"Never",
- env:[{name:"PGHOST",value:$address},{name:"PGUSER",value:"postgres"},{name:"PGDATABASE",value:"benchmark"},
+ env:[{name:"PGHOST",value:$address},{name:"PGUSER",value:"postgres"},{name:"PGDATABASE",value:"postgres"},
  {name:"PGPASSWORD",value:"huatuo-benchmark"},{name:"PGCONNECT_TIMEOUT",value:"5"},{name:"LC_ALL",value:"C"}],
  command:["bash","-euo","pipefail","-c"],args:[
  "\($setup)
@@ -151,7 +157,7 @@ main() {
 	require_commands kubectl ip curl crictl
 	require_endpoints_ready "$output_dir" "${POSTGRES_NODE_BASE}/readyz" "${POSTGRES_API_BASE}/readyz"
 	node=$(require_local_kubernetes_node "$output_dir")
-	cri_images_ensure_present "$output_dir" "$POSTGRES_CRI_ENDPOINT" "$POSTGRES_IMAGE"
+	cri_images_ensure_present "$output_dir" "$POSTGRES_CRI_ENDPOINT" "$POSTGRES_IMAGE" "$POSTGRES_PGBENCH_IMAGE"
 	namespace="huatuo-postgres-${output_dir##*.}"
 	namespace=${namespace,,}
 	kubectl --request-timeout=10s create namespace "$namespace" > "${output_dir}/namespace.log"
