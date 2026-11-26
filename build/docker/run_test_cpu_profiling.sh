@@ -66,16 +66,6 @@ write_config_cpu_profiler_workload_pod() {
  '
 }
 
-assert_cpu_profiler_workload() {
-	local output_dir=$1 namespace=$2
-	kubectl --request-timeout=10s -n "$namespace" get pod workload -o json > "${output_dir}/workload.response.json" || return 1
-	jq -e '.status.phase=="Running" and (.status.containerStatuses|length==1 and all(.[];.ready and .restartCount==0))' \
-		"${output_dir}/workload.response.json" > /dev/null || {
-		printf 'Expected a running workload without restarts; inspect %s/workload.response.json and workload.log.\n' "$output_dir" >&2
-		return 1
-	}
-}
-
 cpu_profiler_result_write() {
 	local output_dir=$1 status=$2 elapsed=$3 result='{}' metadata
 	metadata=$(profiling_mode_metadata "$cpu_profiler_mode") || return 1
@@ -127,7 +117,7 @@ main() {
 		kubernetes_pod_container_get "$pod_file" workload > "${output_dir}/target.json"
 		container_id=$(jq -er .container_id "${output_dir}/target.json")
 		node_container_wait_discovered "$output_dir" "$CPU_PROFILER_NODE_BASE" "$CPU_PROFILER_NODE_TOKEN" "$container_id"
-		assert_cpu_profiler_workload "$output_dir" "$namespace"
+		assert_kubernetes_pod_running "$namespace" workload "${output_dir}/workload.response.json"
 	fi
 	write_config_profiling_request "$CPU_PROFILER_TARGET_HOST" "$container_id" "$CPU_PROFILER_DURATION_SECONDS" "$cpu_profiler_mode" "$cpu" > "${output_dir}/create.request.json"
 	cpu_profiler_job_id=$(profiling_task_create "$output_dir" "$CPU_PROFILER_API_BASE" "$CPU_PROFILER_API_TOKEN" "${output_dir}/create.request.json" | jq -er .request_id)
@@ -135,7 +125,7 @@ main() {
 	if [[ $cpu_profiler_mode == irq ]]; then
 		assert_irq_load_active "$output_dir"
 	else
-		assert_cpu_profiler_workload "$output_dir" "$namespace"
+		assert_kubernetes_pod_running "$namespace" workload "${output_dir}/workload.response.json"
 	fi
 	profiling_raw_query_all "$output_dir" "$CPU_PROFILER_API_BASE" "$CPU_PROFILER_API_TOKEN" "$cpu_profiler_job_id" > "${output_dir}/raw.json"
 	if [[ $cpu_profiler_mode == irq ]]; then
@@ -156,7 +146,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
 			;;
 		esac
 	done
-	if ! cpu_profiler_selection=$(profiling_modes_parse "$@"); then
+	if ! cpu_profiler_selection=$(profiling_native_modes_parse "$@"); then
 		usage >&2
 		exit 2
 	fi

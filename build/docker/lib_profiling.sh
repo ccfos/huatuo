@@ -124,6 +124,15 @@ kubernetes_pod_wait_ready() {
 	return 1
 }
 
+assert_kubernetes_pod_running() {
+	local namespace=$1 pod=$2 response=$3
+	if ! kubectl --request-timeout=10s -n "$namespace" get pod "$pod" -o json > "$response" \
+		|| ! jq -e '.status.phase=="Running" and (.status.containerStatuses | length==1 and all(.[]; .ready and .restartCount==0))' "$response" > /dev/null; then
+		printf 'Expected running %s without restarts; inspect %s and Pod logs.\n' "$pod" "$response" >&2
+		return 1
+	fi
+}
+
 kubernetes_pod_container_get() {
 	local pod_file=$1 container=$2
 	jq -e --arg container "$container" '
@@ -288,23 +297,32 @@ profiling_mode_metadata() {
 	printf '{"type":"%s","profile_type":"%s","scope":"%s","mode":"%s"}\n' "$type" "$profile_type" "$scope" "$mode"
 }
 
+profiling_native_modes_parse() {
+	profiling_modes_parse 'oncpu offcpu virtual_alloc physical_alloc physical_usage irq' oncpu "$@"
+}
+
 profiling_modes_parse() {
-	local flag mode
-	local -A requested=()
+	local allowed_modes=$1 default_modes=$2 flag mode
+	shift 2
+	local modes=()
+	read -r -a modes <<< "$allowed_modes"
+	local -A allowed=() requested=()
+	for mode in "${modes[@]}"; do
+		allowed["--${mode//_/-}"]=$mode
+	done
 	for flag in "$@"; do
-		case $flag in
-		--oncpu | --offcpu | --virtual-alloc | --physical-alloc | --physical-usage | --irq)
-			mode=${flag#--}
-			requested[${mode//-/_}]=true
-			;;
-		*)
+		if [[ -z $flag || -z ${allowed[$flag]:-} ]]; then
 			printf 'Unknown argument: %s\n' "$flag" >&2
 			return 2
-			;;
-		esac
+		fi
+		requested[${allowed[$flag]}]=true
 	done
-	if ((${#requested[@]} == 0)); then requested[oncpu]=true; fi
-	for mode in oncpu offcpu virtual_alloc physical_alloc physical_usage irq; do
+	if (($# == 0)); then
+		read -r -a modes <<< "$default_modes"
+		printf '%s\n' "${modes[@]}"
+		return 0
+	fi
+	for mode in "${modes[@]}"; do
 		if [[ ${requested[$mode]:-false} == true ]]; then printf '%s\n' "$mode"; fi
 	done
 }

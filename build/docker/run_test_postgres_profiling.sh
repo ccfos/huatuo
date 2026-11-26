@@ -218,7 +218,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
 			;;
 		esac
 	done
-	if ! postgres_selection=$(profiling_modes_parse "$@"); then
+	if ! postgres_selection=$(profiling_native_modes_parse "$@"); then
 		usage >&2
 		exit 2
 	fi
