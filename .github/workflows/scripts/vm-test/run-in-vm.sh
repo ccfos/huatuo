@@ -364,7 +364,6 @@ run_guest_tests() {
 	export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
 	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
 	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
-	export NATIVE_PROFILER_TEST_PRIVILEGED_CONTAINER=1
 	# These pinned PR images must keep exercising the split-v1 memory CSS path.
 	local ID VERSION_ID
 	source /etc/os-release

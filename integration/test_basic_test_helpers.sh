@@ -19,7 +19,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 require_commands python3 jq curl ss flock
 
-assert_native_pid_prerequisite() (
+exercise_native_pid_prerequisite() (
 	source "${ROOT_DIR}/integration/lib_profiler.sh"
 	local container_status status expected output
 	output="${HUATUO_BAMAI_TEST_TMPDIR}/native-pid-prerequisite.log"
@@ -34,7 +34,7 @@ assert_native_pid_prerequisite() (
 		[[ ${container_status} != 0 ]] || expected=77
 		assert_eq "${status}" "${expected}" "native PID prerequisite exit status"
 		if [[ ${container_status} == 0 ]]; then
-			grep -Fq 'native PID profiling is unsupported inside containers' "${output}" \
+			grep -Fq 'cannot verify native PID identity in containers' "${output}" \
 				|| fatal "native PID skip reason is missing"
 			! grep -Fq 'collection reached' "${output}" || fatal "native PID collection ran after skip"
 		else
@@ -460,6 +460,56 @@ assert_cpu_reference_window() (
 		|| fatal "cAdvisor timeout omitted the required window endpoint"
 )
 
+exercise_native_container_workloads() (
+	source "${ROOT_DIR}/integration/lib_profiler_native_container.sh"
+	local commands="${HUATUO_BAMAI_TEST_TMPDIR}/native-container-commands.log"
+	local runtime image=fixture/image executable='/tmp/fixture workload' mode=success status=0 calls id
+	: > "${commands}"
+	timeout() {
+		shift 2
+		"$@"
+	}
+	docker() {
+		printf 'docker %s\n' "$*" >> "${commands}"
+		printf 'arg=<%s>\n' "$@" >> "${commands}"
+		case $1 in
+		run)
+			[[ ${mode} != timeout ]] || return 124
+			printf '%064d\n' 1
+			;;
+		esac
+	}
+	ctr() {
+		printf 'ctr %s\n' "$*" >> "${commands}"
+		printf 'arg=<%s>\n' "$@" >> "${commands}"
+		[[ $3 != images ]] || printf '%s\n' "${image}"
+	}
+	for runtime in docker containerd; do
+		native_container_runtime_available "${runtime}" "${image}" || exit 1
+		native_container_start "${runtime}" "${image}" "${executable}"
+		id=${native_container_id}
+		[[ ${id} =~ ^[[:xdigit:]]{64}$ ]] || fatal "${runtime}: workload ID was not retained"
+		native_container_stop || exit 1
+		[[ -z ${native_container_id} ]] || fatal "${runtime}: cleanup retained its container handle"
+		calls=$(wc -l < "${commands}")
+		native_container_stop || exit 1
+		assert_eq "$(wc -l < "${commands}")" "${calls}" "${runtime}: repeated cleanup makes no runtime request" || exit 1
+		grep -Fq "${id}" "${commands}" || fatal "${runtime}: cleanup did not address the owned container"
+		: > "${commands}"
+		native_container_start "${runtime}" "${image}" "${executable}" workload final 'argument with spaces'
+		grep -Fxq 'arg=<final>' "${commands}" || fatal "${runtime}: workload argument was lost"
+		grep -Fxq 'arg=<argument with spaces>' "${commands}" || fatal "${runtime}: workload argument was split"
+		native_container_stop || exit 1
+	done
+	mode=timeout
+	(
+		trap native_container_stop EXIT
+		native_container_start docker "${image}" "${executable}"
+	) > "${HUATUO_BAMAI_TEST_TMPDIR}/native-container-timeout.log" 2>&1 || status=$?
+	assert_eq "${status}" 1 "timed-out container creation fails the case" || exit 1
+	grep -Fq 'docker rm -f huatuo-native-' "${commands}" || fatal "timed-out creation lost its cleanup identity"
+)
+
 cpu_image_status=0
 bash -eu -s > "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" 2>&1 << 'SH' || cpu_image_status=$?
 source "$ROOT_DIR/integration/lib.sh"
@@ -472,11 +522,12 @@ assert_eq "${cpu_image_status}" 1 "CPU image pull failure belongs to the CPU cas
 grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" \
 	|| fatal "CPU image pull failure lacks registry diagnostics"
 
-assert_native_pid_prerequisite
+exercise_native_pid_prerequisite
 assert_helper_log_levels
 assert_helper_toml_values
 assert_helper_http_defaults
 assert_helper_config_fragments
+exercise_native_container_workloads
 assert_helper_bamai_ports
 assert_helper_metric_diagnostics
 stop_and_wait_by_pid ""

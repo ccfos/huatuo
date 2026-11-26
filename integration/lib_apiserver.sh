@@ -153,3 +153,22 @@ start_test_storage() {
 	# Keep ES data on the report filesystem rather than Docker's writable layer.
 	storage_start default "${HUATUO_BAMAI_TEST_TMPDIR}/elasticsearch-data"
 }
+
+assert_no_runtime_panics() (
+	shopt -s nullglob
+	local status=0
+	# Failure scenarios intentionally emit error logs.
+	grep -Ein 'panic:|fatal error:' "${HUATUO_BAMAI_TEST_TMPDIR}"/apiserver*.log \
+		"${HUATUO_BAMAI_TEST_TMPDIR}"/bamai-*.log "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2 || status=$?
+	case $status in
+	1) ;;
+	0)
+		log_error "runtime panic found in service logs"
+		return 1
+		;;
+	*)
+		log_error "cannot scan service logs: grep exited $status"
+		return 1
+		;;
+	esac
+)

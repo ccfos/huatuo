@@ -17,10 +17,10 @@
 # Profiler scenarios load lib.sh before this library.
 set -euo pipefail
 
-# These fixtures pass local PIDs without mapping them to host PIDs used by BPF.
+# Local fixture PIDs may differ from kernel PIDs in filters and sampled labels.
 require_native_pid_profiling() {
 	if is_container; then
-		skip "cannot verify eBPF PID filtering in containers: fixture PIDs may differ from host PIDs; run on the host"
+		skip "cannot verify native PID identity in containers: fixture PIDs may differ from kernel PIDs; run on the host"
 	fi
 }
 
