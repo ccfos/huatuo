@@ -150,3 +150,93 @@ burst_start_runtime() {
 	printf p >&"${burst_runtime_fd}"
 	wait_until 30 .1 grep -qx 'pressure ready' "${HUATUO_BAMAI_TEST_TMPDIR}/workload.log" || fatal "${mode}: pressure not ready"
 }
+
+burst_build_fixture() {
+	if [[ -n ${MEMBURST_ACCEPTANCE_PREBUILT_DIR:-} ]]; then
+		cp "${MEMBURST_ACCEPTANCE_PREBUILT_DIR}/go-snapshot" "${MEMBURST_ACCEPTANCE_FIXTURE}"
+	fi
+	if [[ ! -x ${MEMBURST_ACCEPTANCE_FIXTURE} ]]; then
+		go build -mod=vendor -o "${MEMBURST_ACCEPTANCE_FIXTURE}" ./integration/testdata/test_memory_threshold_snapshot_golang.go
+	fi
+}
+
+burst_prepare_ranked_workloads() {
+	local i fd
+	# Keep three profiled processes above the daemon in real RSS rankings.
+	for i in 1 2 3; do
+		mkfifo "${MEMBURST_ROOT_WORKSPACE}/commands-${i}"
+		exec {fd}<> "${MEMBURST_ROOT_WORKSPACE}/commands-${i}"
+		burst_fds+=("${fd}")
+		"${MEMBURST_ACCEPTANCE_FIXTURE}" 1 < "${MEMBURST_ROOT_WORKSPACE}/commands-${i}" > "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" 2>&1 &
+		burst_workloads+=("$!")
+		printf a >&"${fd}"
+		wait_until 20 .1 grep -qx ready "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "workload not ready"
+		printf p >&"${fd}"
+		wait_until 20 .1 grep -qx 'pressure ready' "${MEMBURST_ROOT_WORKSPACE}/workload-${i}.log" || fatal "real allocation pressure failed"
+	done
+}
+
+assert_burst_event() {
+	assert_memsnapshot_tracing_metrics memburst integration 1
+	jq -s -e --argjson n "${burst_top}" --argjson fixtures "$(printf '%s\n' "${burst_workloads[@]}" | jq -s .)" '
+ last as $e | $e.tracer_data as $d |
+ $e.tracer_name == "memburst" and $e.tracer_type == "autotracing"
+ and $e.region == "integration" and ($e.hostname|length>0)
+ and (($e.container_id // "") == "")
+ and ($e.started_timestamp|type=="string") and $e.uploaded_timestamp >= $e.started_timestamp
+ and ($d.top_memory_usage|length>0 and length<=$n)
+ and ([$d.top_memory_usage[].MemSize] == ([$d.top_memory_usage[].MemSize]|sort|reverse))
+ and ($d.process_snapshots|length==([3, ($d.top_memory_usage|length)]|min))
+ and any($d.process_snapshots[]; .pid as $pid | ($fixtures | index($pid)) != null)
+ and all(range(0;($d.process_snapshots|length)); . as $i | $d.process_snapshots[$i] as $s |
+   $s.pid == $d.top_memory_usage[$i].PID and $s.process_name == $d.top_memory_usage[$i].ProcessName
+   and ($s.snapshot.status | IN("complete", "partial", "unavailable", "failed"))
+   and (if ($fixtures | index($s.pid)) != null then
+   $s.language == "go" and $s.snapshot.status == "complete"
+   and $s.process_memory.rss_bytes >= 23068672
+   and ($s.snapshot.runtime_version|length>0)
+   and ($s.snapshot.entries|length>0 and length<=10)
+   and any($s.snapshot.entries[]; .name=="main.allocateBlock" and .objects==6 and .bytes==16777216)
+   and any($s.snapshot.entries[]; .name=="main.allocateBlock" and .objects==3 and .bytes==6291456)
+   else true end))
+ ' "${HUATUO_BAMAI_TEST_TMPDIR}/events/memburst" > /dev/null || fatal "incorrect persisted memburst event"
+}
+
+burst_daemon_resources() {
+	local pid fd target
+	pid=$(< "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid")
+	local fds=(/proc/"${pid}"/fd/*)
+	for fd in "${fds[@]}"; do
+		if target=$(readlink "${fd}"); then
+			printf '%s -> %q\n' "${fd##*/}" "${target}"
+		fi
+	done > "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-fds-${1}.log"
+	printf '%s ' "${#fds[@]}"
+	awk '/^VmRSS:/ {rss=$2} /^Threads:/ {threads=$2} END {print rss, threads}' "/proc/${pid}/status"
+}
+
+assert_burst_resource_growth() {
+	local fds rss threads
+	read -r fds rss threads < <(burst_daemon_resources current) || fatal "cannot read daemon resources"
+	log_info "daemon resources: fds=${fds} baseline_fds=${burst_baseline_fds} rss_kib=${rss} baseline_rss_kib=${burst_baseline_rss} threads=${threads} baseline_threads=${burst_baseline_threads}"
+	if ((fds > burst_baseline_fds + 2)); then
+		cat "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-fds-baseline.log" "${HUATUO_BAMAI_TEST_TMPDIR}/daemon-fds-current.log"
+		fatal "daemon FD growth exceeds 2: baseline=${burst_baseline_fds}, current=${fds}"
+	fi
+	((rss <= burst_baseline_rss + 131072)) || fatal "daemon RSS growth exceeds 128 MiB: baseline=${burst_baseline_rss} KiB, current=${rss} KiB"
+	((threads <= burst_baseline_threads + 16)) || fatal "daemon thread growth exceeds 16: baseline=${burst_baseline_threads}, current=${threads}"
+}
+
+burst_wait_groups() {
+	local pid code status=0
+	for pid in "${!burst_group_names[@]}"; do
+		if wait "${pid}"; then
+			continue
+		else
+			code=$?
+			log_error "memburst group ${burst_group_names[${pid}]} (pid ${pid}) exited with status ${code}"
+			status=1
+		fi
+	done
+	return "${status}"
+}
