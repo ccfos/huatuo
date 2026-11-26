@@ -49,6 +49,7 @@ exercise_pid_container_intersection() (
 	[[ ${container_pid} =~ ^[1-9][0-9]*$ ]] || fatal "invalid ${runtime} container PID: ${container_pid}"
 	trap cleanup_running_jobs EXIT
 	log_info "checking native PID/container intersection: ${runtime}"
+	mkdir -p "${NATIVE_CONTAINER_WORK}/${runtime}"
 	start_piped_process "${NATIVE_CONTAINER_WORK}/${runtime}/outside" "${NATIVE_CONTAINER_FIXTURE}"
 	outside_pid=${PROCESS_PID}
 	outside_start_time=${PROCESS_START_TIME}
