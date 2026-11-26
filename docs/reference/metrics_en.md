@@ -657,7 +657,6 @@ BPF/BTF, and kprobes.
 |`nvme_reset`|An NVMe reset request is accepted, not necessarily completed; event only, without evidence commands|
 |`nvme_state_change`|An NVMe controller changes state|
 |`scsi_timeout`|A SCSI command times out|
-|`scsi_dispatch_error`|SCSI command dispatch fails|
 |`md_sync_action`|An MD sync action changes|
 |`md_degraded`|The number of unavailable MD members changes|
 |`md_member_state`|An MD member changes state or disappears|
@@ -665,7 +664,7 @@ BPF/BTF, and kprobes.
 If an NVMe state name is unavailable, `new_state` is `unknown` and
 `new_state_raw` retains the numeric state.
 
-Block errors, NVMe timeouts, SCSI errors, and MD members entering `faulty`,
+Block errors, NVMe and SCSI timeouts, and MD members entering `faulty`,
 `blocked`, `write_error`, or `removed` trigger evidence collection. A uniquely
 resolved NVMe target uses read-only `nvme-cli` commands; SCSI uses read-only
 `smartctl` commands. Ambiguous targets retain the event without scanning other
@@ -684,7 +683,6 @@ The `huatuo_bamai_blk_device_health_` Counters track events since process startu
 |`nvme_timeouts_total`|disk|NVMe timeouts|
 |`nvme_resets_total`|disk|Accepted NVMe reset requests|
 |`scsi_timeouts_total`|disk|SCSI timeouts|
-|`scsi_dispatch_errors_total`|disk, status|SCSI dispatch errors|
 |`collection_errors_total`|disk, reason|Evidence collection failures|
 |`event_persistence_failures_total`|reason|Event save errors|
 
