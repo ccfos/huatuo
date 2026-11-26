@@ -550,7 +550,8 @@ exercise_profile_completion() (
 		completed | failed | stopped)
 			printf '{"data":{"status":"terminal","terminal":{"outcome":"%s","reason":"fixture-reason"}}}' "${mode}" > "${response}"
 			;;
-		http_error) printf '{"error":{"code":"fixture-error"}}' > "${response}" ;;
+		http_error) printf '{"data":{"status":"terminal","terminal":{"outcome":"failed"}}}' > "${response}" ;;
+		empty) ;;
 		timeout) printf 'fixture timeout\n' >&2 ;;
 		malformed) printf '{' > "${response}" ;;
 		esac
@@ -564,10 +565,10 @@ exercise_profile_completion() (
 		*) printf 200 ;;
 		esac
 	}
-	for mode in completed retry failed stopped http_error timeout malformed; do
+	for mode in completed retry failed stopped http_error timeout malformed empty; do
 		: > "${requests}"
 		status=0 expected=1 wait_timeout=5
-		case ${mode} in http_error | timeout | malformed) wait_timeout=1 ;; esac
+		case ${mode} in http_error | timeout | malformed | empty) wait_timeout=1 ;; esac
 		(wait_until "${wait_timeout}" 0.01 continuous_profile_completed fixture-job "${response_file}") \
 			> "${output_file}" 2>&1 || status=$?
 		[[ ${mode} != completed && ${mode} != retry ]] || expected=0

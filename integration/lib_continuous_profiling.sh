@@ -89,32 +89,43 @@ continuous_profile_create_cpu() {
 		|| fatal "${description} failed: $(< "${response_file}")"
 }
 
-continuous_profile_status_is() {
-	local profile_id=$1 expected_status=$2 response_file=$3
+continuous_profile_fetch_status() {
+	local profile_id=$1 response_file=$2
 	local status curl_status=0 error_file="${response_file%.json}.curl-error"
 
 	# Truncate the previous response even if curl fails before receiving a body.
-	: > "${response_file}"
+	: > "${response_file}" || return 1
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
 		-o "${response_file}" -w '%{http_code}' \
 		"${APISERVER_ADDR}/v1/profiling/${profile_id}" 2> "${error_file}") || curl_status=$?
 	continuous_profile_status_diagnostic="curl exit=${curl_status}, HTTP status=${status}"
-	[[ ${curl_status} -eq 0 && ${status} == 200 ]] || return 1
-	jq -e --arg expected_status "${expected_status}" \
-		'if ($expected_status == "completed" or
+	[[ ${curl_status} -eq 0 && ${status} == 200 ]]
+}
+
+continuous_profile_status_matches() {
+	local expected_status=$1 response_file=$2
+	jq -es --arg expected_status "${expected_status}" \
+		'length == 1 and (.[0] |
+		 if ($expected_status == "completed" or
 			$expected_status == "failed" or
 			$expected_status == "stopped")
 		 then .data.status == "terminal"
 			and .data.terminal.outcome == $expected_status
 		 else .data.status == $expected_status
-		 end' "${response_file}" > /dev/null
+		 end)' "${response_file}" > /dev/null 2>&1
+}
+
+continuous_profile_status_is() {
+	local profile_id=$1 expected_status=$2 response_file=$3
+	continuous_profile_fetch_status "${profile_id}" "${response_file}" || return 1
+	continuous_profile_status_matches "${expected_status}" "${response_file}"
 }
 
 continuous_profile_completed() {
 	local profile_id=$1 response_file=$2
-	continuous_profile_status_is "${profile_id}" completed "${response_file}" && return 0
-	if jq -e '.data.status == "terminal" and .data.terminal.outcome != "completed"' \
-		"${response_file}" > /dev/null 2>&1; then
+	continuous_profile_fetch_status "${profile_id}" "${response_file}" || return 1
+	continuous_profile_status_matches completed "${response_file}" && return 0
+	if continuous_profile_status_matches terminal "${response_file}"; then
 		# The public Job redacts execution errors; include the matching Node diagnostics.
 		grep -F "${profile_id}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 			| tail -n 20 >&2 || true

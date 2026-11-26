@@ -116,8 +116,9 @@ create() {
 }
 job_reached() {
 	local id=$1 outcome=$2 file="${HUATUO_BAMAI_TEST_TMPDIR}/status-$1.json"
-	continuous_profile_status_is "$id" "$outcome" "$file" && return 0
-	if jq -e '.data.status == "terminal"' "$file" > /dev/null 2>&1; then
+	continuous_profile_fetch_status "$id" "$file" || return 1
+	continuous_profile_status_matches "$outcome" "$file" && return 0
+	if continuous_profile_status_matches terminal "$file"; then
 		fatal "job $id reached an unexpected terminal state: $(cat "$file")"
 	fi
 	return 1
