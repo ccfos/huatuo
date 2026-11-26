@@ -556,6 +556,32 @@
           "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "P",
           "timeField": "uploaded_timestamp"
+        },
+        {
+          "alias": "tcp_retransmit",
+          "bucketAggs": [
+            {
+              "field": "uploaded_timestamp",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "tracer_name:tcp_retransmit AND region.keyword:$region AND hostname.keyword:$hostname",
+          "refId": "Q",
+          "timeField": "uploaded_timestamp"
         }
       ],
       "title": "Events",
@@ -671,7 +697,7 @@
               "type": "count"
             }
           ],
-          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR (tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
+          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR (tracer_name:memory_oom_kill OR tracer_name:memory_oom OR tracer_name:oom) \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch\nOR tracer_name:tcp_retransmit \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
           "refId": "A",
           "timeField": "uploaded_timestamp"
         }
@@ -2004,7 +2030,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "",
+      "description": "Stored TCP retransmission events, including loss probes when enabled.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2071,52 +2097,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:null AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "tracer_name:tcp_retransmit AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_timestamp"
         }
       ],
-      "title": "null",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "_id": true,
-              "_index": true,
-              "_type": true,
-              "uploaded_timestamp": true
-            },
-            "indexByName": {
-              "_id": 2,
-              "_index": 3,
-              "_type": 4,
-              "container_namespace": 5,
-              "container_hostname": 6,
-              "container_id": 7,
-              "container_qos": 8,
-              "container_type": 9,
-              "es_index_time": 10,
-              "highlight": 11,
-              "hostname": 12,
-              "region": 13,
-              "sort": 14,
-              "time": 15,
-              "tracer_data.deltauser": 16,
-              "tracer_data.deltauserth": 17,
-              "tracer_data.flamedata": 18,
-              "tracer_data.nowsys": 19,
-              "tracer_data.nowuser": 20,
-              "tracer_data.systhreshold": 21,
-              "tracer_data.userthreshold": 22,
-              "tracer_name": 23,
-              "observed_timestamp": 0,
-              "uploaded_timestamp": 1
-            },
-            "renameByName": {}
-          }
-        }
-      ],
+      "title": "tcp_retransmit",
       "type": "stat"
     },
     {
@@ -7000,7 +6986,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "## dropwatch (Event)\n\nDetects packet drops within the kernel network protocol stack.  \nOutputs kernel call stack and network context for analysis.\n\nHelps identify and resolve application jitter and latency caused by packet drops in the protocol stack.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- TCP request traffic AND TCP state != `CLOSED`\n\n**Excluded scenarios:**\n- Out-of-order (OOO) packets in `CLOSE_WAIT` state\n\n```\n// state: CLOSE_WAIT\n// stack:\n//  1. kfree_skb/ffffffff963047b0\n//  2. kfree_skb/ffffffff963047b0\n//  3. skb_rbtree_purge/ffffffff963089e0\n//  4. tcp_fin/ffffffff963ac200\n//  5. ...\n```",
+            "content": "## dropwatch (Event)\n\nShows reported software and hardware packet drops that match the configured filter. Inspect the device, packet headers, drop reason and kernel stack.",
             "mode": "markdown"
           },
           "pluginVersion": "9.5.21",
@@ -7308,7 +7294,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_data.stack"
+                  "options": "stack"
                 },
                 "properties": [
                   {
@@ -7390,73 +7376,275 @@
                   "sort": true,
                   "time": true,
                   "tracer_data.ack_seq": true,
-                  "tracer_data.max_ack_backlog": false,
-                  "tracer_data.pid": true,
                   "tracer_data.seq": true,
-                  "tracer_data.stack": false,
                   "tracer_name": true,
                   "tracer_type": true,
                   "uploaded_timestamp": true
                 },
                 "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_source": 29,
-                  "_type": 4,
-                  "es_index_time": 5,
-                  "highlight": 6,
-                  "hostname": 7,
-                  "region": 8,
-                  "sort": 9,
-                  "time": 10,
-                  "tracer_data.ack_seq": 25,
-                  "tracer_data.comm": 13,
-                  "tracer_data.daddr": 18,
-                  "tracer_data.dest_hostname": 19,
-                  "tracer_data.dport": 21,
-                  "tracer_data.max_ack_backlog": 27,
-                  "tracer_data.pid": 14,
-                  "tracer_data.packet_len_bytes": 23,
-                  "tracer_data.queue_mapping": 24,
-                  "tracer_data.saddr": 16,
-                  "tracer_data.seq": 26,
-                  "tracer_data.sport": 20,
-                  "tracer_data.src_hostname": 17,
-                  "tracer_data.stack": 15,
-                  "tracer_data.state": 22,
-                  "tracer_data.type": 12,
-                  "tracer_name": 11,
                   "observed_timestamp": 0,
-                  "tracer_type": 28,
-                  "uploaded_timestamp": 1
+                  "hostname": 1,
+                  "tracer_data.drop_reason": 2,
+                  "tracer_data.drop_source": 3,
+                  "tracer_data.drop_reason_group": 4,
+                  "tracer_data.netdev_name": 5,
+                  "tracer_data.comm": 6,
+                  "tracer_data.pid": 7,
+                  "tracer_data.layers.label": 8,
+                  "tracer_data.layers.ipv4.saddr": 9,
+                  "tracer_data.layers.ipv4.daddr": 10,
+                  "tracer_data.layers.ipv6.saddr": 11,
+                  "tracer_data.layers.ipv6.daddr": 12,
+                  "tracer_data.layers.tcp.sport": 13,
+                  "tracer_data.layers.tcp.dport": 14,
+                  "tracer_data.layers.udp.sport": 15,
+                  "tracer_data.layers.udp.dport": 16,
+                  "tracer_data.packet_len_bytes": 17,
+                  "tracer_data.drop_location": 18,
+                  "tracer_data.stack": 19
                 },
                 "renameByName": {
-                  "tracer_data.comm": "comm",
-                  "tracer_data.daddr": "daddr",
-                  "tracer_data.dest_hostname": "dest_hostname",
-                  "tracer_data.dport": "dport",
-                  "tracer_data.max_ack_backlog": "max_ack_backlog",
-                  "tracer_data.pid": "pid",
-                  "tracer_data.packet_len_bytes": "packet_len_bytes",
-                  "tracer_data.queue_mapping": "queue_mapping",
-                  "tracer_data.saddr": "saddr",
-                  "tracer_data.sport": "sport",
-                  "tracer_data.src_hostname": "src_hostname",
-                  "tracer_data.stack": "stack",
-                  "tracer_data.state": "state",
-                  "tracer_data.type": "type"
+                  "tracer_data.container_id": "event_container_id"
                 }
+              }
+            },
+            {
+              "id": "renameByRegex",
+              "options": {
+                "regex": "^tracer_data\\.(?:layers\\.)?(.+)$",
+                "renamePattern": "$1"
               }
             }
           ],
           "type": "table"
         },
         {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 5,
+            "x": 0,
+            "y": 44
+          },
+          "id": 195,
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_timestamp",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:tcp_retransmit AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "TCP retransmit events",
+          "type": "stat",
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "sum"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "description": "Stored TCP retransmission events, including loss probes when enabled."
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 19,
+            "x": 5,
+            "y": 44
+          },
+          "id": 196,
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_timestamp",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:tcp_retransmit AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "TCP retransmit event trend",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "gridPos": {
+            "h": 11,
+            "w": 24,
+            "x": 0,
+            "y": 51
+          },
+          "id": 197,
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "limit": "500"
+                  },
+                  "type": "logs"
+                }
+              ],
+              "query": "tracer_name:tcp_retransmit AND region.keyword:$region AND hostname.keyword:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_timestamp"
+            }
+          ],
+          "title": "TCP retransmit details",
+          "type": "table",
+          "description": "tcp_reason classifies the retransmission. correlation_reason and drop fields describe optional local drop correlation.",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "region": true,
+                  "sort": true,
+                  "time": true,
+                  "tracer_name": true,
+                  "tracer_type": true,
+                  "uploaded_timestamp": true
+                },
+                "indexByName": {
+                  "observed_timestamp": 0,
+                  "hostname": 1,
+                  "tracer_data.event_type": 2,
+                  "tracer_data.phase": 3,
+                  "tracer_data.tcp_reason": 4,
+                  "tracer_data.tcp_state": 5,
+                  "tracer_data.tcp_saddr": 6,
+                  "tracer_data.tcp_sport": 7,
+                  "tracer_data.tcp_daddr": 8,
+                  "tracer_data.tcp_dport": 9,
+                  "tracer_data.comm": 10,
+                  "tracer_data.pid": 11,
+                  "tracer_data.correlation_reason": 12,
+                  "tracer_data.drop_source": 13,
+                  "tracer_data.drop_reason": 14,
+                  "tracer_data.drop_reason_group": 15,
+                  "tracer_data.drop_location": 16,
+                  "tracer_data.drop_stack": 17,
+                  "tracer_data.tcp_flags": 18,
+                  "tracer_data.tcp_seq": 19,
+                  "tracer_data.tcp_end_seq": 20,
+                  "tracer_data.tcp_ack_seq": 21
+                },
+                "renameByName": {
+                  "tracer_data.container_id": "event_container_id"
+                }
+              }
+            },
+            {
+              "id": "renameByRegex",
+              "options": {
+                "regex": "^tracer_data\\.(.+)$",
+                "renamePattern": "$1"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "filterable": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "drop_stack"
+                },
+                "properties": [
+                  {
+                    "id": "custom.inspect",
+                    "value": true
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "_source"
+                },
+                "properties": [
+                  {
+                    "id": "custom.inspect",
+                    "value": true
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
           "gridPos": {
             "h": 2,
             "w": 24,
             "x": 0,
-            "y": 44
+            "y": 62
           },
           "id": 165,
           "options": {
@@ -7478,7 +7666,7 @@
             "h": 7,
             "w": 4,
             "x": 0,
-            "y": 46
+            "y": 64
           },
           "id": 12,
           "options": {
@@ -7520,7 +7708,7 @@
             "h": 7,
             "w": 3,
             "x": 4,
-            "y": 46
+            "y": 64
           },
           "id": 106,
           "options": {
@@ -7670,7 +7858,7 @@
             "h": 7,
             "w": 17,
             "x": 7,
-            "y": 46
+            "y": 64
           },
           "id": 65,
           "options": {
@@ -7808,7 +7996,7 @@
             "h": 12,
             "w": 24,
             "x": 0,
-            "y": 53
+            "y": 71
           },
           "id": 66,
           "options": {
@@ -7934,7 +8122,7 @@
             "h": 2,
             "w": 24,
             "x": 0,
-            "y": 65
+            "y": 83
           },
           "id": 166,
           "options": {
@@ -7956,7 +8144,7 @@
             "h": 7,
             "w": 4,
             "x": 0,
-            "y": 67
+            "y": 85
           },
           "id": 173,
           "options": {
@@ -7998,7 +8186,7 @@
             "h": 7,
             "w": 3,
             "x": 4,
-            "y": 67
+            "y": 85
           },
           "id": 137,
           "options": {
@@ -8112,7 +8300,7 @@
             "h": 7,
             "w": 17,
             "x": 7,
-            "y": 67
+            "y": 85
           },
           "id": 131,
           "options": {
@@ -8213,7 +8401,7 @@
             "h": 11,
             "w": 24,
             "x": 0,
-            "y": 74
+            "y": 92
           },
           "id": 143,
           "options": {
@@ -8308,7 +8496,7 @@
             "h": 2,
             "w": 24,
             "x": 0,
-            "y": 85
+            "y": 103
           },
           "id": 167,
           "options": {
@@ -8330,7 +8518,7 @@
             "h": 7,
             "w": 4,
             "x": 0,
-            "y": 87
+            "y": 105
           },
           "id": 174,
           "options": {
@@ -8372,7 +8560,7 @@
             "h": 7,
             "w": 3,
             "x": 4,
-            "y": 87
+            "y": 105
           },
           "id": 139,
           "options": {
@@ -8486,7 +8674,7 @@
             "h": 7,
             "w": 17,
             "x": 7,
-            "y": 87
+            "y": 105
           },
           "id": 133,
           "options": {
@@ -8582,7 +8770,7 @@
             "h": 11,
             "w": 24,
             "x": 0,
-            "y": 94
+            "y": 112
           },
           "id": 145,
           "options": {
@@ -8674,7 +8862,7 @@
             "h": 2,
             "w": 24,
             "x": 0,
-            "y": 105
+            "y": 123
           },
           "id": 168,
           "options": {
@@ -8696,7 +8884,7 @@
             "h": 7,
             "w": 4,
             "x": 0,
-            "y": 107
+            "y": 125
           },
           "id": 175,
           "options": {
@@ -8738,7 +8926,7 @@
             "h": 7,
             "w": 3,
             "x": 4,
-            "y": 107
+            "y": 125
           },
           "id": 141,
           "options": {
@@ -8852,7 +9040,7 @@
             "h": 7,
             "w": 17,
             "x": 7,
-            "y": 107
+            "y": 125
           },
           "id": 135,
           "options": {
@@ -8965,7 +9153,7 @@
             "h": 12,
             "w": 24,
             "x": 0,
-            "y": 114
+            "y": 132
           },
           "id": 147,
           "options": {
