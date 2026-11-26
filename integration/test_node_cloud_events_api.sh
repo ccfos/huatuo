@@ -21,7 +21,6 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly EVENT_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 readonly EVENT_STREAM_CURL_TIMEOUT=(--connect-timeout 2 --max-time 10)
 
@@ -45,7 +44,8 @@ stop_event_stream() {
 }
 
 write_config_bamai_cloud_events_api() {
-	write_config_bamai_default
+	write_config_blacklist_except
+	write_config_bamai_auth
 	write_config_bamai_http
 	cat << 'EOF'
     MaxEventStreamClients = 1
@@ -61,7 +61,7 @@ assert_error_response() {
 	local curl_status=0 status
 	local auth_args=()
 	if [[ "${authenticated}" == "true" ]]; then
-		auth_args=(-H "Authorization: Bearer ${EVENT_API_TOKEN}")
+		auth_args=(-H "Authorization: Bearer ${INTEGRATION_NODE_API_TOKEN}")
 	fi
 
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" \
@@ -110,7 +110,7 @@ event_stream_capacity_is_released() {
 	event_capacity_curl_status=0
 	event_capacity_status=$(curl -sS -N "${CURL_TIMEOUT[@]}" \
 		-o "${response_file}" -w '%{http_code}' -X POST \
-		-H "Authorization: Bearer ${EVENT_API_TOKEN}" \
+		-H "Authorization: Bearer ${INTEGRATION_NODE_API_TOKEN}" \
 		-H 'Content-Type: application/json' \
 		-H 'Accept: text/event-stream' \
 		"${HUATUO_BAMAI_ADDR}/v1/events/watch" \
@@ -127,7 +127,7 @@ assert_event_stream_heartbeat() {
 
 	curl -sS -N "${EVENT_STREAM_CURL_TIMEOUT[@]}" -D "${headers_file}" \
 		-o "${response_file}" -X POST \
-		-H "Authorization: Bearer ${EVENT_API_TOKEN}" \
+		-H "Authorization: Bearer ${INTEGRATION_NODE_API_TOKEN}" \
 		-H 'Content-Type: application/json' \
 		-H 'Accept: text/event-stream' \
 		"${HUATUO_BAMAI_ADDR}/v1/events/watch" \

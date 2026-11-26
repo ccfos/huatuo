@@ -21,7 +21,6 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly CONFIG_API_TOKEN="integration-node-token"
 readonly CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 
 require_commands curl jq ss
@@ -37,7 +36,8 @@ cleanup() {
 trap cleanup EXIT
 
 write_config_bamai_config_api() {
-	write_config_bamai_default
+	write_config_blacklist_except
+	write_config_bamai_auth
 	write_config_bamai_http
 }
 
@@ -49,7 +49,7 @@ request_config_api() {
 	config_curl_status=0
 	config_http_status=""
 	if [[ "${authenticated}" == "true" ]]; then
-		auth_args=(-H "Authorization: Bearer ${CONFIG_API_TOKEN}")
+		auth_args=(-H "Authorization: Bearer ${INTEGRATION_NODE_API_TOKEN}")
 	fi
 
 	config_http_status=$(curl -sS "${CURL_TIMEOUT[@]}" \

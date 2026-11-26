@@ -16,6 +16,13 @@
 
 set -euo pipefail
 
+if [[ -n ${__HUATUO_CONFIG_SH_LOADED:-} ]]; then
+	return 0
+fi
+readonly __HUATUO_CONFIG_SH_LOADED=1
+
+readonly INTEGRATION_NODE_API_TOKEN="integration-node-token"
+
 # Configuration fragments write to stdout; callers own output files and resources.
 write_config_blacklist() {
 	local separator="" collector
@@ -64,7 +71,7 @@ EOF
 }
 
 write_config_bamai_auth() {
-	local token=$1
+	local token=${1-${INTEGRATION_NODE_API_TOKEN}}
 	cat << EOF
 
 [HTTPServer.Auth]
@@ -156,7 +163,7 @@ write_config_bamai_default() {
 		"memory_threshold_snapshot" "metax_gpu" "ascend_npu" "softlockup" "ethtool" \
 		"netstat_hw" "blk_iotrace" "memory_free" "memory_reclaim" "reschedipi" \
 		"softirq" "iotracing" "blk_iocost" "blk_throtl" "sched-blame"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 }
 
 write_config_bamai_netdev() {
@@ -168,7 +175,7 @@ write_config_bamai_netdev() {
 # The case supplies its port and device selection before startup.
 write_config_bamai_netdev_hw() {
 	write_config_blacklist_except netdev_hw
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_http "127.0.0.1:${NETDEV_HW_PORT}"
 	cat << EOF
 [MetricCollector.NetdevHW]
@@ -182,7 +189,7 @@ write_config_bamai_netdev_rdma_link() {
 
 write_config_bamai_netdev_qdisc() {
 	write_config_blacklist_except netdev_qdisc
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_http
 	cat << EOF
 [MetricCollector.Qdisc]
@@ -241,7 +248,7 @@ write_config_bamai_net_rx_latency() {
 		"netstat_hw" "blk_iotrace" "memory_free" "memory_reclaim" "reschedipi" \
 		"softirq" "iotracing" "dropwatch" "blk_iocost" "blk_throtl" \
 		"sched-blame"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [EventTracing.NetRxLatency]
@@ -257,7 +264,7 @@ EOF
 write_config_bamai_lacp_events() {
 	# The caller initializes and owns HUATUO_BAMAI_TEST_TMPDIR; expand its storage path.
 	write_config_blacklist_except netdev_bonding_lacp
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
@@ -267,7 +274,7 @@ write_config_bamai_sched_tick_threshold() {
 
 	write_config_blacklist_except mthreads_gpu mthreads_xid net_conntrack sched_tick tracing_status xfs
 
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 
 	cat << EOF
 
@@ -297,7 +304,7 @@ write_config_bamai_storage_events() {
 	# Tests supply isolated ports, packet filter, event limits and optional backend credentials.
 	write_config_blacklist_except dropwatch net_conntrack xfs
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 [EventTracing.Dropwatch]
     Filter = "udp and dst host 127.0.0.99 and dst port ${storage_target_port}"
@@ -316,7 +323,7 @@ write_config_bamai_tcp_events() {
 	# The case disables the container manager required by threshold snapshots.
 	write_config_blacklist_except irqtracing mthreads_xid net_conntrack tcp_retransmit xfs
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [EventTracing.TCPRetransmit]
@@ -333,7 +340,7 @@ write_config_bamai_cpusys_autotracing() {
 	local tool=${1:-perf}
 	write_config_blacklist_except cpusys net_conntrack
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [AutoTracing.CPUSys]
@@ -360,7 +367,7 @@ write_config_bamai_cpusys_profiler() {
 # The iotracing test controls proc/diskstats and the toolstream subprocess.
 write_config_bamai_iotracing_autotracing() {
 	write_config_blacklist_except blk_iostat blk_device_health iotracing irqtracing mthreads_gpu mthreads_xid net_conntrack tcp_retransmit xfs
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [AutoTracing.IOTracing]
@@ -380,7 +387,7 @@ EOF
 write_config_bamai_irqtracing_autotracing() {
 	write_config_blacklist_except irqtracing mthreads_xid net_conntrack xfs
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [AutoTracing.IRQTracing]
@@ -407,7 +414,7 @@ write_config_apiserver_base() {
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
 EOF
-	write_config_apiserver_agent "${HUATUO_BAMAI_ADDR##*:}" "integration-node-token"
+	write_config_apiserver_agent "${HUATUO_BAMAI_ADDR##*:}" "${INTEGRATION_NODE_API_TOKEN}"
 	write_config_apiserver_admin "${API_TOKEN}"
 }
 
@@ -431,7 +438,7 @@ write_config_bamai_continuous_profiling() {
 	local tool_dir=${1:-}
 	# Unrelated collectors can feed storage latency events back into Elasticsearch.
 	write_config_blacklist_except
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [Profiling]
@@ -458,7 +465,7 @@ write_config_apiserver_continuous_profiling() {
     Permissions = ["/v1/profiling", "/v1/profiling/**"]
 
 EOF
-	write_config_apiserver_agent "${HUATUO_BAMAI_ADDR##*:}" "integration-node-token"
+	write_config_apiserver_agent "${HUATUO_BAMAI_ADDR##*:}" "${INTEGRATION_NODE_API_TOKEN}"
 	cat << EOF
 
 [Profiling]
@@ -504,7 +511,7 @@ CONFIG
 write_config_bamai_netdev_events() {
 	write_config_blacklist_except net_conntrack netdev_events tracing_status xfs
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [EventTracing.Netdev]
@@ -517,7 +524,7 @@ EOF
 # The memory metric cases share a collector-only agent configuration.
 write_config_bamai_memory_metrics() {
 	write_config_blacklist_except memory_buddyinfo memory_events memory_others memory_vmstat net_conntrack tracing_status xfs
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 }
 
 # The caller provides kubelet connection details and metric filter parameters.
@@ -538,7 +545,7 @@ CONFIG
 # OOM capture uses host memory data; threshold snapshots need a container manager.
 write_config_bamai_memory_oom_kill() {
 	write_config_blacklist_except irqtracing memory_oom_kill mthreads_gpu mthreads_xid net_conntrack tracing_status xfs
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
@@ -546,7 +553,7 @@ write_config_bamai_memory_oom_kill() {
 write_config_bamai_memory_threshold_snapshot() {
 	write_config_blacklist_except memory_threshold_snapshot net_conntrack tracing_status xfs
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_kubelet "${GO_SNAPSHOT_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << EOF
 
@@ -563,7 +570,7 @@ EOF
 # The Elasticsearch config test supplies the credential fields.
 write_config_bamai_elasticsearch_validation() {
 	write_config_blacklist_except
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_http
 	write_config_bamai_elasticsearch "${storage_address:-}" "${storage_username:-}" "${storage_password:-}"
 	write_config_storage_local ""
@@ -574,7 +581,7 @@ write_config_bamai_runtime_limits() {
 	local startup_cpu=$1 cpu=$2 memory_mib=$3
 
 	write_config_blacklist_except xfs
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	cat << EOF
 
 [Runtime]
@@ -590,7 +597,7 @@ write_config_bamai_toolstream_receiver() {
 	# The caller supplies the execution address and workspace.
 	write_config_blacklist_except net_conntrack xfs
 	write_config_bamai_http
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_storage_local "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 }
 
@@ -599,7 +606,7 @@ write_config_bamai_cpu_util() {
 	[[ ${cpu_util_disabled} == true ]] || enabled+=(cpu_util)
 	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "127.0.0.1:${CPU_UTIL_PORT}"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_kubelet "${CPU_UTIL_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 }
 
@@ -608,7 +615,7 @@ write_config_bamai_cpu_stat() {
 	[[ ${cpu_stat_disabled} == true ]] || enabled+=(cpu_stat)
 	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "127.0.0.1:${CPU_STAT_PORT}"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_kubelet "${CPU_STAT_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 }
 
@@ -617,7 +624,7 @@ write_config_bamai_runqlat() {
 	[[ ${runqlat_disabled} == true ]] || enabled+=(runqlat)
 	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "127.0.0.1:${RUNQLAT_PORT}"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_kubelet "${RUNQLAT_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 }
 
@@ -626,7 +633,7 @@ write_config_bamai_softirq() {
 	[[ ${softirq_disabled} == true ]] || enabled+=(softirq)
 	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "${HUATUO_BAMAI_ADDR#http://}"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 }
 
 write_config_bamai_cpuidle_autotracing() {
@@ -634,7 +641,7 @@ write_config_bamai_cpuidle_autotracing() {
 	[[ ${cpuidle_disabled} == true ]] || enabled+=(cpuidle)
 	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "127.0.0.1:${CPUIDLE_PORT}"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_kubelet "${CPUIDLE_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << EOF
 
@@ -666,7 +673,7 @@ write_config_bamai_dload_autotracing() {
 	[[ ${dload_disabled} == true ]] || enabled+=(dload)
 	write_config_blacklist_except "${enabled[@]}"
 	write_config_bamai_http "127.0.0.1:${DLOAD_PORT}"
-	write_config_bamai_auth "integration-node-token"
+	write_config_bamai_auth
 	write_config_bamai_kubelet "${DLOAD_KUBELET_PORT}" "${KUBELET_CERT}" "${KUBELET_KEY}"
 	cat << EOF
 

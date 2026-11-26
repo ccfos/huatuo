@@ -30,7 +30,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-integration_huatuo_bamai_start write_config_bamai_default \
+write_config_bamai_build_info() {
+	write_config_blacklist_except
+	write_config_bamai_auth
+}
+
+integration_huatuo_bamai_start write_config_bamai_build_info \
 	--region "${BUILD_INFO_REGION}" --procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
 	--disable-storage --disable-kubelet --log-debug
 
