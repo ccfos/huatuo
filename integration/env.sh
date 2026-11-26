@@ -22,6 +22,11 @@ if [[ -n "${__HUATUO_ENV_SH_LOADED:-}" ]]; then
 fi
 export __HUATUO_ENV_SH_LOADED=1
 
+# Keep command output and sorting reproducible across integration environments.
+if [[ ${TEST_LOG_TAG:-INTEGRATION} == INTEGRATION ]]; then
+	export LC_ALL=C
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 export ROOT_DIR
 
