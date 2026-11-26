@@ -61,7 +61,7 @@ func bytesFramesToStrings(frames [][]byte) []string {
 	return result
 }
 
-func setTestXfsMounts(t *testing.T, xfsMounts []string) {
+func setTestXfsMounts(t testing.TB, xfsMounts []string) {
 	t.Helper()
 	originalMounts := mounts
 	originalInited := mountsInited
