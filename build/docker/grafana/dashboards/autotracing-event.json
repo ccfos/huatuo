@@ -11694,7 +11694,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:scsi_timeout AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "C",
               "timeField": "uploaded_timestamp"
             },
@@ -11983,7 +11983,7 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
-          "description": "SCSI timeout、dispatch error 及可用的 smartctl 白名单证据。",
+          "description": "SCSI 命令超时及可用的 smartctl 取证结果。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -12052,7 +12052,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:(scsi_timeout OR scsi_dispatch_error) AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:(blk_device_health OR io_health) AND tracer_data.type:scsi_timeout AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_timestamp"
             }

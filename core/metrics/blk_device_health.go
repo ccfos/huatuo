@@ -42,7 +42,6 @@ const (
 	blkDeviceHealthCounterNVMeTimeout
 	blkDeviceHealthCounterNVMeReset
 	blkDeviceHealthCounterSCSITimeout
-	blkDeviceHealthCounterSCSIDispatchError
 )
 
 func init() {
@@ -278,22 +277,12 @@ func blkDeviceHealthKernelMetric(key blkDeviceHealthCounterKey, value uint64) *m
 			"Best-effort NVMe controller reset requests accepted, not completed.",
 			map[string]string{"disk": key.device},
 		)
-	case blkDeviceHealthCounterSCSITimeout:
+	default:
 		return metric.NewCounterData(
 			"scsi_timeouts_total",
 			float64(value),
 			"Best-effort SCSI command timeout events observed by this Huatuo process.",
 			map[string]string{"disk": key.device},
-		)
-	default:
-		return metric.NewCounterData(
-			"scsi_dispatch_errors_total",
-			float64(value),
-			"Best-effort SCSI dispatch error events observed by this Huatuo process.",
-			map[string]string{
-				"disk":   key.device,
-				"status": key.status,
-			},
 		)
 	}
 }

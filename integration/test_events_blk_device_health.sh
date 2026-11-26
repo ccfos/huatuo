@@ -411,12 +411,11 @@ test_scsi_health_events() {
 	scsi_fixture_is_owned || fatal "SCSI fixture ownership changed"
 	tracefs=""
 	for candidate in /sys/kernel/tracing /sys/kernel/debug/tracing; do
-		[[ -d ${candidate}/instances && -r ${candidate}/events/scsi/scsi_dispatch_cmd_timeout/format &&
-			-r ${candidate}/events/scsi/scsi_dispatch_cmd_error/format ]] || continue
+		[[ -d ${candidate}/instances && -r ${candidate}/events/scsi/scsi_dispatch_cmd_timeout/format ]] || continue
 		tracefs=${candidate}
 		break
 	done
-	[[ -n ${tracefs} ]] || skip "SCSI health events require private tracefs instances and both SCSI tracepoints"
+	[[ -n ${tracefs} ]] || skip "SCSI health events require private tracefs instances and the SCSI timeout tracepoint"
 	timeout --kill-after=1s 10s udevadm settle --timeout=8 || fatal "udev did not settle before SCSI fault injection"
 	require_readable "${SCSI_CONTROLS}/opts" "${SCSI_CONTROLS}/every_nth" \
 		"/sys/class/block/${scsi_disk}/device/timeout"
@@ -435,15 +434,13 @@ test_scsi_health_events() {
 	mkdir "${scsi_trace}" || skip "cannot create a private SCSI tracefs instance"
 	scsi_trace_owned=1
 	printf 'trace_instance=%s hctl=%s\n' "${scsi_trace}" "${scsi_hctl}" >> "${SCSI_WORK}/resources.txt"
-	for event in scsi_dispatch_cmd_timeout scsi_dispatch_cmd_error; do
-		cp "${scsi_trace}/events/scsi/${event}/format" "${SCSI_WORK}/${event}.format"
-		printf 'host_no == %s && channel == %s && id == %s && lun == %s\n' \
-			"${scsi_host}" "${scsi_channel}" "${scsi_target}" "${scsi_lun}" \
-			> "${scsi_trace}/events/scsi/${event}/filter"
-		printf '1\n' > "${scsi_trace}/events/scsi/${event}/enable"
-		cp "${scsi_trace}/events/scsi/${event}/filter" "${SCSI_WORK}/${event}.filter"
-		cp "${scsi_trace}/events/scsi/${event}/enable" "${SCSI_WORK}/${event}.enable"
-	done
+	scsi_event_dir="${scsi_trace}/events/scsi/scsi_dispatch_cmd_timeout"
+	cp "${scsi_event_dir}/format" "${SCSI_WORK}/scsi_dispatch_cmd_timeout.format"
+	printf 'host_no == %s && channel == %s && id == %s && lun == %s\n' \
+		"${scsi_host}" "${scsi_channel}" "${scsi_target}" "${scsi_lun}" > "${scsi_event_dir}/filter"
+	printf '1\n' > "${scsi_event_dir}/enable"
+	cp "${scsi_event_dir}/filter" "${SCSI_WORK}/scsi_dispatch_cmd_timeout.filter"
+	cp "${scsi_event_dir}/enable" "${SCSI_WORK}/scsi_dispatch_cmd_timeout.enable"
 	printf '1\n' > "${scsi_trace}/tracing_on"
 	cp "${scsi_trace}/tracing_on" "${SCSI_WORK}/tracing_on"
 	# Reading trace pauses recording. Drain trace_pipe continuously and poll
@@ -455,7 +452,7 @@ test_scsi_health_events() {
 	assert_scsi_trace_event() {
 		kill -0 "${scsi_trace_pid}" 2> /dev/null \
 			|| fatal "SCSI trace reader exited; inspect ${SCSI_WORK}/trace-reader.err"
-		grep -q "${scsi_trace_event}:" "${scsi_trace_log}"
+		grep -q 'scsi_dispatch_cmd_timeout:' "${scsi_trace_log}"
 	}
 
 	# SG_IO supplies a bounded READ(10); Shell owns injection and all assertions.
@@ -474,22 +471,17 @@ test_scsi_health_events() {
 		jq -e '.result == 0 and .status == 0 and .host_status == 0 and .driver_status == 0' \
 			"${SCSI_WORK}/$1.read.json" > /dev/null
 	}
-	assert_scsi_dispatch_host_busy() {
-		grep -Eq 'rtn=(4181|SCSI_MLQUEUE_HOST_BUSY)( |$)' "$1" \
-			|| fatal "SCSI dispatch witness is not HOST_BUSY; inspect $1"
-	}
 	run_scsi_read baseline
 	assert_scsi_read_succeeded baseline || fatal "owned SCSI disk did not complete the baseline read"
 	io_test_start_bamai write_config_bamai_blk_device_health --region dev --disable-kubelet --log-debug
-	assert_blk_device_health_bpf_ready scsi/scsi_dispatch_cmd_timeout scsi/scsi_dispatch_cmd_error \
-		|| fatal "SCSI error collection is not ready; no fault was injected"
+	assert_blk_device_health_bpf_ready scsi/scsi_dispatch_cmd_timeout \
+		|| fatal "SCSI timeout collection is not ready; no fault was injected"
 	scsi_fixture_hostname=$(< /proc/sys/kernel/hostname)
 
 	assert_scsi_counter_value() {
-		jq -er --arg name "${scsi_metric}" --arg disk "${scsi_disk}" \
-			--arg status "${scsi_status}" --arg host "${scsi_fixture_hostname}" '
-			[.[] | select(.name == $name and .labels.disk == $disk
-				and ($status == "" or .labels.status == $status))] as $samples
+		jq -er --arg disk "${scsi_disk}" --arg host "${scsi_fixture_hostname}" '
+			[.[] | select(.name == "huatuo_bamai_blk_device_health_scsi_timeouts_total"
+				and .labels.disk == $disk)] as $samples
 			| if ($samples | length) == 0 then 0
 			  elif ($samples | length) == 1
 				and ($samples[0] | .type == "counter" and .type_count == 1
@@ -508,61 +500,41 @@ test_scsi_health_events() {
 			|| fatal "invalid SCSI health Counter; inspect ${input}.json"
 		((value > scsi_before)) || return 1
 		[[ -s ${SCSI_EVENT} ]] || return 1
-		jq -e -s --arg type "${scsi_type}" --arg disk "${scsi_disk}" --arg status "${scsi_status}" '
+		jq -e -s --arg disk "${scsi_disk}" '
 			any(.[]; .tracer_name == "blk_device_health" and .tracer_type == "event"
-				and .tracer_data.type == $type and .tracer_data.device == $disk
-				and ($status == "" or .tracer_data.io_error_status == $status))
+				and .tracer_data.type == "scsi_timeout" and .tracer_data.device == $disk)
 		' "${SCSI_EVENT}" > /dev/null 2>&1
 	}
 
-	for scsi_kind in timeout dispatch; do
-		scsi_status=""
-		scsi_type=scsi_timeout
-		scsi_metric=huatuo_bamai_blk_device_health_scsi_timeouts_total
-		scsi_trace_event=scsi_dispatch_cmd_timeout
-		# Media-access timeouts leave discovery and recovery commands working.
-		scsi_opts=128
-		if [[ ${scsi_kind} == dispatch ]]; then
-			scsi_status=host_busy
-			scsi_type=scsi_dispatch_error
-			scsi_metric=huatuo_bamai_blk_device_health_scsi_dispatch_errors_total
-			scsi_trace_event=scsi_dispatch_cmd_error
-			scsi_opts=32768
-		fi
-		huatuo_bamai_metrics > "${SCSI_WORK}/${scsi_kind}.before.metrics"
-		io_test_metrics_json "${SCSI_WORK}/${scsi_kind}.before.metrics" > "${SCSI_WORK}/${scsi_kind}.before.json"
-		scsi_before=$(assert_scsi_counter_value "${SCSI_WORK}/${scsi_kind}.before.json")
-		scsi_label="${scsi_kind}-1"
-		log_info "IO Health fault injection: SCSI ${scsi_kind} disk=${scsi_disk}"
-		scsi_fixture_is_owned || fatal "SCSI fixture ownership changed before injection"
-		# Use the driver's runtime controls so its option-dependent state updates.
-		printf '%s\n' "${scsi_opts}" > "${SCSI_CONTROLS}/opts"
-		printf '1\n' > "${SCSI_CONTROLS}/every_nth"
-		printf '1\n' > "/sys/class/block/${scsi_disk}/device/timeout"
-		timeout --kill-after=2s 12s python3 "${ROOT_DIR}/integration/testdata/test_blk_device_health_workload.py" scsi-read \
-			"/dev/${scsi_disk}" "${scsi_block_size}" > "${SCSI_WORK}/${scsi_label}.read.json" \
-			2> "${SCSI_WORK}/${scsi_label}.read.err" &
-		scsi_io_pid=$!
-		printf 'phase=%s io_pid=%s\n' "${scsi_label}" "${scsi_io_pid}" >> "${SCSI_WORK}/resources.txt"
-		scsi_witness=0
-		if wait_until 10 0.1 assert_scsi_trace_event; then scsi_witness=1; fi
-		restore_scsi_settings || fatal "cannot restore SCSI fault settings"
-		scsi_read_status=0
-		wait "${scsi_io_pid}" || scsi_read_status=$?
-		scsi_io_pid=""
-		cp "${scsi_trace_log}" "${SCSI_WORK}/${scsi_label}.trace"
-		((scsi_read_status == 0)) || fatal "SCSI fault input did not finish (${scsi_read_status}); inspect ${SCSI_WORK}"
-		((scsi_witness)) || fatal "SCSI ${scsi_kind} injection lacks an independent target event; inspect ${SCSI_WORK}/${scsi_label}.trace"
-		if [[ ${scsi_kind} == dispatch ]]; then
-			assert_scsi_dispatch_host_busy "${SCSI_WORK}/${scsi_label}.trace"
-		fi
-		run_scsi_read "${scsi_label}-recovered"
-		assert_scsi_read_succeeded "${scsi_label}-recovered" || fatal "owned SCSI disk did not recover after ${scsi_kind}"
-		wait_until 10 0.2 assert_scsi_health_output "${scsi_label}" \
-			|| fatal "confirmed SCSI ${scsi_kind} input lacks matching public Counter and saved event; inspect ${SCSI_WORK}"
-		cp "${SCSI_EVENT}" "${SCSI_WORK}/${scsi_kind}.events.json"
-		log_info "H03: SCSI ${scsi_kind} Counter and saved event match the independently observed target event"
-	done
+	huatuo_bamai_metrics > "${SCSI_WORK}/timeout.before.metrics"
+	io_test_metrics_json "${SCSI_WORK}/timeout.before.metrics" > "${SCSI_WORK}/timeout.before.json"
+	scsi_before=$(assert_scsi_counter_value "${SCSI_WORK}/timeout.before.json")
+	log_info "IO Health fault injection: SCSI timeout disk=${scsi_disk}"
+	scsi_fixture_is_owned || fatal "SCSI fixture ownership changed before injection"
+	# Media-access timeouts leave discovery and recovery commands working.
+	printf '128\n' > "${SCSI_CONTROLS}/opts"
+	printf '1\n' > "${SCSI_CONTROLS}/every_nth"
+	printf '1\n' > "/sys/class/block/${scsi_disk}/device/timeout"
+	timeout --kill-after=2s 12s python3 "${ROOT_DIR}/integration/testdata/test_blk_device_health_workload.py" scsi-read \
+		"/dev/${scsi_disk}" "${scsi_block_size}" > "${SCSI_WORK}/timeout-1.read.json" \
+		2> "${SCSI_WORK}/timeout-1.read.err" &
+	scsi_io_pid=$!
+	printf 'phase=timeout-1 io_pid=%s\n' "${scsi_io_pid}" >> "${SCSI_WORK}/resources.txt"
+	scsi_witness=0
+	if wait_until 10 0.1 assert_scsi_trace_event; then scsi_witness=1; fi
+	restore_scsi_settings || fatal "cannot restore SCSI fault settings"
+	scsi_read_status=0
+	wait "${scsi_io_pid}" || scsi_read_status=$?
+	scsi_io_pid=""
+	cp "${scsi_trace_log}" "${SCSI_WORK}/timeout-1.trace"
+	((scsi_read_status == 0)) || fatal "SCSI fault input did not finish (${scsi_read_status}); inspect ${SCSI_WORK}"
+	((scsi_witness)) || fatal "SCSI timeout injection lacks an independent target event; inspect ${SCSI_WORK}/timeout-1.trace"
+	run_scsi_read timeout-1-recovered
+	assert_scsi_read_succeeded timeout-1-recovered || fatal "owned SCSI disk did not recover after timeout"
+	wait_until 10 0.2 assert_scsi_health_output timeout-1 \
+		|| fatal "confirmed SCSI timeout lacks matching public Counter and saved event; inspect ${SCSI_WORK}"
+	cp "${SCSI_EVENT}" "${SCSI_WORK}/timeout.events.json"
+	log_info "H03: SCSI timeout Counter and saved event match the independently observed target event"
 }
 
 case ${TEST_BLK_DEVICE_HEALTH_EVENT_CASE:-all} in
