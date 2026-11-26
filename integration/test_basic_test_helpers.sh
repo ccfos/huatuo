@@ -43,7 +43,7 @@ exercise_native_pid_prerequisite() (
 	done
 )
 
-assert_helper_log_levels() {
+exercise_helper_log_levels() {
 	local helpers_log_format helpers_log_level helpers_log_probe helpers_log_status helpers_log_expected helpers_log_line
 	# The logger quotes text fields; exercise both text variants and JSON output.
 	for helpers_log_format in text quoted json json-spaced; do
@@ -83,7 +83,7 @@ assert_helper_log_levels() {
 	log_info "text and JSON log levels checked"
 }
 
-assert_helper_toml_values() {
+exercise_helper_toml_values() {
 	local helpers_config="${HUATUO_BAMAI_TEST_TMPDIR}/persisted.conf" helpers_case helpers_status
 	local helpers_expected='{"BlackList":["dropwatch","netdev_hw"],"Runtime.CPULimitCores":1.5,"Runtime.MemoryLimitMiB":1024}'
 	cp "${ROOT_DIR}/integration/testdata/test_toml_values.toml" "${helpers_config}"
@@ -118,7 +118,7 @@ assert_helper_toml_values() {
 	done
 }
 
-assert_helper_http_defaults() (
+exercise_helper_http_defaults() (
 	# Match the runner's parent-to-child Bash boundary, including a non-exportable array.
 	CURL_TIMEOUT=(--connect-timeout 2 --max-time 3)
 	export CURL_TIMEOUT
@@ -131,8 +131,9 @@ assert_helper_http_defaults() (
 	assert_eq "${CURL_TIMEOUT[*]}" "--max-time 0.2" "caller HTTP timeout override"
 )
 
-assert_helper_config_fragments() (
+exercise_helper_config_fragments() (
 	source "${ROOT_DIR}/integration/config.sh"
+	source "${ROOT_DIR}/integration/lib_storage.sh"
 	local config="${HUATUO_BAMAI_TEST_TMPDIR}/fragments.conf" all selected expected
 	write_config_blacklist_except > "${config}"
 	all=$(read_toml_json "${config}" | jq -c '.BlackList | sort')
@@ -141,6 +142,17 @@ assert_helper_config_fragments() (
 	expected=$(jq -cn --argjson all "${all}" '$all - ["cpu_stat", "xfs"]')
 	assert_eq "${selected}" "${expected}" "collector exceptions preserve unrelated exclusions"
 	assert_eq "$(jq -c 'unique' <<< "${all}")" "${all}" "collector blacklist has no duplicates"
+
+	local STORAGE_ADDR=http://storage ES_PASSWORD=fixture PROFILE_INTERVAL=5
+	write_config_bamai_continuous_profiling '/tmp/profiler tools' > "${config}"
+	selected=$(read_toml_json "${config}" | jq -c '.BlackList | sort')
+	assert_eq "${selected}" "${all}" "profiling excludes unrelated collectors" || return 1
+	assert_toml_values "${config}" '{
+		"Profiling.AggregationIntervalSeconds":5,
+		"Profiling.MaxConcurrentProcesses":10,
+		"Profiling.ToolDir":"/tmp/profiler tools",
+		"Storage.Elasticsearch.Address":"http://storage"
+	}' || return 1
 
 	{
 		write_config_bamai_http "127.0.0.1:12345"
@@ -176,7 +188,7 @@ assert_helper_config_fragments() (
 	done
 )
 
-assert_helper_bamai_ports() (
+exercise_helper_bamai_ports() (
 	source "${ROOT_DIR}/integration/config.sh"
 	unset HUATUO_BAMAI_DEFAULT_ADDR INTEGRATION_PORT_DIR INTEGRATION_PORT_BASE
 	local first next address expected
@@ -251,7 +263,7 @@ assert_helper_bamai_ports() (
 	done
 )
 
-assert_helper_metric_diagnostics() (
+exercise_helper_metric_diagnostics() (
 	local helpers_pid="" helpers_port helpers_status
 	trap '[[ -z "${helpers_pid}" ]] || stop_and_wait_by_pid "${helpers_pid}" 1 || true' EXIT
 	helpers_port=$(allocate_available_port) || fatal "cannot allocate metrics fixture port"
@@ -294,7 +306,7 @@ assert_helper_metric_diagnostics() (
 	helpers_pid=""
 )
 
-assert_process_shutdown() (
+exercise_process_shutdown() (
 	local mode=$1 expected_status=$2 signal=${3:-TERM} pid="" status=0
 	local ready="${HUATUO_BAMAI_TEST_TMPDIR}/${mode}.ready"
 	trap 'stop_and_wait_by_pid "${pid}" 1 || true' EXIT
@@ -318,7 +330,7 @@ PY
 	pid=""
 )
 
-assert_helper_port_allocation() (
+exercise_helper_port_allocation() (
 	local work pid i file port
 	local -a pids=()
 	trap cleanup_running_jobs EXIT
@@ -358,7 +370,7 @@ assert_helper_port_allocation() (
 	if allocate_available_port; then fatal "allocation ignored failed socket query"; fi
 )
 
-assert_cpu_reference_startup() (
+exercise_cpu_reference_startup() (
 	source "${ROOT_DIR}/integration/lib_cpu_reference.sh"
 	local work="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-reference-startup" mode status expected clock=0 calls=0
 	mkdir -p "${work}"
@@ -410,7 +422,7 @@ assert_cpu_reference_startup() (
 		|| fatal "missing pidstat skip omitted the dependency name"
 )
 
-assert_cpu_reference_window() (
+exercise_cpu_reference_window() (
 	source "${ROOT_DIR}/integration/lib_cpu_reference.sh"
 	local work="${HUATUO_BAMAI_TEST_TMPDIR}/cpu-reference-window" mode calls status expected end clock=0
 	mkdir -p "${work}"
@@ -510,6 +522,72 @@ exercise_native_container_workloads() (
 	grep -Fq 'docker rm -f huatuo-native-' "${commands}" || fatal "timed-out creation lost its cleanup identity"
 )
 
+exercise_profile_completion() (
+	source "${ROOT_DIR}/integration/lib_continuous_profiling.sh"
+	local API_TOKEN=fixture APISERVER_ADDR=http://fixture
+	local mode status expected wait_timeout response_file output_file requests
+	response_file="${HUATUO_BAMAI_TEST_TMPDIR}/completion-status.json"
+	output_file="${HUATUO_BAMAI_TEST_TMPDIR}/completion.log"
+	requests="${HUATUO_BAMAI_TEST_TMPDIR}/completion-requests.log"
+	printf 'fixture-job: injected execution failure\n' > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	curl() {
+		local response
+		while (($#)); do
+			if [[ $1 == -o ]]; then
+				response=$2
+				shift
+			fi
+			shift
+		done
+		case ${mode} in
+		retry)
+			if [[ ! -s ${requests} ]]; then
+				printf '{"data":{"status":"running"}}' > "${response}"
+			else
+				printf '{"data":{"status":"terminal","terminal":{"outcome":"completed"}}}' > "${response}"
+			fi
+			;;
+		completed | failed | stopped)
+			printf '{"data":{"status":"terminal","terminal":{"outcome":"%s","reason":"fixture-reason"}}}' "${mode}" > "${response}"
+			;;
+		http_error) printf '{"error":{"code":"fixture-error"}}' > "${response}" ;;
+		timeout) printf 'fixture timeout\n' >&2 ;;
+		malformed) printf '{' > "${response}" ;;
+		esac
+		printf 'request\n' >> "${requests}"
+		case ${mode} in
+		http_error) printf 503 ;;
+		timeout)
+			printf 000
+			return 28
+			;;
+		*) printf 200 ;;
+		esac
+	}
+	for mode in completed retry failed stopped http_error timeout malformed; do
+		: > "${requests}"
+		status=0 expected=1 wait_timeout=5
+		case ${mode} in http_error | timeout | malformed) wait_timeout=1 ;; esac
+		(wait_until "${wait_timeout}" 0.01 continuous_profile_completed fixture-job "${response_file}") \
+			> "${output_file}" 2>&1 || status=$?
+		[[ ${mode} != completed && ${mode} != retry ]] || expected=0
+		assert_eq "${status}" "${expected}" "${mode}: profile completion wait" || exit 1
+		case ${mode} in
+		completed | failed | stopped)
+			assert_eq "$(wc -l < "${requests}")" 1 "${mode}: terminal result stops polling" || exit 1
+			;;
+		retry) assert_eq "$(wc -l < "${requests}")" 2 "running profile is polled until completion" || exit 1 ;;
+		esac
+		if [[ ${mode} == failed || ${mode} == stopped ]]; then
+			grep -Fq 'fixture-job: injected execution failure' "${output_file}" || exit 1
+			grep -Fq 'fixture-reason' "${output_file}" || exit 1
+			grep -Fq 'curl exit=0, HTTP status=200' "${output_file}" || exit 1
+		else
+			! grep -Fq 'finished without completing' "${output_file}" || exit 1
+		fi
+	done
+)
+
 cpu_image_status=0
 bash -eu -s > "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image-failure.log" 2>&1 << 'SH' || cpu_image_status=$?
 source "$ROOT_DIR/integration/lib.sh"
@@ -523,18 +601,19 @@ grep -Fq 'cannot pull CPU workload image' "${HUATUO_BAMAI_TEST_TMPDIR}/cpu-image
 	|| fatal "CPU image pull failure lacks registry diagnostics"
 
 exercise_native_pid_prerequisite
-assert_helper_log_levels
-assert_helper_toml_values
-assert_helper_http_defaults
-assert_helper_config_fragments
+exercise_helper_log_levels
+exercise_helper_toml_values
+exercise_helper_http_defaults
+exercise_helper_config_fragments
 exercise_native_container_workloads
-assert_helper_bamai_ports
-assert_helper_metric_diagnostics
+exercise_profile_completion
+exercise_helper_bamai_ports
+exercise_helper_metric_diagnostics
 stop_and_wait_by_pid ""
-assert_process_shutdown graceful_failure 7
-assert_process_shutdown forced 137
-assert_process_shutdown custom_signal 0 USR2
-assert_helper_port_allocation
-assert_cpu_reference_startup
-assert_cpu_reference_window
+exercise_process_shutdown graceful_failure 7
+exercise_process_shutdown forced 137
+exercise_process_shutdown custom_signal 0 USR2
+exercise_helper_port_allocation
+exercise_cpu_reference_startup
+exercise_cpu_reference_window
 log_info "framework logging, assertions, HTTP diagnostics, service addresses, process shutdown and port allocation passed"

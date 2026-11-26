@@ -108,9 +108,9 @@ wait_until 10 1 recovered_job_metric_is_one \
 wait_until 10 1 continuous_profile_status_is \
 	"${PROFILE_ID}" running "${PROFILE_STATUS_RESPONSE}" \
 	|| fatal "recovered profile was not running"
-wait_until 60 2 continuous_profile_status_is \
-	"${PROFILE_ID}" completed "${PROFILE_STATUS_RESPONSE}" \
-	|| fatal "recovered profile did not complete"
+wait_until 60 2 continuous_profile_completed \
+	"${PROFILE_ID}" "${PROFILE_STATUS_RESPONSE}" \
+	|| fatal "recovered profile did not complete: ${continuous_profile_status_diagnostic}; last response: $(< "${PROFILE_STATUS_RESPONSE}")"
 
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

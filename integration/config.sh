@@ -429,10 +429,8 @@ EOF
 # The storage address and credentials are initialized by the calling test.
 write_config_bamai_continuous_profiling() {
 	local tool_dir=${1:-}
-	write_config_blacklist \
-		"metax_gpu" "ascend_npu" "softlockup" "ethtool" "netstat_hw" \
-		"blk_iotrace" "memory_free" "memory_reclaim" "reschedipi" "softirq" \
-		"iotracing" "dropwatch" "memory_threshold_snapshot" "sched-blame" "blk_iocost"
+	# Unrelated collectors can feed storage latency events back into Elasticsearch.
+	write_config_blacklist_except
 	write_config_bamai_auth "integration-node-token"
 	cat << EOF
 

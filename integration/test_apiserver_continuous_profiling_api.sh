@@ -50,7 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-assert_profile_lifecycle() {
+exercise_profile_lifecycle() {
 	local curl_status=0
 	local status
 
@@ -65,9 +65,9 @@ assert_profile_lifecycle() {
 	assert_eq "${status}" "403" "non-owner profile access" \
 		|| fatal "profile was visible to a non-owner"
 
-	wait_until 60 2 continuous_profile_status_is \
-		"${PROFILE_ID}" completed "${PROFILE_STATUS_RESPONSE}" \
-		|| fatal "profile did not complete"
+	wait_until 60 2 continuous_profile_completed \
+		"${PROFILE_ID}" "${PROFILE_STATUS_RESPONSE}" \
+		|| fatal "profile did not complete: ${continuous_profile_status_diagnostic}; last response: $(< "${PROFILE_STATUS_RESPONSE}")"
 	jq -e --argjson duration "${PROFILE_DURATION}" \
 		'.data.duration_seconds == $duration
 			and .data.created_at != null
@@ -108,7 +108,7 @@ assert_profile_lifecycle() {
 		|| fatal "profile list did not return the completed Job"
 }
 
-assert_profile_rejects_zero_limit() {
+exercise_profile_zero_limit() {
 	local path=$1 status
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${PROFILE_LIST_RESPONSE}" -w '%{http_code}' \
 		-H "Authorization: Bearer ${API_TOKEN}" "${APISERVER_ADDR}${path}?limit=0")
@@ -123,9 +123,9 @@ continuous_profiling_start_native_cpu_fixture TARGET_PID
 continuous_profile_create_cpu "${PROFILE_CREATE_RESPONSE}" "${PROFILE_DURATION}"
 PROFILE_ID=$(jq -er '.data.request_id' "${PROFILE_CREATE_RESPONSE}") \
 	|| fatal "profile creation response has no Job request ID"
-assert_profile_lifecycle
-assert_profile_rejects_zero_limit "/v1/profiling"
-assert_profile_rejects_zero_limit "/v1/profiling/${PROFILE_ID}/raw"
+exercise_profile_lifecycle
+exercise_profile_zero_limit "/v1/profiling"
+exercise_profile_zero_limit "/v1/profiling/${PROFILE_ID}/raw"
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
 assert_log_has_no_failure \

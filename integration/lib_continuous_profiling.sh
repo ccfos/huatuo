@@ -110,6 +110,19 @@ continuous_profile_status_is() {
 		 end' "${response_file}" > /dev/null
 }
 
+continuous_profile_completed() {
+	local profile_id=$1 response_file=$2
+	continuous_profile_status_is "${profile_id}" completed "${response_file}" && return 0
+	if jq -e '.data.status == "terminal" and .data.terminal.outcome != "completed"' \
+		"${response_file}" > /dev/null 2>&1; then
+		# The public Job redacts execution errors; include the matching Node diagnostics.
+		grep -F "${profile_id}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
+			| tail -n 20 >&2 || true
+		fatal "profile ${profile_id} finished without completing: ${continuous_profile_status_diagnostic}; last response: $(< "${response_file}")"
+	fi
+	return 1
+}
+
 continuous_profile_windows_are_stored() {
 	local profile_id=$1 response_file=$2
 	local status count

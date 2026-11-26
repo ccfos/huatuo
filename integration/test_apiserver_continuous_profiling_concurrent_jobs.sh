@@ -39,6 +39,7 @@ readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
 
 TARGET_PID=""
 PROFILE_IDS=()
+concurrent_profile_status_diagnostic=""
 
 cleanup() {
 	local status=$?
@@ -80,18 +81,23 @@ create_native_cpu_profiles() {
 
 all_profiles_have_status() {
 	local expected_status=$1
-	local profile_id
+	local profile_id response_file status=0
+	concurrent_profile_status_diagnostic=""
 	for profile_id in "${PROFILE_IDS[@]}"; do
-		continuous_profile_status_is \
-			"${profile_id}" "${expected_status}" \
-			"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json" \
-			|| return 1
+		response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json"
+		if [[ ${expected_status} == completed ]]; then
+			continuous_profile_completed "${profile_id}" "${response_file}" || status=1
+		else
+			continuous_profile_status_is "${profile_id}" "${expected_status}" "${response_file}" || status=1
+		fi
+		concurrent_profile_status_diagnostic+="${profile_id}: ${continuous_profile_status_diagnostic}; last response: $(< "${response_file}")"$'\n'
 	done
+	return "${status}"
 }
 
-assert_completed_profiles() {
+wait_for_profile_results() {
 	wait_until 60 2 all_profiles_have_status completed \
-		|| fatal "concurrent profiles did not complete"
+		|| fatal "concurrent profiles did not complete: ${concurrent_profile_status_diagnostic}"
 
 	local profile_id
 	for profile_id in "${PROFILE_IDS[@]}"; do
@@ -111,7 +117,7 @@ assert_completed_profiles() {
 	done
 }
 
-assert_profiles_are_listed() {
+exercise_profile_listing() {
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-list.json"
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
 		"${APISERVER_ADDR}/v1/profiling?limit=100&offset=0" \
@@ -130,9 +136,9 @@ continuous_profiling_start_stack
 continuous_profiling_start_native_cpu_fixture TARGET_PID
 create_native_cpu_profiles
 wait_until 10 1 all_profiles_have_status running \
-	|| fatal "profiles were not running concurrently on the same host"
-assert_completed_profiles
-assert_profiles_are_listed
+	|| fatal "profiles were not running concurrently on the same host: ${concurrent_profile_status_diagnostic}"
+wait_for_profile_results
+exercise_profile_listing
 
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

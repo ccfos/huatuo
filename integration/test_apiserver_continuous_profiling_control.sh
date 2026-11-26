@@ -84,7 +84,7 @@ start_control_stack() {
 		write_config_apiserver_profiling_control
 }
 
-assert_node_tracing_not_implemented() {
+exercise_unimplemented_tracing() {
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/tracing-not-implemented.json"
 	local status
 
@@ -109,20 +109,7 @@ assert_node_tracing_not_implemented() {
 		> /dev/null || fatal "missing Tracing Operation returned an invalid error"
 }
 
-control_profile_completed() {
-	local profile_id=$1 response_file=$2
-	continuous_profile_status_is "${profile_id}" completed "${response_file}" && return 0
-	if jq -e '.data.status == "terminal" and .data.terminal.outcome != "completed"' \
-		"${response_file}" > /dev/null 2>&1; then
-		# The public Job redacts execution errors; include the matching Node diagnostics.
-		grep -F "${profile_id}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
-			| tail -n 20 >&2 || true
-		fatal "profile finished without completing: ${continuous_profile_status_diagnostic}; last response: $(< "${response_file}")"
-	fi
-	return 1
-}
-
-assert_capacity_failure() {
+exercise_capacity_failure() {
 	local create_file="${HUATUO_BAMAI_TEST_TMPDIR}/create-capacity-profile.json"
 	local status_file="${HUATUO_BAMAI_TEST_TMPDIR}/capacity-profile-status.json"
 
@@ -141,7 +128,7 @@ assert_capacity_failure() {
 		|| fatal "capacity-limited profile returned an invalid failure"
 }
 
-assert_profile_publication() {
+exercise_profile_publication() {
 	local profile_id=$1 expected_status=$2 status curl_status=0
 	local response="${HUATUO_BAMAI_TEST_TMPDIR}/publication-${profile_id}.json"
 	local index
@@ -198,7 +185,7 @@ stop_running_profile() {
 }
 
 start_control_stack
-assert_node_tracing_not_implemented
+exercise_unimplemented_tracing
 continuous_profiling_start_native_cpu_fixture TARGET_PID
 
 # Duration expiry must still publish: API abort must not turn every stop into discard.
@@ -209,10 +196,10 @@ control_completed_id=$(jq -er '.data.request_id' \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/create-completing-profile.json") \
 	|| fatal "completed profile response has no Job request ID"
 # Use the same controller limits as the test configuration; return on completion.
-wait_until "${CONTROL_COMPLETION_TIMEOUT}" 0.1 control_profile_completed "${control_completed_id}" \
+wait_until "${CONTROL_COMPLETION_TIMEOUT}" 0.1 continuous_profile_completed "${control_completed_id}" \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/completed-profile-status.json" \
 	|| fatal "profile did not complete: ${continuous_profile_status_diagnostic}; last response: $(< "${HUATUO_BAMAI_TEST_TMPDIR}/completed-profile-status.json")"
-assert_profile_publication "${control_completed_id}" 200
+exercise_profile_publication "${control_completed_id}" 200
 
 continuous_profile_create_cpu \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/create-running-profile.json" \
@@ -225,11 +212,11 @@ wait_until 10 1 continuous_profile_status_is \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/running-profile-status.json" \
 	|| fatal "profile did not enter running state"
 
-assert_capacity_failure
+exercise_capacity_failure
 stop_running_profile
 # Status/raw APIs reject stopped jobs independently of publication. Inspect storage
 # so an accidental CLI commit cannot be hidden by the stopped status.
-assert_profile_publication "${RUNNING_PROFILE_ID}" 404
+exercise_profile_publication "${RUNNING_PROFILE_ID}" 404
 
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

@@ -116,9 +116,9 @@ irq_profile_id=$(jq -er '.data.request_id' "${irq_profile_response}")
 jq -e --arg cpu "${IRQ_PROFILE_CPU}" '.data | .host_cpu_list == $cpu and .type == "irq" and .mode == "softirq" and (has("language") | not)' \
 	"${irq_profile_response}" > /dev/null || fatal "IRQ creation metadata is invalid"
 irq_profile_started=${SECONDS}
-wait_until 90 1 continuous_profile_status_is "${irq_profile_id}" completed \
+wait_until 90 1 continuous_profile_completed "${irq_profile_id}" \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/irq-status.json" \
-	|| fatal "IRQ did not complete: ${continuous_profile_status_diagnostic}; inspect irq-status.json"
+	|| fatal "IRQ did not complete: ${continuous_profile_status_diagnostic}; last response: $(< "${HUATUO_BAMAI_TEST_TMPDIR}/irq-status.json")"
 record_test_timing irq-profiling collection-and-publication "${irq_profile_started}"
 
 irq_profile_request GET "/v1/profiling/${irq_profile_id}" 200
