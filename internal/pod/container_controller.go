@@ -24,6 +24,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/log"
 )
 
@@ -360,6 +361,11 @@ func resolveContainerRecord(id string, spec *corev1.Container, status *corev1.Co
 	record, err := containerMemoryBinding(container)
 	if err != nil {
 		return &containerRecord{container: container, ref: ContainerRef{Key: ContainerKey{ID: id}, InitPID: container.InitPid}}, err
+	}
+	// On v2 all controllers share the live hierarchy, which can differ from
+	// the layout implied by the current kubelet driver.
+	if cgroups.CgroupMode() == cgroups.Unified {
+		container.CgroupPath = record.ref.MemoryCgroupPath
 	}
 	return record, nil
 }
