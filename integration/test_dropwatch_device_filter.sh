@@ -147,7 +147,7 @@ device_filter_run_case() {
 	shift 3
 	local case_dir="${TOOL_WORK_DIR}/${name}" capture_status=0 sender_status index pid destination
 	mkdir "${case_dir}"
-	ip netns exec "${NETNS_SERVER}" iptables -w 5 -nvxL INPUT > "${case_dir}/drops-before.txt"
+	namespace_iptables "${NETNS_SERVER}" iptables -nvxL INPUT > "${case_dir}/drops-before.txt"
 
 	# Only change the network namespace: ip netns exec remounts sysfs and may
 	# hide tracefs, which the tracepoint attachment needs.
@@ -179,7 +179,7 @@ device_filter_run_case() {
 			|| fatal "${name}: SYN sender failed; see ${case_dir}/sender-*.log"
 	done
 	device_filter_sender_pids=()
-	ip netns exec "${NETNS_SERVER}" iptables -w 5 -nvxL INPUT > "${case_dir}/drops-after.txt"
+	namespace_iptables "${NETNS_SERVER}" iptables -nvxL INPUT > "${case_dir}/drops-after.txt"
 
 	assert_eq "${capture_status}" 0 "${name}: dropwatch exit status" \
 		|| fatal "${name}: dropwatch failed; see ${case_dir}/stderr.log"
@@ -220,10 +220,10 @@ device_filter_ifindex_a=$(jq -er --arg device "${DEVICE_FILTER_DEVICE_A}" \
 device_filter_ifindex_b=$(jq -er --arg device "${DEVICE_FILTER_DEVICE_B}" \
 	'.[] | select(.ifname == $device) | .ifindex' "${TOOL_WORK_DIR}/devices.json")
 
-ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_A}" \
+namespace_iptables "${NETNS_SERVER}" iptables -A INPUT -i "${DEVICE_FILTER_DEVICE_A}" \
 	-s "${DEVICE_FILTER_CLIENT_A}" -d "${DEVICE_FILTER_SERVER_A}" \
 	-p tcp --dport "${device_filter_port}" -j DROP
-ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
+namespace_iptables "${NETNS_SERVER}" iptables -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
 	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
 	-p tcp --dport "${device_filter_port}" -j DROP
 

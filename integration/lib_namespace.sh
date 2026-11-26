@@ -24,6 +24,14 @@ NETNS_VETH_CLIENT=""
 NETNS_SERVER_ADDR=""
 NETNS_CLIENT_ADDR=""
 
+namespace_iptables() {
+	local namespace=$1 tool=$2
+	shift 2
+
+	# Network namespaces can share the xtables lock file.
+	ip netns exec "${namespace}" "${tool}" -w 5 "$@"
+}
+
 namespace_setup() {
 	local name=$1
 
