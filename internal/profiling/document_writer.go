@@ -26,6 +26,7 @@ import (
 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
 
 	"github.com/ccfos/huatuo/internal/document"
+	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	profilingstore "github.com/ccfos/huatuo/pkg/profiling/store"
@@ -95,7 +96,10 @@ func (w *DocumentWriter) Handle(ctx context.Context, request *toolstream.Request
 		return errors.New("profiling commit requires end")
 	}
 
-	return w.store.Commit(ctx, request.TaskID)
+	started := time.Now()
+	err := w.store.Commit(ctx, request.TaskID)
+	log.Debugf("profiling publication commit: request_id=%s elapsed=%s error=%v", request.TaskID, time.Since(started), err)
+	return err
 }
 
 func (w *DocumentWriter) writeWindow(ctx context.Context, request *toolstream.Request[types.ProfilingWindow]) error {
@@ -135,7 +139,10 @@ func (w *DocumentWriter) writeWindow(ctx context.Context, request *toolstream.Re
 		},
 	}
 
-	return w.store.SaveSync(ctx, document)
+	started := time.Now()
+	err = w.store.SaveSync(ctx, document)
+	log.Debugf("profiling window storage: request_id=%s elapsed=%s error=%v", request.TaskID, time.Since(started), err)
+	return err
 }
 
 // HandleStream dispatches business schemas independently of Toolstream framing.
@@ -160,6 +167,8 @@ func (w *DocumentWriter) HandleStream(ctx context.Context, request *toolstream.R
 		Err:         request.Err,
 	}
 	if request.Data != nil {
+		started := time.Now()
+		log.Debugf("profiling window received: request_id=%s bytes=%d", request.TaskID, len(*request.Data))
 		decoder := json.NewDecoder(bytes.NewReader(*request.Data))
 		decoder.DisallowUnknownFields()
 		if request.Version == "3" {
@@ -189,6 +198,7 @@ func (w *DocumentWriter) HandleStream(ctx context.Context, request *toolstream.R
 				return fmt.Errorf("decode legacy complete pprof: %w", err)
 			}
 		}
+		log.Debugf("profiling window decoded: request_id=%s elapsed=%s", request.TaskID, time.Since(started))
 	}
 
 	return w.Handle(ctx, legacy)
