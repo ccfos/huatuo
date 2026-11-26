@@ -281,7 +281,7 @@ profiling_mode_metadata() {
 		type=cpu
 		profile_type='process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds'
 		;;
-	virtual_alloc | physical_alloc)
+	virtual_alloc | physical_alloc | object_alloc | object_usage)
 		type=memory
 		profile_type="memory:${mode}:bytes:space:bytes"
 		;;
