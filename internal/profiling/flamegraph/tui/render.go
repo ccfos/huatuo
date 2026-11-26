@@ -141,11 +141,12 @@ func (m *Model) renderFlamegraph() (string, int) {
 
 		// Cumulative boundaries keep adjacent blocks aligned and preserve self time.
 		consumed := min(max(node.Self, 0), node.Value)
+		start := left + frameColumn(consumed, node.Value, right-left)
 		for _, child := range node.Children {
-			start := left + frameColumn(consumed, node.Value, right-left)
 			consumed += min(max(child.Value, 0), node.Value-consumed)
 			end := left + frameColumn(consumed, node.Value, right-left)
 			draw(child, start, end, depth+1)
+			start = end
 		}
 	}
 	if focus != nil {
@@ -228,7 +229,11 @@ func (m *Model) renderBlock(node *Node, width int, selected bool) string {
 		label = ">" + label
 		style = style.Background(lipgloss.Color("33")).Foreground(lipgloss.Color("15"))
 	}
-	label = ansi.Truncate(truncate(label, width), width, "")
+	tail := ""
+	if width > 3 {
+		tail = "..."
+	}
+	label = ansi.Truncate(label, width, tail)
 	label += strings.Repeat(" ", width-ansi.StringWidth(label))
 
 	return style.Render(label)
@@ -260,20 +265,6 @@ func percent(value, total int64) float64 {
 		return 0
 	}
 	return float64(value) * 100 / float64(total)
-}
-
-func truncate(value string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
-	}
-	if width <= 3 {
-		return string(runes[:width])
-	}
-	return string(runes[:width-3]) + "..."
 }
 
 func nodePath(node *Node) string {

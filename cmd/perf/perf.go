@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -118,7 +119,7 @@ func mainAction(ctx *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("parsedata err %w", err)
 	}
-	if err := writeFlameDataJSON(os.Stdout, flameData); err != nil {
+	if err := json.NewEncoder(os.Stdout).Encode(flameData); err != nil {
 		return fmt.Errorf("write flame data: %w", err)
 	}
 

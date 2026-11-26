@@ -30,9 +30,8 @@ import (
 type tuiFormatter struct {
 	aggregator  *aggregation.Aggregator
 	taskID      string
-	profileType string
 	destination *output.LocalDestination // nil for terminal-only output
-	report      *tuiReport
+	report      tuiReport
 	model       *flamegraphtui.Model
 }
 
@@ -68,7 +67,7 @@ func (f *tuiFormatter) Add(ctx context.Context, w *types.AggregationWindow) erro
 		return err
 	}
 
-	f.profileType = w.ProfileType
+	f.report.ProfileType = w.ProfileType
 	return f.aggregator.AddProfile(ctx, &w.Aggregated)
 }
 
@@ -77,17 +76,18 @@ func (f *tuiFormatter) Complete(ctx context.Context) error {
 		return err
 	}
 
-	if f.aggregator.Empty() {
+	aggregated := f.aggregator.Drain()
+	f.aggregator = nil
+	if len(aggregated.Samples) == 0 {
 		return nil
 	}
 
-	aggregated := f.aggregator.Drain()
 	if err := output.ClampNegativeSamples(ctx, f.taskID, &aggregated); err != nil {
 		return err
 	}
 	var unit string
-	if f.profileType != "" {
-		metadata, err := profilewindow.Metadata(f.profileType)
+	if f.report.ProfileType != "" {
+		metadata, err := profilewindow.Metadata(f.report.ProfileType)
 		if err != nil {
 			return err
 		}
@@ -100,25 +100,21 @@ func (f *tuiFormatter) Complete(ctx context.Context) error {
 	}
 	f.model = model
 	if model != nil && f.destination != nil {
-		f.report = &tuiReport{
-			Version:     tuiReportVersion,
-			ProfileType: f.profileType,
-			Aggregated:  aggregated,
-		}
+		f.report.Version = tuiReportVersion
+		f.report.Aggregated = aggregated
 	}
 	return nil
 }
 
 func prepareViewer(ctx context.Context, aggregated *types.AggregatedProfile, unit string) (*flamegraphtui.Model, error) {
-	table := make(flamegraphtui.TopTable)
-	tree, err := buildProfileTree(ctx, aggregated, nil, table)
+	tree, err := buildProfileTree(ctx, aggregated, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// The drained or decoded samples remain immutable while the viewer uses them.
-	return tree.BuildProfileModel(table, unit, func(ctx context.Context, tags []string) (*flamegraphtui.StackTree, error) {
-		return buildProfileTree(ctx, aggregated, tags, nil)
+	return tree.BuildProfileModel(unit, func(ctx context.Context, tags []string) (*flamegraphtui.StackTree, error) {
+		return buildProfileTree(ctx, aggregated, tags)
 	})
 }
 
@@ -126,7 +122,6 @@ func buildProfileTree(
 	ctx context.Context,
 	aggregated *types.AggregatedProfile,
 	tags []string,
-	table flamegraphtui.TopTable,
 ) (*flamegraphtui.StackTree, error) {
 	tree := flamegraphtui.NewStackTree(ctx)
 	var path []string
@@ -140,14 +135,7 @@ func buildProfileTree(
 			path = append(appendGroupLabels(path[:0], labels, tags), frames...)
 			stack = path
 		}
-		if err := tree.Add(stack, weight); err != nil {
-			return err
-		}
-		if table == nil {
-			return nil
-		}
-
-		return table.Add(ctx, frames, weight)
+		return tree.Add(stack, weight)
 	})
 	if err != nil {
 		return nil, err
@@ -182,20 +170,20 @@ func (f *tuiFormatter) View(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !quit || f.report == nil {
+	if !quit || f.destination == nil {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return f.destination.WriteAndClose(func(w io.Writer) error {
-		return writeTUIReport(w, f.report)
+		return writeTUIReport(w, &f.report)
 	})
 }
 
 func (f *tuiFormatter) Close() error {
-	f.aggregator.Drain()
+	f.aggregator = nil
 	f.model = nil
-	f.report = nil
+	f.report = tuiReport{}
 	return nil
 }

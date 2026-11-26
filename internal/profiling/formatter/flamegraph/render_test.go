@@ -74,7 +74,7 @@ func TestTUICombinesSignedWindows(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, f.Add(ctx, nil), context.Canceled)
 	require.ErrorIs(t, f.Complete(ctx), context.Canceled)
-	require.True(t, f.aggregator.Empty())
+	require.Nil(t, f.aggregator)
 }
 
 func TestTUICompletionPreservesFrames(t *testing.T) {
@@ -102,7 +102,7 @@ func TestTUICompletionPreservesFrames(t *testing.T) {
 	require.ErrorIs(t, f.View(ctx), context.Canceled)
 	require.NoError(t, f.Close())
 	require.Nil(t, f.model)
-	require.True(t, f.aggregator.Empty())
+	require.Nil(t, f.aggregator)
 }
 
 func TestTUIReportReplay(t *testing.T) {
