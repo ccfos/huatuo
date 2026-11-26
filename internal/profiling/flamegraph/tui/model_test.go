@@ -194,7 +194,8 @@ func TestTerminalTextAndRawSearch(t *testing.T) {
 		require.Contains(t, view, `path: 根\x1b]0;title\a > `+escaped)
 	}
 	require.Equal(t, " >xy", ansi.Strip(overlayCursor("\x1b[45m界xy\x1b[0m", 1, ">")))
-	require.Equal(t, "函数...", truncate("函数调用路径", 5))
+	node := &Node{Label: "函数调用路径"}
+	require.Equal(t, "函...", ansi.Strip(m.renderBlock(node, 5, false)))
 }
 
 func TestFrameColumn(t *testing.T) {

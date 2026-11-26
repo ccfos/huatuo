@@ -231,25 +231,19 @@ func validateCommonOptions(ctx *cli.Context) error {
 		if err := output.ValidateTUIDestination(path); err != nil {
 			return err
 		}
-	} else {
-		if !ctx.IsSet("output-path") || !ctx.IsSet("output-format") {
-			return fmt.Errorf("--output-path and --output-format must both be specified")
-		}
-		if err := output.ValidateDestination(path); err != nil {
-			return err
-		}
+		return output.ValidateTUITerminal()
+	}
+
+	if !ctx.IsSet("output-path") || !ctx.IsSet("output-format") {
+		return fmt.Errorf("--output-path and --output-format must both be specified")
+	}
+	if err := output.ValidateDestination(path); err != nil {
+		return err
 	}
 	if format == string(output.FormatRemoteStore) && ctx.String("task-id") == "" {
 		return fmt.Errorf("--task-id must not be empty when --output-format=remote-store")
 	}
-	if err := validateOutputFormat(format, profiling.Type(ctx.String("type"))); err != nil {
-		return err
-	}
-	if format == string(output.FormatTUI) {
-		return output.ValidateTUITerminal()
-	}
-
-	return nil
+	return validateOutputFormat(format, profiling.Type(ctx.String("type")))
 }
 
 func validateNumericOptions(profileType profiling.Type, freq, maxProfilerProcesses int) error {

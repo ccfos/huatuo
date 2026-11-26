@@ -31,29 +31,6 @@ type functionWeights struct {
 	total int64
 }
 
-// TopTable builds the hotspot rows from functions across all stack paths.
-type TopTable map[string]functionWeights
-
-// Add attributes a positive weight to each frame and self weight to the leaf.
-// Repeated frames contribute to Total at each occurrence, as in Grafana.
-func (t TopTable) Add(ctx context.Context, frames []string, weight int64) error {
-	for i, name := range frames {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		row := t[name]
-		if weight > math.MaxInt64-row.total {
-			return fmt.Errorf("total weight for function %q exceeds int64", name)
-		}
-		row.total += weight
-		if i == len(frames)-1 {
-			row.self += weight
-		}
-		t[name] = row
-	}
-	return nil
-}
-
 type topRow struct {
 	name    string
 	weights functionWeights
@@ -66,7 +43,25 @@ type topTableModel struct {
 	sortByTotal bool
 }
 
-func (m *Model) setTopTable(ctx context.Context, weights TopTable, unit string) error {
+func (m *Model) setTopTable(ctx context.Context, unit string) error {
+	weights := make(map[string]functionWeights)
+	for _, node := range m.tree {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if node.Level == 0 {
+			continue // The synthetic root does not represent a function.
+		}
+		// A recursive function contributes once per node on its call path.
+		row := weights[node.Label]
+		if node.Value > math.MaxInt64-row.total {
+			return fmt.Errorf("total weight for function %q exceeds int64", node.Label)
+		}
+		row.total += node.Value
+		row.self += node.Self
+		weights[node.Label] = row
+	}
+
 	rows := make([]topRow, 0, len(weights))
 	for name, weight := range weights {
 		if err := ctx.Err(); err != nil {

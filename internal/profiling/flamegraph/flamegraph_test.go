@@ -16,6 +16,8 @@ package flamegraph
 
 import (
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestLevelsToTreeBasic(t *testing.T) {
@@ -112,66 +114,61 @@ func TestLevelsToTreeMultiLevel(t *testing.T) {
 	}
 }
 
-func TestTreeToNestedSetDataFrame(t *testing.T) {
+func TestTreeToFrameData(t *testing.T) {
+	leaf := &ProfileTree{
+		Name:  "leaf",
+		Level: 2,
+		Value: 40,
+		Self:  40,
+	}
+	child := &ProfileTree{
+		Name:  "child",
+		Level: 1,
+		Value: 70,
+		Self:  30,
+		Nodes: []*ProfileTree{leaf},
+	}
+	sibling := &ProfileTree{
+		Name:  "sibling",
+		Level: 1,
+		Value: 10,
+		Self:  10,
+	}
 	tree := &ProfileTree{
-		Start: 0,
+		Name:  "root",
 		Value: 100,
 		Self:  20,
-		Level: 0,
-		Name:  "root",
-		Nodes: []*ProfileTree{
-			{Start: 0, Value: 80, Self: 30, Level: 1, Name: "child"},
+		Nodes: []*ProfileTree{child, sibling},
+	}
+	want := []FrameData{
+		{
+			Label: "root",
+			Value: 100,
+			Self:  20,
+		},
+		{
+			Label: "child",
+			Level: 1,
+			Value: 70,
+			Self:  30,
+		},
+		{
+			Label: "leaf",
+			Level: 2,
+			Value: 40,
+			Self:  40,
+		},
+		{
+			Label: "sibling",
+			Level: 1,
+			Value: 10,
+			Self:  10,
 		},
 	}
-
-	frame, labelField := TreeToNestedSetDataFrame(tree, "bytes")
-	if frame == nil {
-		t.Fatal("TreeToNestedSetDataFrame() returned nil frame")
+	if diff := cmp.Diff(want, TreeToFrameData(tree)); diff != "" {
+		t.Errorf("TreeToFrameData mismatch (-want +got): %s", diff)
 	}
-	if labelField == nil {
-		t.Fatal("TreeToNestedSetDataFrame() returned nil labelField")
-	}
-
-	// frame should have 4 fields: level, value, self, label
-	if len(frame.Fields) != 4 {
-		t.Fatalf("len(frame.Fields) = %d, want 4", len(frame.Fields))
-	}
-
-	// Each field should have 2 rows (root + child)
-	for i, f := range frame.Fields {
-		if f.Len() != 2 {
-			t.Errorf("field[%d] (%s).Len() = %d, want 2", i, f.Name, f.Len())
-		}
-	}
-}
-
-func TestTreeToNestedSetDataFrameNilTree(t *testing.T) {
-	frame, _ := TreeToNestedSetDataFrame(nil, "bytes")
-	if frame == nil {
-		t.Fatal("TreeToNestedSetDataFrame(nil) = nil, want non-nil frame")
-	}
-	if len(frame.Fields) < 3 {
-		t.Errorf("len(frame.Fields) = %d, want at least 3", len(frame.Fields))
-	}
-}
-
-func TestEnumField(t *testing.T) {
-	ef := NewEnumField("test", nil)
-	if ef == nil {
-		t.Fatal("NewEnumField() = nil")
-	}
-
-	ef.Append("alpha")
-	ef.Append("beta")
-	ef.Append("alpha") // duplicate, should reuse index
-
-	m := ef.GetValuesMap()
-	if len(m) != 2 {
-		t.Errorf("len(valuesMap) = %d, want 2", len(m))
-	}
-
-	f := ef.GetField()
-	if f.Len() != 3 {
-		t.Errorf("field.Len() = %d, want 3", f.Len())
+	if diff := cmp.Diff([]FrameData{}, TreeToFrameData(nil)); diff != "" {
+		t.Errorf("empty TreeToFrameData mismatch (-want +got): %s", diff)
 	}
 }

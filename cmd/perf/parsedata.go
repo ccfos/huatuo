@@ -18,12 +18,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
 	"slices"
 	"sort"
-	"strconv"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/profiling/flamegraph"
@@ -35,9 +32,6 @@ import (
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
 )
-
-// FlameData is flamegraph data
-var FlameData []flamegraph.FrameData
 
 const perfStackDepth = 20
 
@@ -192,70 +186,6 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	}
 
 	flame := phlaremodel.NewFlameGraph(m.Tree(), -1)
-	convertedLevels := convertLevels(flame.Levels)
-	tree := flamegraph.LevelsToTree(convertedLevels, flame.Names)
-	frame, label := flamegraph.TreeToNestedSetDataFrame(tree, "")
-
-	level := *frame.Fields[0]
-	value := *frame.Fields[1]
-	self := *frame.Fields[2]
-	labelf := *frame.Fields[3]
-
-	var (
-		levelarr []int64
-		valuearr []int64
-		selfarr  []int64
-		labelarr []string
-	)
-
-	for i := 0; i < level.Len(); i++ {
-		levelarr = append(levelarr, level.At(i).(int64))
-	}
-
-	for i := 0; i < value.Len(); i++ {
-		valuearr = append(valuearr, value.At(i).(int64))
-	}
-
-	for i := 0; i < self.Len(); i++ {
-		selfarr = append(selfarr, self.At(i).(int64))
-	}
-
-	labelVmp := label.GetValuesMap()
-	keys := make([]string, len(labelVmp))
-	for k, v := range labelVmp {
-		keys[v] = k
-	}
-
-	for i := 0; i < labelf.Len(); i++ {
-		formattedNum := fmt.Sprintf("%d", labelf.At(i))
-		number, _ := strconv.ParseInt(formattedNum, 10, 64)
-		labelarr = append(labelarr, keys[number])
-	}
-
-	dataSize := len(levelarr)
-
-	if len(valuearr) != dataSize || len(selfarr) != dataSize || len(labelarr) != dataSize {
-		return nil, fmt.Errorf("data length is not equal")
-	}
-
-	FlameData = make([]flamegraph.FrameData, dataSize)
-	for i := 0; i < dataSize; i++ {
-		FlameData[i] = flamegraph.FrameData{
-			Level: levelarr[i],
-			Value: valuearr[i],
-			Self:  selfarr[i],
-			Label: labelarr[i],
-		}
-	}
-
-	return FlameData, nil
-}
-
-func writeFlameDataJSON(w io.Writer, data []flamegraph.FrameData) error {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("JSON encoding error: %w", err)
-	}
-	_, err = fmt.Fprintln(w, string(jsonData))
-	return err
+	tree := flamegraph.LevelsToTree(convertLevels(flame.Levels), flame.Names)
+	return flamegraph.TreeToFrameData(tree), nil
 }

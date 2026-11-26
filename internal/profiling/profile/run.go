@@ -90,14 +90,16 @@ func run(
 			})
 		}
 	}
-	defer func() {
+	endFinalization := func() error {
 		finalMu.Lock()
 		defer finalMu.Unlock()
 		finished = true
 		if finalTimer != nil {
 			finalTimer.Stop()
 		}
-	}()
+		return context.Cause(processCtx)
+	}
+	defer func() { _ = endFinalization() }()
 	propagateCancellation := func() {
 		if IsNormalStop(ctx) {
 			beginFinalization()
@@ -201,15 +203,7 @@ func run(
 		return err
 	}
 
-	return completeOutput(processCtx, formatter, func() error {
-		finalMu.Lock()
-		defer finalMu.Unlock()
-		finished = true
-		if finalTimer != nil {
-			finalTimer.Stop()
-		}
-		return context.Cause(processCtx)
-	})
+	return completeOutput(processCtx, formatter, endFinalization)
 }
 
 // completeOutput keeps preparation within the finalization budget; only user-paced

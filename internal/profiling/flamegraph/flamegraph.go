@@ -14,10 +14,6 @@
 
 package flamegraph
 
-import (
-	"github.com/grafana/grafana-plugin-sdk-go/data"
-)
-
 // Level is a depth array of flame graph data
 type Level struct {
 	Values []int64
@@ -138,82 +134,20 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 	return tree
 }
 
-// TreeToNestedSetDataFrame walks the tree depth first and adds items into the dataframe. This is a nested set format
-func TreeToNestedSetDataFrame(tree *ProfileTree, unit string) (*data.Frame, *EnumField) {
-	frame := data.NewFrame("response")
-	frame.Meta = &data.FrameMeta{PreferredVisualization: "flamegraph"}
-
-	levelField := data.NewField("level", nil, []int64{})
-	valueField := data.NewField("value", nil, []int64{})
-	selfField := data.NewField("self", nil, []int64{})
-
-	// profileTypeID should encode the type of the profile with unit being the 3rd part
-	valueField.Config = &data.FieldConfig{Unit: unit}
-	selfField.Config = &data.FieldConfig{Unit: unit}
-	frame.Fields = data.Fields{levelField, valueField, selfField}
-
-	labelField := NewEnumField("label", nil)
-
-	// Tree can be nil if profile was empty, we can still send empty frame in that case
+// TreeToFrameData returns the flamegraph rows in preorder.
+func TreeToFrameData(tree *ProfileTree) []FrameData {
+	frames := make([]FrameData, 0)
 	if tree != nil {
-		walkTree(tree, func(tree *ProfileTree) {
-			levelField.Append(int64(tree.Level))
-			valueField.Append(tree.Value)
-			selfField.Append(tree.Self)
-			labelField.Append(tree.Name)
+		walkTree(tree, func(node *ProfileTree) {
+			frames = append(frames, FrameData{
+				Level: int64(node.Level),
+				Value: node.Value,
+				Self:  node.Self,
+				Label: node.Name,
+			})
 		})
 	}
-	frame.Fields = append(frame.Fields, labelField.GetField())
-	return frame, labelField
-}
-
-// EnumField label struct
-type EnumField struct {
-	field     *data.Field
-	valuesMap map[string]data.EnumItemIndex
-	counter   data.EnumItemIndex
-}
-
-// NewEnumField add a new label field
-func NewEnumField(name string, labels data.Labels) *EnumField {
-	return &EnumField{
-		field:     data.NewField(name, labels, []data.EnumItemIndex{}),
-		valuesMap: make(map[string]data.EnumItemIndex),
-	}
-}
-
-// GetValuesMap get label.valuesMap
-func (e *EnumField) GetValuesMap() map[string]data.EnumItemIndex {
-	return e.valuesMap
-}
-
-// Append data
-func (e *EnumField) Append(value string) {
-	if valueIndex, ok := e.valuesMap[value]; ok {
-		e.field.Append(valueIndex)
-	} else {
-		e.valuesMap[value] = e.counter
-		e.field.Append(e.counter)
-		e.counter++
-	}
-}
-
-// GetField get fields
-func (e *EnumField) GetField() *data.Field {
-	s := make([]string, len(e.valuesMap))
-	for k, v := range e.valuesMap {
-		s[v] = k
-	}
-
-	e.field.SetConfig(&data.FieldConfig{
-		TypeConfig: &data.FieldTypeConfig{
-			Enum: &data.EnumFieldConfig{
-				Text: s,
-			},
-		},
-	})
-
-	return e.field
+	return frames
 }
 
 func walkTree(tree *ProfileTree, fn func(tree *ProfileTree)) {

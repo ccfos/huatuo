@@ -287,10 +287,9 @@ func (m *Model) moveHorizontal(delta int) {
 		return
 	}
 
-	depth := nodeDepthFrom(selected, focus)
 	// The visible list is depth-first; skip nodes at other depths.
 	for index := m.cursor + delta; index >= 0 && index < len(m.visible); index += delta {
-		if nodeDepthFrom(m.visible[index], focus) == depth {
+		if m.visible[index].Level == selected.Level {
 			m.cursor = index
 			m.ensureCursorVisible()
 			return
@@ -303,7 +302,16 @@ func (m *Model) zoomIn() {
 	if selected == nil || len(selected.Children) == 0 {
 		return
 	}
-	m.focusOn(selected)
+	if selected != m.visible.root() {
+		// A subtree occupies a contiguous range of the preorder list.
+		end := m.cursor + 1
+		for end < len(m.visible) && m.visible[end].Level > selected.Level {
+			end++
+		}
+		m.visible = m.visible[m.cursor:end:end]
+	}
+	m.cursor, m.offset = 0, 0
+	m.refreshMatches()
 }
 
 func (m *Model) zoomOut() {
@@ -429,16 +437,11 @@ func (m *Model) clampCursor() {
 }
 
 func (m *Model) ensureCursorVisible() {
-	depth := nodeDepthFrom(m.selectedNode(), m.visible.root())
+	depth := 0
+	if selected := m.selectedNode(); selected != nil {
+		depth = int(selected.Level - m.visible.root().Level)
+	}
 	viewport := max(m.viewportHeight(), 1)
 	minOffset := max(0, depth-viewport+1)
 	m.offset = max(minOffset, min(m.offset, depth))
-}
-
-func nodeDepthFrom(node, root *Node) int {
-	depth := 0
-	for current := node; current != nil && current != root; current = current.Parent {
-		depth++
-	}
-	return depth
 }
