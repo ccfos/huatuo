@@ -253,12 +253,11 @@ func TestBlkDeviceHealthKernelABIAndLabels(t *testing.T) {
 	eventTypes := []uint8{
 		blkDeviceHealthEventBlockError,
 		blkDeviceHealthEventSCSITimeout,
-		blkDeviceHealthEventSCSIDispatchError,
 		blkDeviceHealthEventNVMeTimeout,
 		blkDeviceHealthEventNVMeReset,
 		blkDeviceHealthEventNVMeStateChange,
 	}
-	if want := []uint8{1, 2, 3, 4, 5, 6}; !reflect.DeepEqual(eventTypes, want) {
+	if want := []uint8{1, 2, 4, 5, 6}; !reflect.DeepEqual(eventTypes, want) {
 		t.Fatalf("kernel event wire values = %v, want %v", eventTypes, want)
 	}
 
@@ -304,9 +303,6 @@ func TestBlkDeviceHealthKernelABIAndLabels(t *testing.T) {
 		}
 	}
 
-	if got := blkDeviceHealthSCSIDispatchStatus(scsiMLQueueTargetBusy); got != "target_busy" {
-		t.Fatalf("target-busy status = %q", got)
-	}
 	if got := blkDeviceHealthControllerName(blkDeviceHealthControllerBytes("nvme12")); got != "nvme12" {
 		t.Fatalf("controller name = %q, want nvme12", got)
 	}
@@ -724,8 +720,7 @@ func TestBlkDeviceHealthRoutesFullSCSIHCTL(t *testing.T) {
 			collector, _ := newRecordingBlkDeviceHealthCollector(t, root)
 			submitter := &recordingEvidenceSubmitter{accept: true}
 			collector.handleKernelEvent(abi.BlkDeviceHealthEvent{
-				Type:    blkDeviceHealthEventSCSIDispatchError,
-				Status:  scsiMLQueueTargetBusy,
+				Type:    blkDeviceHealthEventSCSITimeout,
 				Host:    host,
 				Channel: channel,
 				Target:  target,
@@ -735,7 +730,7 @@ func TestBlkDeviceHealthRoutesFullSCSIHCTL(t *testing.T) {
 				t.Fatalf("SCSI requests = %+v", submitter.requests)
 			}
 			request := submitter.requests[0]
-			if request.Target != test.want || request.Trigger.Status != "target_busy" {
+			if request.Target != test.want || request.Trigger.Type != blkDeviceHealthTypeSCSITimeout {
 				t.Fatalf("SCSI request = %+v", request)
 			}
 			if test.want == "" {
@@ -2034,8 +2029,8 @@ func TestBlkDeviceHealthHookSelection(t *testing.T) {
 		},
 		{
 			name:          "SCSI not compiled or loaded",
-			noTracepoints: []string{"scsi/scsi_dispatch_cmd_timeout", "scsi/scsi_dispatch_cmd_error"},
-			wantAbsent:    []string{"trace_scsi_timeout", "trace_scsi_dispatch_error"},
+			noTracepoints: []string{"scsi/scsi_dispatch_cmd_timeout"},
+			wantAbsent:    []string{"trace_scsi_timeout"},
 			wantPresent:   map[string]string{"kprobe_nvme_timeout": "nvme_timeout"},
 		},
 		{
@@ -2046,8 +2041,8 @@ func TestBlkDeviceHealthHookSelection(t *testing.T) {
 		},
 		{
 			name:          "tracefs not mounted",
-			noTracepoints: []string{"block/block_rq_error", "scsi/scsi_dispatch_cmd_timeout", "scsi/scsi_dispatch_cmd_error"},
-			wantAbsent:    []string{"trace_block_rq_error", "trace_scsi_timeout", "trace_scsi_dispatch_error"},
+			noTracepoints: []string{"block/block_rq_error", "scsi/scsi_dispatch_cmd_timeout"},
+			wantAbsent:    []string{"trace_block_rq_error", "trace_scsi_timeout"},
 			wantPresent: map[string]string{
 				"trace_block_rq_complete_error":  "block_rq_complete",
 				"blk_device_health_freeze_queue": "__blk_freeze_queue_start",
@@ -2146,7 +2141,6 @@ func TestAttachBlkDeviceHealthHooks(t *testing.T) {
 		"kretprobe_nvme_reset",
 		"kprobe_nvme_reset",
 		"trace_scsi_timeout",
-		"trace_scsi_dispatch_error",
 		"blk_device_health_freeze_queue",
 	}
 	require.Len(t, options, len(wantPrograms))

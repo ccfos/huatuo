@@ -34,26 +34,24 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/blk_device_health.c -o $BPF_DIR/blk_device_health.o
 
 const (
-	blkDeviceHealthEventBlockError        = uint8(abi.BlkDeviceHealthEventBlockError)
-	blkDeviceHealthEventSCSITimeout       = uint8(abi.BlkDeviceHealthEventScsiTimeout)
-	blkDeviceHealthEventSCSIDispatchError = uint8(abi.BlkDeviceHealthEventScsiDispatchError)
-	blkDeviceHealthEventNVMeTimeout       = uint8(abi.BlkDeviceHealthEventNvmeTimeout)
-	blkDeviceHealthEventNVMeReset         = uint8(abi.BlkDeviceHealthEventNvmeReset)
-	blkDeviceHealthEventNVMeStateChange   = uint8(abi.BlkDeviceHealthEventNvmeStateChange)
+	blkDeviceHealthEventBlockError      = uint8(abi.BlkDeviceHealthEventBlockError)
+	blkDeviceHealthEventSCSITimeout     = uint8(abi.BlkDeviceHealthEventScsiTimeout)
+	blkDeviceHealthEventNVMeTimeout     = uint8(abi.BlkDeviceHealthEventNvmeTimeout)
+	blkDeviceHealthEventNVMeReset       = uint8(abi.BlkDeviceHealthEventNvmeReset)
+	blkDeviceHealthEventNVMeStateChange = uint8(abi.BlkDeviceHealthEventNvmeStateChange)
 )
 
 const blkDeviceHealthNVMeControllerNameLength = len(abi.BlkDeviceHealthEvent{}.Controller)
 
 const (
-	blkDeviceHealthTypeBlockError        = "block_error"
-	blkDeviceHealthTypeNVMeTimeout       = "nvme_timeout"
-	blkDeviceHealthTypeNVMeReset         = "nvme_reset"
-	blkDeviceHealthTypeNVMeStateChange   = "nvme_state_change"
-	blkDeviceHealthTypeSCSITimeout       = "scsi_timeout"
-	blkDeviceHealthTypeSCSIDispatchError = "scsi_dispatch_error"
-	blkDeviceHealthTypeMDSyncAction      = "md_sync_action"
-	blkDeviceHealthTypeMDDegraded        = "md_degraded"
-	blkDeviceHealthTypeMDMemberState     = "md_member_state"
+	blkDeviceHealthTypeBlockError      = "block_error"
+	blkDeviceHealthTypeNVMeTimeout     = "nvme_timeout"
+	blkDeviceHealthTypeNVMeReset       = "nvme_reset"
+	blkDeviceHealthTypeNVMeStateChange = "nvme_state_change"
+	blkDeviceHealthTypeSCSITimeout     = "scsi_timeout"
+	blkDeviceHealthTypeMDSyncAction    = "md_sync_action"
+	blkDeviceHealthTypeMDDegraded      = "md_degraded"
+	blkDeviceHealthTypeMDMemberState   = "md_member_state"
 )
 
 // These values mirror the stable REQ_OP definitions decoded from cmd_flags.
@@ -62,14 +60,6 @@ const (
 	reqOpWrite
 	reqOpFlush
 	reqOpDiscard
-)
-
-// These values mirror the SCSI_MLQUEUE_* dispatch return values.
-const (
-	scsiMLQueueHostBusy   int32 = 0x1055
-	scsiMLQueueDeviceBusy int32 = 0x1056
-	scsiMLQueueEHRetry    int32 = 0x1057
-	scsiMLQueueTargetBusy int32 = 0x1058
 )
 
 type blkDeviceHealthHook struct {
@@ -141,10 +131,6 @@ var blkDeviceHealthHooks = []blkDeviceHealthHook{
 	{
 		program: "trace_scsi_timeout",
 		symbol:  "scsi/scsi_dispatch_cmd_timeout",
-	},
-	{
-		program: "trace_scsi_dispatch_error",
-		symbol:  "scsi/scsi_dispatch_cmd_error",
 	},
 }
 
@@ -433,7 +419,7 @@ func (c *blkDeviceHealthCollector) handleKernelEvent(
 		return target
 	}
 
-	// Block errors, NVMe timeouts, and SCSI anomalies may collect evidence
+	// Block errors and NVMe or SCSI timeouts may collect evidence
 	// after resolving one target. NVMe resets only update their counter and
 	// persist the event: the controller may be unavailable during reset, and a
 	// later nvme-cli query cannot recover its pre-reset state.
@@ -510,25 +496,6 @@ func (c *blkDeviceHealthCollector) handleKernelEvent(
 		c.incrementCounter(blkDeviceHealthCounterKey{
 			kind:   blkDeviceHealthCounterSCSITimeout,
 			device: event.Device,
-		})
-		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
-
-	case blkDeviceHealthEventSCSIDispatchError:
-		target := resolve(c.resolver.resolveSCSI(
-			raw.Host,
-			raw.Channel,
-			raw.Target,
-			raw.Lun,
-		))
-		event := types.BlkDeviceHealthEvent{
-			Type:   blkDeviceHealthTypeSCSIDispatchError,
-			Device: target.eventDevice,
-			Status: blkDeviceHealthSCSIDispatchStatus(raw.Status),
-		}
-		c.incrementCounter(blkDeviceHealthCounterKey{
-			kind:   blkDeviceHealthCounterSCSIDispatchError,
-			device: event.Device,
-			status: event.Status,
 		})
 		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
 	}
@@ -694,21 +661,6 @@ func blkDeviceHealthBlockStatus(status int32) string {
 			return "unknown"
 		}
 		return "io_error"
-	}
-}
-
-func blkDeviceHealthSCSIDispatchStatus(status int32) string {
-	switch status {
-	case scsiMLQueueHostBusy:
-		return "host_busy"
-	case scsiMLQueueDeviceBusy:
-		return "device_busy"
-	case scsiMLQueueEHRetry:
-		return "eh_retry"
-	case scsiMLQueueTargetBusy:
-		return "target_busy"
-	default:
-		return "unknown"
 	}
 }
 

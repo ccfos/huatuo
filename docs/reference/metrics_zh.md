@@ -630,14 +630,13 @@ kprobe 能力。
 |`nvme_reset`|NVMe 控制器已接纳重置请求，不代表重置完成；仅记录事件，不触发取证|
 |`nvme_state_change`|NVMe controller 状态发生变化|
 |`scsi_timeout`|SCSI command 超时|
-|`scsi_dispatch_error`|SCSI command 派发失败|
 |`md_sync_action`|MD 同步动作发生变化|
 |`md_degraded`|MD 不可用成员数发生变化|
 |`md_member_state`|MD 成员状态发生变化或成员消失|
 
 NVMe 状态名不可用时，`new_state` 为 `unknown`，`new_state_raw` 保留状态码。
 
-block 错误、NVMe 超时、SCSI 异常及 MD 成员进入 `faulty`、`blocked`、
+block 错误、NVMe 和 SCSI 超时及 MD 成员进入 `faulty`、`blocked`、
 `write_error` 或 `removed` 状态会触发只读健康取证：NVMe 使用 `nvme-cli`，
 SCSI 使用 `smartctl`，结果随事件保存。无法唯一确定目标时仅保留事件，不扫描
 其他设备。MD 监测不需要 `mdadm`。
@@ -654,7 +653,6 @@ NVMe controller。
 |`nvme_timeouts_total`|disk|NVMe timeout 次数|
 |`nvme_resets_total`|disk|NVMe 已接纳的重置请求次数|
 |`scsi_timeouts_total`|disk|SCSI timeout 次数|
-|`scsi_dispatch_errors_total`|disk、status|SCSI 派发失败次数|
 |`collection_errors_total`|disk、reason|健康取证失败次数|
 |`event_persistence_failures_total`|reason|事件保存返回错误的次数|
 

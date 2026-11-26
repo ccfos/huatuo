@@ -256,7 +256,7 @@ struct trace_event_raw_block_rq_completion___blk_device_health {
 } __attribute__((preserve_access_index));
 
 /*
- * SCSI event types may live in module BTF. Their u32 payload prefix is
+ * The SCSI timeout event type may live in module BTF. The u32 payload prefix is
  * stable, but vendor kernels can grow trace_entry; relocate that core type.
  */
 struct blk_device_health_scsi_timeout_args {
@@ -265,23 +265,6 @@ struct blk_device_health_scsi_timeout_args {
 	u32 id;
 	u32 lun;
 };
-
-struct blk_device_health_scsi_dispatch_error_args {
-	u32 host_no;
-	u32 channel;
-	u32 id;
-	u32 lun;
-	s32 rtn;
-};
-
-static __always_inline int read_scsi_args(void *dst, u32 size, const void *ctx)
-{
-	u32 offset = bpf_core_type_size(struct trace_entry);
-
-	/* SCSI starts with u32 fields, not the pointer slots of other events. */
-	offset = (offset + sizeof(u32) - 1) & ~(sizeof(u32) - 1);
-	return bpf_probe_read_kernel(dst, size, (const char *)ctx + offset);
-}
 
 static __always_inline u32 encode_dev(u32 major, u32 minor)
 {
@@ -489,29 +472,12 @@ int trace_scsi_timeout(void *ctx)
 		.topology_generation = blk_device_health_topology_generation(false),
 		.type = BLK_DEVICE_HEALTH_EVENT_SCSI_TIMEOUT,
 	};
+	u32 offset = bpf_core_type_size(struct trace_entry);
 
-	if (read_scsi_args(&args, sizeof(args), ctx))
+	/* The trace payload starts with u32 fields. */
+	offset = (offset + sizeof(u32) - 1) & ~(sizeof(u32) - 1);
+	if (bpf_probe_read_kernel(&args, sizeof(args), (const char *)ctx + offset))
 		return 0;
-	event.host = args.host_no;
-	event.channel = args.channel;
-	event.target = args.id;
-	event.lun = args.lun;
-	submit_event(ctx, &event);
-	return 0;
-}
-
-SEC("tracepoint/scsi/scsi_dispatch_cmd_error")
-int trace_scsi_dispatch_error(void *ctx)
-{
-	struct blk_device_health_scsi_dispatch_error_args args = {};
-	struct blk_device_health_event event = {
-		.topology_generation = blk_device_health_topology_generation(false),
-		.type = BLK_DEVICE_HEALTH_EVENT_SCSI_DISPATCH_ERROR,
-	};
-
-	if (read_scsi_args(&args, sizeof(args), ctx))
-		return 0;
-	event.status = args.rtn;
 	event.host = args.host_no;
 	event.channel = args.channel;
 	event.target = args.id;
