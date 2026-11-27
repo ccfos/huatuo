@@ -298,6 +298,17 @@ static __always_inline void ensure_waiting_bitmap_epoch(
 	waiting_epoch_by_cpu[cpu_index] = epoch;
 }
 
+static __always_inline u64 *css_cache_entry(u64 *cache, u64 index)
+{
+	// A stack reload can hide the index bound from older verifiers.
+	asm volatile("%[index] &= %[mask]\n\t"
+		     "%[index] <<= 3\n\t"
+		     "%[cache] += %[index]"
+		     : [index] "+&r"(index), [cache] "+r"(cache)
+		     : [mask] "i"(MAX_CSS_IDS - 1));
+	return cache;
+}
+
 static __always_inline u32 resolve_target_dense_id(
 	u64 css_addr, u64 css_index, u32 epoch)
 {
@@ -312,19 +323,13 @@ static __always_inline u32 resolve_target_dense_id(
 	if (epoch & 1)
 		return NON_TARGET;
 
-	asm volatile("%0 &= 4095" : "+r"(css_index));
-	cache_entry = &css_id_to_dense_id[css_index];
-	// Preserve the verifier-bounded map-value pointer across helper calls.
-	asm volatile("" : "+r"(cache_entry));
+	cache_entry = css_cache_entry(css_id_to_dense_id, css_index);
 	cached = *cache_entry;
 	if (cache_epoch(cached) == epoch) {
 		if (cache_dense_id(cached) == NON_TARGET)
 			return NON_TARGET;
-		// Old verifiers can lose the bound after the index is spilled.
-		asm volatile("%0 &= 4095" : "+r"(css_index));
-		cached_addr = cached_css_addr[css_index];
-		asm volatile("%0 &= 4095" : "+r"(css_index));
-		cached_id = cached_cgroup_id[css_index];
+		cached_addr = *css_cache_entry(cached_css_addr, css_index);
+		cached_id = *css_cache_entry(cached_cgroup_id, css_index);
 		if (cached_addr == css_addr &&
 		    cgroup_css_matches_ref(css_addr, css_addr, cached_id))
 			return cache_dense_id(cached);
@@ -344,10 +349,8 @@ static __always_inline u32 resolve_target_dense_id(
 		ref_cgroup_id = mapped->cgroup_id;
 	}
 
-	asm volatile("%0 &= 4095" : "+r"(css_index));
-	cached_css_addr[css_index] = css_addr;
-	asm volatile("%0 &= 4095" : "+r"(css_index));
-	cached_cgroup_id[css_index] = ref_cgroup_id;
+	*css_cache_entry(cached_css_addr, css_index) = css_addr;
+	*css_cache_entry(cached_cgroup_id, css_index) = ref_cgroup_id;
 	*cache_entry = pack_dense_id_cache(epoch, dense_id);
 	return dense_id;
 }

@@ -203,6 +203,10 @@ start_workload "${TARGET_POD}" target
 replacement_container_id=${workload_container_id}
 [[ ${replacement_container_id} != "${target_container_id}" ]] \
 	|| fatal "recreated pod retained the old container ID"
+# Kubelet discovery can lag Pod readiness. Start sampling after assignment.
+wait_until 70 1 grep -Fq \
+	"assigned target dense_id=0 container=${TARGET_POD} id=${replacement_container_id:0:13}" "${TRACER_LOG}" \
+	|| fatal "sched-blame did not assign the replacement container ${replacement_container_id:0:13}"
 capture_phase replacement "${replacement_container_id}"
 
 assert_process_shutdown_by_pid "${tracer_pid}" 15 || fatal "sched-blame did not shut down cleanly"
