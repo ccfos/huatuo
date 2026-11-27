@@ -46,12 +46,13 @@ assert_burst_mapped_path() {
 	cp "/proc/${burst_runtime_pid}/maps" "${HUATUO_BAMAI_TEST_TMPDIR}/maps"
 	python3 - "${HUATUO_BAMAI_TEST_TMPDIR}/maps" << 'PYTHON' > "${HUATUO_BAMAI_TEST_TMPDIR}/mapped-paths.json"
 import json
-import os
 import sys
 
 with open(sys.argv[1], "rb") as source:
     fields = (line.split(None, 5) for line in source.read().split(b"\n"))
-    print(json.dumps([os.fsdecode(entry[5]) for entry in fields if len(entry) == 6]))
+    # The fixtures use UTF-8 even when Python starts with an ASCII locale.
+    paths = [entry[5].decode("utf-8", "surrogateescape") for entry in fields if len(entry) == 6]
+    print(json.dumps(paths))
 PYTHON
 	jq -e --arg expected "${expected}" 'index($expected) != null' \
 		"${HUATUO_BAMAI_TEST_TMPDIR}/mapped-paths.json" > /dev/null || {
@@ -139,7 +140,7 @@ except ImportError:
 
 with open("/proc/self/maps", "rb") as source:
     fields = (line.split(None, 5) for line in source.read().split(b"\n"))
-    paths = [os.fsdecode(entry[5]) for entry in fields if len(entry) == 6]
+    paths = [entry[5].decode("utf-8", "surrogateescape") for entry in fields if len(entry) == 6]
 print(json.dumps({
     "implementation": sys.implementation.name,
     "version": list(sys.version_info[:3]),
