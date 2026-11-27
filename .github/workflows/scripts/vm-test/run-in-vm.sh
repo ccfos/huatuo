@@ -365,6 +365,8 @@ run_guest_tests() {
 	export JAVA_PROFILER_CONTAINERD_IMAGE=docker.io/library/eclipse-temurin:17-jdk
 	export NATIVE_PROFILER_DOCKER_IMAGE=busybox:1.36.1
 	export NATIVE_PROFILER_CONTAINERD_IMAGE=docker.io/library/busybox:1.36.1
+	# Use Docker's public ECR copy when shared CI IPs hit Docker Hub limits.
+	export APISERVER_TEST_NATIVE_IMAGE=${APISERVER_TEST_NATIVE_IMAGE:-public.ecr.aws/docker/library/gcc:14}
 	# These pinned PR images must keep exercising the split-v1 memory CSS path.
 	local ID VERSION_ID
 	source /etc/os-release
