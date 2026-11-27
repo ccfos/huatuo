@@ -114,17 +114,19 @@ func (t *StackTree) BuildModel() (*Model, error) {
 
 // BuildProfileModel adds the profiler views to the default flamegraph.
 func (t *StackTree) BuildProfileModel(
-	unit string, buildGroup func(context.Context, []string) (*StackTree, error),
+	unit, summary string, allowedLabels []string, buildGroup func(context.Context, []string) (*StackTree, error),
 ) (*Model, error) {
 	model, err := t.BuildModel()
 	if err != nil || model == nil {
 		return nil, err
 	}
-	if err := model.setTopTable(t.ctx, unit); err != nil {
+	if err := model.buildTopTable(t.ctx, unit); err != nil {
 		return nil, err
 	}
+	model.summary = summary
 	model.grouping = &groupingState{
 		ungroupedTree: model.tree,
+		allowedLabels: allowedLabels,
 		buildTree:     buildGroup,
 		ctx:           t.ctx,
 	}

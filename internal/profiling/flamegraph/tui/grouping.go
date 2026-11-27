@@ -26,21 +26,22 @@ import (
 )
 
 type groupingState struct {
-	ungroupedTree treeNodes
-	buildTree     func(context.Context, []string) (*StackTree, error)
-	ctx           context.Context
-	buildMu       sync.Mutex
-	tags          []string
-	input         string
-	errorText     string
-	editing       bool
-	pending       bool
+	ungroupedTree   treeNodes
+	allowedLabels   []string
+	buildTree       func(context.Context, []string) (*StackTree, error)
+	ctx             context.Context
+	buildMu         sync.Mutex
+	groupLabelNames []string
+	input           string
+	errorText       string
+	editing         bool
+	pending         bool
 }
 
-type groupingResult struct {
+type groupingUpdate struct {
 	nodes           treeNodes
-	functionParents []*Node
-	tags            []string
+	groupLeaves     []*Node
+	groupLabelNames []string
 	err             error
 }
 
@@ -67,116 +68,113 @@ func (m *Model) updateGrouping(key tea.KeyMsg) tea.Cmd {
 
 func (m *Model) submitGrouping() tea.Cmd {
 	grouping := m.grouping
-	tags, err := parseGrouping(grouping.input)
+	groupLabelNames, err := parseGroupingLabels(grouping.input, grouping.allowedLabels)
 	if err != nil {
 		grouping.errorText = err.Error()
 		return nil
 	}
 
 	grouping.editing = false
-	if slices.Equal(tags, grouping.tags) {
+	if slices.Equal(groupLabelNames, grouping.groupLabelNames) {
 		return nil
 	}
-	if len(tags) == 0 {
-		m.applyGrouping(&groupingResult{nodes: grouping.ungroupedTree})
+	if len(groupLabelNames) == 0 {
+		m.applyGrouping(&groupingUpdate{nodes: grouping.ungroupedTree})
 		return nil
 	}
 
 	grouping.pending = true
 	ctx := grouping.ctx
 	previous := m.tree
-	order := groupingOrder(grouping.tags, tags)
+	order := groupingOrder(grouping.groupLabelNames, groupLabelNames)
 	return func() tea.Msg {
-		return grouping.build(ctx, tags, previous, order)
+		return grouping.build(ctx, groupLabelNames, previous, order)
 	}
 }
 
-func parseGrouping(input string) ([]string, error) {
+func parseGroupingLabels(input string, allowedLabels []string) ([]string, error) {
 	if strings.TrimSpace(input) == "" {
 		return nil, nil
 	}
 
-	var tags []string
+	var groupLabelNames []string
 	for field := range strings.SplitSeq(input, ",") {
-		tag := strings.TrimSpace(field)
-		switch tag {
-		case "cpu", "comm", "pid":
-		default:
-			return nil, fmt.Errorf("invalid grouping label %q (use cpu, comm or pid)", tag)
+		groupLabel := strings.TrimSpace(field)
+		if !slices.Contains(allowedLabels, groupLabel) {
+			return nil, fmt.Errorf("invalid grouping label %q (use %s)", groupLabel, strings.Join(allowedLabels, ", "))
 		}
-		if slices.Contains(tags, tag) {
-			return nil, fmt.Errorf("duplicate grouping label %q", tag)
+		if slices.Contains(groupLabelNames, groupLabel) {
+			return nil, fmt.Errorf("duplicate grouping label %q", groupLabel)
 		}
 
-		tags = append(tags, tag)
+		groupLabelNames = append(groupLabelNames, groupLabel)
 	}
-	return tags, nil
+	return groupLabelNames, nil
 }
 
 func (g *groupingState) build(
-	ctx context.Context, tags []string, previous treeNodes, order []int,
-) groupingResult {
+	ctx context.Context, groupLabelNames []string, previous treeNodes, order []int,
+) groupingUpdate {
 	g.buildMu.Lock()
 	defer g.buildMu.Unlock()
 	// A queued command can start after the viewer has already closed.
 	if err := ctx.Err(); err != nil {
-		return groupingResult{err: err}
+		return groupingUpdate{err: err}
 	}
 
 	if order != nil {
-		nodes, functionParents, err := reorderGroupLabels(ctx, previous, order)
+		nodes, groupLeaves, err := reorderGroupLabels(ctx, previous, order)
 		if err != nil {
-			return groupingResult{err: fmt.Errorf("reorder groups by %s: %w", strings.Join(tags, ","), err)}
+			return groupingUpdate{err: fmt.Errorf("reorder groups by %s: %w", strings.Join(groupLabelNames, ","), err)}
 		}
 
-		return groupingResult{
+		return groupingUpdate{
 			nodes:           nodes,
-			functionParents: functionParents,
-			tags:            tags,
+			groupLeaves:     groupLeaves,
+			groupLabelNames: groupLabelNames,
 		}
 	}
 
-	tree, err := g.buildTree(ctx, tags)
+	tree, err := g.buildTree(ctx, groupLabelNames)
 	if err != nil {
-		return groupingResult{err: fmt.Errorf("group by %s: %w", strings.Join(tags, ","), err)}
+		return groupingUpdate{err: fmt.Errorf("group by %s: %w", strings.Join(groupLabelNames, ","), err)}
 	}
 	nodes, err := tree.buildNodes()
 	if err != nil {
-		return groupingResult{err: fmt.Errorf("group by %s: %w", strings.Join(tags, ","), err)}
+		return groupingUpdate{err: fmt.Errorf("group by %s: %w", strings.Join(groupLabelNames, ","), err)}
 	}
 	if len(nodes) == 0 {
-		return groupingResult{err: fmt.Errorf("group by %s: no weighted samples", strings.Join(tags, ","))}
+		return groupingUpdate{err: fmt.Errorf("group by %s: no weighted samples", strings.Join(groupLabelNames, ","))}
 	}
 
-	return groupingResult{
-		nodes: nodes,
-		tags:  tags,
+	return groupingUpdate{
+		nodes:           nodes,
+		groupLabelNames: groupLabelNames,
 	}
 }
 
-func (m *Model) applyGrouping(result *groupingResult) {
-	if m.quitWithQ {
+func (m *Model) applyGrouping(update *groupingUpdate) {
+	if m.quitting {
 		return
 	}
-
 	grouping := m.grouping
 	grouping.pending = false
-	if result.err != nil {
+	if update.err != nil {
 		// Worker errors can include report text. Input errors already quote labels.
-		grouping.errorText = terminalText(result.err.Error())
+		grouping.errorText = terminalText(update.err.Error())
 		return
 	}
 
 	// The old view remains readable until the event loop installs the new one.
-	for _, parent := range result.functionParents {
+	for _, parent := range update.groupLeaves {
 		for _, child := range parent.Children {
 			child.Parent = parent
 		}
 	}
 
 	grouping.errorText = ""
-	grouping.tags = result.tags
-	m.tree = result.nodes
+	grouping.groupLabelNames = update.groupLabelNames
+	m.tree = update.nodes
 	m.focusOn(m.tree.root())
 }
 
@@ -185,29 +183,29 @@ func (g *groupingState) status() string {
 		return g.errorText
 	}
 	if g.editing {
-		return "group by: " + terminalText(g.input) + "_ (cpu,comm,pid | empty clears)"
+		return "group by: " + terminalText(g.input) + "_ (" + strings.Join(g.allowedLabels, ",") + " | empty clears)"
 	}
 	if g.pending {
 		return "grouping stacks…"
 	}
 
-	current := strings.Join(g.tags, ",")
-	if len(g.tags) == 0 {
+	current := strings.Join(g.groupLabelNames, ",")
+	if len(g.groupLabelNames) == 0 {
 		current = "none"
 	}
 	return "groups: " + current + " (g edit)"
 }
 
-// groupingOrder maps each requested tag to its previous position. A nil order
+// groupingOrder maps each requested groupLabel to its previous position. A nil order
 // means the grouping fields changed and the samples must be grouped again.
-func groupingOrder(previous, tags []string) []int {
-	if len(previous) == 0 || len(previous) != len(tags) {
+func groupingOrder(previous, groupLabelNames []string) []int {
+	if len(previous) == 0 || len(previous) != len(groupLabelNames) {
 		return nil
 	}
 
-	order := make([]int, len(tags))
-	for index, tag := range tags {
-		order[index] = slices.Index(previous, tag)
+	order := make([]int, len(groupLabelNames))
+	for index, groupLabel := range groupLabelNames {
+		order[index] = slices.Index(previous, groupLabel)
 		if order[index] < 0 {
 			return nil
 		}
@@ -279,7 +277,7 @@ func reorderGroupLabels(ctx context.Context, previous treeNodes, order []int) (t
 	}
 
 	nodes := make(treeNodes, 0, len(labels)+functionCount)
-	functionParents := make([]*Node, 0, len(subtrees))
+	groupLeaves := make([]*Node, 0, len(subtrees))
 	for _, label := range labels {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -293,7 +291,7 @@ func reorderGroupLabels(ctx context.Context, previous treeNodes, order []int) (t
 		subtree := subtrees[label]
 		label.Children = subtree.children
 		nodes = append(nodes, subtree.frames...)
-		functionParents = append(functionParents, label)
+		groupLeaves = append(groupLeaves, label)
 	}
-	return nodes, functionParents, nil
+	return nodes, groupLeaves, nil
 }

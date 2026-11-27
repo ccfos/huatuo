@@ -113,7 +113,7 @@ func prepareViewer(ctx context.Context, aggregated *types.AggregatedProfile, uni
 	}
 
 	// The drained or decoded samples remain immutable while the viewer uses them.
-	return tree.BuildProfileModel(unit, func(ctx context.Context, tags []string) (*flamegraphtui.StackTree, error) {
+	return tree.BuildProfileModel(unit, "", []string{"cpu", "comm", "pid"}, func(ctx context.Context, tags []string) (*flamegraphtui.StackTree, error) {
 		return buildProfileTree(ctx, aggregated, tags)
 	})
 }

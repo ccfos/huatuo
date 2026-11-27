@@ -44,7 +44,7 @@ func (m *Model) safeWidth() int {
 
 func (m Model) View() string { //nolint:gocritic // Update returns Model values to Bubble Tea.
 	if m.view == viewTopTable {
-		return m.fitView(m.renderTopTable())
+		return m.clipToViewport(m.renderTopTable())
 	}
 	focus := m.visible.root()
 	if focus == nil {
@@ -68,7 +68,7 @@ func (m Model) View() string { //nolint:gocritic // Update returns Model values 
 
 	var out strings.Builder
 	selected := m.selectedNode()
-	fmt.Fprintf(&out, "HUATUO tui flamegraph  frames=%d  focus=%s\n", len(m.visible), terminalText(focus.Label))
+	fmt.Fprintf(&out, "HUATUO tui flamegraph%s  frames=%d  focus=%s\n", m.summary, len(m.visible), terminalText(focus.Label))
 	fmt.Fprintf(&out, "keys: v view  %s  ←/→ level  enter zoom  backspace back  r root  / find  n next  q quit\n", verticalKeys)
 	if m.grouping != nil {
 		out.WriteString(m.grouping.status() + "\n")
@@ -87,10 +87,10 @@ func (m Model) View() string { //nolint:gocritic // Update returns Model values 
 
 	out.WriteString(strings.Repeat("-", m.safeWidth()) + "\n")
 	out.WriteString(renderDetails(selected, focus.Value))
-	return m.fitView(out.String())
+	return m.clipToViewport(out.String())
 }
 
-func (m *Model) fitView(rendered string) string {
+func (m *Model) clipToViewport(rendered string) string {
 	lines := strings.Split(strings.TrimSuffix(rendered, "\n"), "\n")
 	lines = lines[:min(len(lines), max(m.height, 1))]
 	for i := range lines {

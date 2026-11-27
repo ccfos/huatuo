@@ -43,14 +43,18 @@ type topTableModel struct {
 	sortByTotal bool
 }
 
-func (m *Model) setTopTable(ctx context.Context, unit string) error {
+func (n *Node) isFunction(groupDepth int64) bool {
+	return n.Level > groupDepth
+}
+
+func (m *Model) buildTopTable(ctx context.Context, unit string) error {
 	weights := make(map[string]functionWeights)
 	for _, node := range m.tree {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if node.Level == 0 {
-			continue // The synthetic root does not represent a function.
+		if !node.isFunction(0) {
+			continue
 		}
 		// A recursive function contributes once per node on its call path.
 		row := weights[node.Label]
@@ -101,7 +105,7 @@ func (m *Model) topTableHeight() int {
 }
 
 func (m *Model) renderTopTable() string {
-	const heading = "HUATUO tui flamegraph\nkeys: v view  s sort  up/down select row  r root  q quit\n"
+	heading := "HUATUO tui flamegraph" + m.summary + "\nkeys: v view  s sort  ↑/↓ row  enter frames  r root  q quit\n"
 	top := m.topTable
 	order := "Self"
 	if top.sortByTotal {

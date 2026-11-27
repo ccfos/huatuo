@@ -53,6 +53,28 @@ func TestStackTreeWeightsAndOwnership(t *testing.T) {
 	require.EqualValues(t, 100, model.visible.root().Value)
 }
 
+func TestTopTableSelectsFunctionNamedTotal(t *testing.T) {
+	tree := NewStackTree(t.Context())
+	require.NoError(t, tree.Add([]string{"total", "leaf"}, 3))
+	require.NoError(t, tree.Add([]string{"other", "total"}, 2))
+
+	model, err := tree.BuildProfileModel("samples", "", nil, nil)
+	require.NoError(t, err)
+	model.view = viewTopTable
+	model.topTable.sortByTotal = true
+	model.topTable.sortRows()
+	require.Equal(t, "total", model.topTable.rows[0].name)
+
+	model.updateKey(tea.KeyMsg{Type: tea.KeyEnter})
+	require.Equal(t, viewFrames, model.view)
+	require.Len(t, model.matches, 2)
+	require.Equal(t, "other", model.selectedNode().Parent.Label)
+
+	model.updateKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	require.Equal(t, "total", model.selectedNode().Label)
+	require.EqualValues(t, 1, model.selectedNode().Level)
+}
+
 func TestStackTreeWeightLimits(t *testing.T) {
 	tree := NewStackTree(t.Context())
 	require.NoError(t, tree.Add([]string{"root"}, 0))
@@ -217,33 +239,34 @@ func TestGroupingReorderReusesFunctionNodes(t *testing.T) {
 	m.focusOn(originalParent)
 
 	m.grouping = &groupingState{
-		ctx:   cancelOnCheck(t, 4),
-		tags:  []string{"cpu", "comm"},
-		input: "comm,cpu",
+		allowedLabels:   []string{"cpu", "comm"},
+		ctx:             cancelOnCheck(t, 4),
+		groupLabelNames: []string{"cpu", "comm"},
+		input:           "comm,cpu",
 		buildTree: func(context.Context, []string) (*StackTree, error) {
 			t.Fatal("same-label reorder called the full tree builder")
 			return nil, nil
 		},
 	}
-	reorder := func() groupingResult {
+	reorder := func() groupingUpdate {
 		t.Helper()
 		cmd := m.submitGrouping()
 		require.NotNil(t, cmd, "reorder did not start")
-		return cmd().(groupingResult)
+		return cmd().(groupingUpdate)
 	}
-	result := reorder()
-	m.applyGrouping(&result)
-	require.ErrorIs(t, result.err, context.Canceled)
+	update := reorder()
+	m.applyGrouping(&update)
+	require.ErrorIs(t, update.err, context.Canceled)
 	require.Same(t, originalRoot, m.tree.root())
 	require.Same(t, originalParent, m.visible.root())
 	require.Same(t, originalParent, function.Parent)
-	require.Equal(t, []string{"cpu", "comm"}, m.grouping.tags)
+	require.Equal(t, []string{"cpu", "comm"}, m.grouping.groupLabelNames)
 
 	m.grouping.ctx = t.Context()
-	result = reorder()
-	require.NoError(t, result.err)
+	update = reorder()
+	require.NoError(t, update.err)
 	require.Same(t, originalParent, function.Parent, "only the event loop may reparent nodes")
-	m.applyGrouping(&result)
+	m.applyGrouping(&update)
 	require.Len(t, m.tree, 7)
 	require.Same(t, function, m.tree[3])
 	require.Equal(t, "total > comm=api > cpu0 > request", nodePath(function))
@@ -251,9 +274,9 @@ func TestGroupingReorderReusesFunctionNodes(t *testing.T) {
 	require.EqualValues(t, 5, m.visible.root().Value)
 
 	m.grouping.input = "cpu,comm"
-	result = reorder()
-	m.applyGrouping(&result)
-	require.NoError(t, result.err)
+	update = reorder()
+	m.applyGrouping(&update)
+	require.NoError(t, update.err)
 	require.Equal(t, "cpu0 > comm=api > request", nodePath(function))
 	require.EqualValues(t, 5, m.tree.root().Value)
 }

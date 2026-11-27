@@ -130,20 +130,23 @@ func (nodes treeNodes) root() *Node {
 
 // Model is the Bubble Tea state for the flamegraph viewer.
 type Model struct {
-	view       viewMode
-	tree       treeNodes
-	visible    treeNodes
-	cursor     int
-	offset     int
-	width      int
-	height     int
-	searching  bool
-	query      string
-	lastSearch string
-	matches    map[*Node]bool
-	grouping   *groupingState
-	topTable   *topTableModel
-	quitWithQ  bool
+	view        viewMode
+	tree        treeNodes
+	visible     treeNodes
+	cursor      int
+	offset      int
+	width       int
+	height      int
+	searching   bool
+	query       string
+	lastSearch  string
+	matches     map[*Node]bool
+	grouping    *groupingState
+	topTable    *topTableModel
+	summary     string
+	quitWithQ   bool
+	quitting    bool
+	exactSearch bool
 }
 
 // newModel takes ownership of nodes in preorder.
@@ -168,7 +171,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // U
 		m.width = typed.Width
 		m.height = typed.Height
 		m.clampCursor()
-	case groupingResult:
+	case groupingUpdate:
 		m.applyGrouping(&typed)
 	case tea.KeyMsg:
 		switch {
@@ -186,10 +189,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // U
 func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 	name := key.String()
 	switch name {
-	case "q":
-		m.quitWithQ = true
-		return tea.Quit
-	case "ctrl+c", "esc":
+	case "q", "ctrl+c", "esc":
+		m.quitWithQ = name == "q"
+		m.quitting = true
 		return tea.Quit
 	case "v":
 		m.cycleView()
@@ -197,7 +199,7 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 	case "g":
 		if grouping := m.grouping; grouping != nil && m.view != viewTopTable && !grouping.pending {
 			grouping.editing = true
-			grouping.input = strings.Join(grouping.tags, ",")
+			grouping.input = strings.Join(grouping.groupLabelNames, ",")
 			grouping.errorText = ""
 		}
 		return nil
@@ -210,7 +212,14 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	if m.view == viewTopTable {
-		if name == "s" {
+		switch name {
+		case "enter":
+			m.view = viewFrames
+			m.lastSearch = m.topTable.rows[m.topTable.cursor].name
+			m.exactSearch = true
+			m.focusOn(m.tree.root())
+			m.selectFirstMatch()
+		case "s":
 			m.topTable.sortByTotal = !m.topTable.sortByTotal
 			m.topTable.sortRows()
 		}
@@ -380,6 +389,11 @@ func (m *Model) updateSearch(key tea.KeyMsg) {
 
 func (m *Model) applySearch() {
 	m.lastSearch = strings.TrimSpace(m.query)
+	m.exactSearch = false
+	m.selectFirstMatch()
+}
+
+func (m *Model) selectFirstMatch() {
 	firstMatch := m.refreshMatches()
 	if firstMatch >= 0 {
 		m.cursor = firstMatch
@@ -394,8 +408,16 @@ func (m *Model) refreshMatches() int {
 	}
 	needle := strings.ToLower(m.lastSearch)
 	firstMatch := -1
+	var groupDepth int64
+	if m.grouping != nil {
+		groupDepth = int64(len(m.grouping.groupLabelNames))
+	}
 	for index, node := range m.visible {
-		if strings.Contains(strings.ToLower(node.Label), needle) {
+		if m.exactSearch && !node.isFunction(groupDepth) {
+			continue
+		}
+		if (m.exactSearch && node.Label == m.lastSearch) ||
+			(!m.exactSearch && strings.Contains(strings.ToLower(node.Label), needle)) {
 			m.matches[node] = true
 			if firstMatch == -1 {
 				firstMatch = index
