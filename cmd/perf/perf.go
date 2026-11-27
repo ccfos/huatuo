@@ -29,6 +29,8 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
+	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
+	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -45,6 +47,13 @@ var (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o $BPF_DIR/perf.o
 
 func mainAction(ctx *cli.Context) error {
+	showTUI := ctx.Bool("tui")
+	if showTUI {
+		if err := output.ValidateTUITerminal(); err != nil {
+			return err
+		}
+	}
+
 	bpfPath := ctx.String("bpf-path")
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
@@ -90,7 +99,6 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("attach err %w", err)
 	}
 
-	showTUI := ctx.Bool("tui")
 	viewerCtx := ctx.Context
 	if showTUI {
 		// Register before sampling ends so hangups during viewer preparation cancel it too.
@@ -112,12 +120,25 @@ func mainAction(ctx *cli.Context) error {
 	}
 	signal.Stop(signalWait)
 
+	if err := b.Detach(); err != nil {
+		return fmt.Errorf("stop perf sampling: %w", err)
+	}
 	if showTUI {
-		return runTUI(viewerCtx, b)
+		model, err := buildTUIModel(viewerCtx, b)
+		if err != nil {
+			return err
+		}
+		if err := b.Close(); err != nil {
+			return fmt.Errorf("close perf sampling resources: %w", err)
+		}
+		return flamegraphtui.Run(viewerCtx, model, flamegraphtui.ViewerManagedSignals)
 	}
 	flameData, err := buildFlameData(b)
 	if err != nil {
 		return fmt.Errorf("parsedata err %w", err)
+	}
+	if err := b.Close(); err != nil {
+		return fmt.Errorf("close perf sampling resources: %w", err)
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(flameData); err != nil {
 		return fmt.Errorf("write flame data: %w", err)
@@ -149,7 +170,7 @@ func main() {
 		&cli.IntFlag{
 			Name:  "duration",
 			Value: 5,
-			Usage: "Tool duration(s)",
+			Usage: "Collection duration in seconds",
 		},
 		&cli.BoolFlag{
 			Name:  "tui",
