@@ -56,14 +56,19 @@ jobs:
             {"arch": "amd64", "os": "anolis8.10", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:anolis8.10.amd64-20260915032000-f449e1ab76e5-a5153e73d65abc41-efbbd69167ddaa34"},
             {"arch": "amd64", "os": "opencloudos9", "runner": "ubuntu-24.04", "image": "huatuo/os-distro-test:opencloudos9.amd64-20260915032000-f449e1ab76e5-cf94cf60daa13e63-efbbd69167ddaa34"}
           ]'
+          package_cache_distros='["fedora44"]'
           matrix=$(jq -cn \
             --arg selected "$INPUT_OS" \
+            --argjson package_cache_distros "$package_cache_distros" \
             --argjson distros "${distros?}" '
             def chunks: split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
               | map(select(length > 0));
             ($selected | chunks) as $selected_distros
             | ($selected_distros | length == 0 or any(. == "all")) as $all_selected
-            | [ $distros[] | select($all_selected or (.os as $os | $selected_distros | any(. == $os))) ]
+            | [ $distros[] | .os as $os
+                | select($all_selected or ($selected_distros | any(. == $os)))
+                | .package_cache_dir = (if $package_cache_distros | any(. == $os)
+                  then "huatuo-\($os)-package" else "" end) ]
             | {include: .}
           ')
           if [ "$(jq '.include | length' <<< "$matrix")" -eq 0 ]; then
@@ -93,14 +98,31 @@ jobs:
         run: |
           .github/workflows/scripts/qemu-0-host-init.sh "${{ matrix.arch }}"
 
+      - name: Restore VM package
+        id: vm-package-cache
+        if: matrix.package_cache_dir != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/${{ matrix.package_cache_dir }}
+          key: qemu-vm-package-v1-${{ matrix.image }}
+
       - name: Start VM
         id: start-vm
-        timeout-minutes: 20
+        timeout-minutes: ${{ matrix.package_cache_dir && 35 || 20 }}
         env:
           VM_IMAGE_REF: ${{ matrix.image }}
+          VM_IMAGE_PULL_TIMEOUT: ${{ matrix.package_cache_dir && '25m' || '12m' }}
+          VM_PACKAGE_CACHE_DIR: ${{ matrix.package_cache_dir && format('{0}/{1}', runner.temp, matrix.package_cache_dir) || '' }}
         run: |
           .github/workflows/scripts/qemu-1-start-vm.sh \
             "${{ matrix.arch }}" "${{ matrix.os }}"
+
+      - name: Save VM package
+        if: matrix.package_cache_dir != '' && steps.vm-package-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/${{ matrix.package_cache_dir }}
+          key: ${{ steps.vm-package-cache.outputs.cache-primary-key }}
 
       - name: Receive generated sources
         env:

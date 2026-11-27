@@ -18,13 +18,14 @@
 # Purpose: Extract /data from a VM image and verify its metadata and checksums.
 # Caller: qemu-1-start-vm.sh invokes this helper before starting the VM.
 # Environment:
-# - None.
+# - VM_IMAGE_PULL_TIMEOUT: Optional timeout for each registry request.
 # Parameters:
 # - --image IMAGE: Required VM package image reference.
 # - --package-dir DIR: Required empty extraction directory.
 # - --distro NAME: Required expected distribution name.
 # - --arch ARCH: Required expected architecture.
 # - --pull always|never: Optional image pull policy; defaults to always.
+# - --verify-only: Validate an existing extracted package.
 # - -h, --help: Print usage information.
 # Examples:
 # - extract-and-verify-package.sh --image repo/vm:ubuntu.amd64 --package-dir /tmp/package --distro ubuntu --arch amd64 --pull never  # extract a local image
@@ -35,7 +36,7 @@ source "$SCRIPT_DIR/logging.sh"
 
 usage() {
 	cat << 'EOF'
-Usage: extract-and-verify-package.sh --image IMAGE --package-dir DIR --distro NAME --arch ARCH [--pull always|never]
+Usage: extract-and-verify-package.sh --image IMAGE --package-dir DIR --distro NAME --arch ARCH [--pull always|never | --verify-only]
 EOF
 }
 
@@ -49,6 +50,7 @@ package_dir=""
 expected_distro=""
 expected_arch=""
 pull=always
+verify_only=false
 while (($#)); do
 	case "$1" in
 	--image)
@@ -71,6 +73,10 @@ while (($#)); do
 		pull=${2:?missing value for --pull}
 		shift 2
 		;;
+	--verify-only)
+		verify_only=true
+		shift
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -80,40 +86,64 @@ while (($#)); do
 done
 
 [[ "$(uname -s)" == Linux ]] || fail "only Linux hosts are supported"
-command -v docker > /dev/null 2>&1 || fail "required command not found: docker"
 command -v jq > /dev/null 2>&1 || fail "required command not found: jq"
 command -v sha256sum > /dev/null 2>&1 || fail "required command not found: sha256sum"
 [[ -n "$image" && -n "$package_dir" && -n "$expected_distro" && -n "$expected_arch" ]] \
 	|| fail "--image, --package-dir, --distro, and --arch are required"
 [[ "$pull" == always || "$pull" == never ]] || fail "--pull must be always or never"
 [[ ! -L "$package_dir" ]] || fail "package directory must not be a symbolic link: $package_dir"
-if [[ -e "$package_dir" ]]; then
+
+extract_package() (
+	command -v docker > /dev/null 2>&1 || fail "required command not found: docker"
+	if [[ -e "$package_dir" ]]; then
+		[[ -d "$package_dir" ]] || fail "package path is not a directory: $package_dir"
+		[[ -z "$(ls -A -- "$package_dir")" ]] || fail "package directory must be empty: $package_dir"
+	else
+		mkdir -p -- "$package_dir"
+	fi
+
+	docker_config=$(mktemp -d)
+	container=""
+	cleanup() {
+		if [[ -n "$container" ]]; then
+			docker --config "$docker_config" rm -f "$container" > /dev/null 2>&1 || true
+		fi
+		rm -rf -- "$docker_config"
+	}
+	trap cleanup EXIT
+	printf '{}\n' > "$docker_config/config.json"
+
+	if [[ "$pull" == always ]]; then
+		pull_command=(docker --config "$docker_config" pull "$image")
+		if [[ -n ${VM_IMAGE_PULL_TIMEOUT:-} ]]; then
+			pull_command=(timeout -k 10s "$VM_IMAGE_PULL_TIMEOUT" "${pull_command[@]}")
+		fi
+		for attempt in 1 2 3; do
+			if "${pull_command[@]}"; then
+				break
+			else
+				pull_status=$?
+			fi
+			vm_log_error "VM image pull attempt $attempt/3 failed for $image (exit $pull_status)"
+			# A client timeout can leave the daemon downloading the previous request.
+			((pull_status != 124 && pull_status != 137 && attempt < 3)) \
+				|| fail "cannot pull $image; check registry connectivity and availability"
+			sleep "$((attempt * 10))"
+		done
+	elif ! docker --config "$docker_config" image inspect "$image" > /dev/null 2>&1; then
+		fail "local Docker image not found with --pull never: $image"
+	fi
+	container=$(docker --config "$docker_config" create "$image" /bin/true)
+	docker --config "$docker_config" cp "$container:/data/." "$package_dir/" \
+		|| fail "could not extract /data from $image"
+)
+
+if [[ "$verify_only" == true ]]; then
 	[[ -d "$package_dir" ]] || fail "package path is not a directory: $package_dir"
-	[[ -z "$(ls -A -- "$package_dir")" ]] || fail "package directory must be empty: $package_dir"
 else
-	mkdir -p -- "$package_dir"
+	extract_package
 fi
 package_dir=$(realpath -- "$package_dir")
-
-docker_config=$(mktemp -d)
-container=""
-cleanup() {
-	if [[ -n "$container" ]]; then
-		docker --config "$docker_config" rm -f "$container" > /dev/null 2>&1 || true
-	fi
-	rm -rf -- "$docker_config"
-}
-trap cleanup EXIT
-printf '{}\n' > "$docker_config/config.json"
-
-if [[ "$pull" == always ]]; then
-	docker --config "$docker_config" pull "$image"
-elif ! docker --config "$docker_config" image inspect "$image" > /dev/null 2>&1; then
-	fail "local Docker image not found with --pull never: $image"
-fi
-container=$(docker --config "$docker_config" create "$image" /bin/true)
-docker --config "$docker_config" cp "$container:/data/." "$package_dir/" \
-	|| fail "could not extract /data from $image"
 
 release="$package_dir/release.json"
 sums="$package_dir/SHA256SUMS"
@@ -163,4 +193,4 @@ actual_hash=$(sha256sum "$runner" | awk '{print $1}')
 [[ "$actual_hash" == "$runner_hash" ]] || fail "packaged runner checksum mismatch"
 [[ -x "$runner" ]] || fail "packaged runner is not executable"
 
-vm_log "extracted and validated $image into $package_dir"
+vm_log "validated $image package in $package_dir"

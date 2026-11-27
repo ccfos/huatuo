@@ -20,6 +20,7 @@
 # Environment:
 # - VM_IMAGE_REF: Image reference; defaults from DISTRO and ARCH.
 # - VM_IMAGE_PULL: Image pull policy, always (default) or never.
+# - VM_PACKAGE_CACHE_DIR: Optional package cache on the same filesystem as RUNNER_TEMP.
 # - RUNNER_TEMP: Preferred parent directory for per-run storage.
 # - TMPDIR: Storage fallback when RUNNER_TEMP is unset; defaults to /tmp.
 # - VM_CONTEXT_OUTPUT: File that receives state for subsequent caller steps.
@@ -63,9 +64,27 @@ write_context() {
 }
 write_context
 
-"$ROOT_DIR/.github/workflows/scripts/vm-test/extract-and-verify-package.sh" \
-	--image "$VM_IMAGE_REF" --package-dir "$package_dir" \
-	--distro "$OS_DISTRO" --arch "$ARCH" --pull "$VM_IMAGE_PULL"
+package_command=(
+	"$ROOT_DIR/.github/workflows/scripts/vm-test/extract-and-verify-package.sh"
+	--image "$VM_IMAGE_REF" --package-dir "$package_dir"
+	--distro "$OS_DISTRO" --arch "$ARCH"
+)
+package_cache_dir=${VM_PACKAGE_CACHE_DIR:-}
+# Both paths are on the runner filesystem. Keep one copy of the archive.
+if [[ -n "$package_cache_dir" && ! -L "$package_cache_dir" && -f "$package_cache_dir/release.json" ]] \
+	&& cp -al -- "$package_cache_dir" "$package_dir" && "${package_command[@]}" --verify-only; then
+	vm_log "using cached package for $VM_IMAGE_REF"
+else
+	if [[ -e "$package_dir" ]]; then
+		vm_log "cached package is incomplete or invalid; pulling $VM_IMAGE_REF"
+		rm -rf -- "$package_dir"
+	fi
+	"${package_command[@]}" --pull "$VM_IMAGE_PULL"
+	if [[ -n "$package_cache_dir" && ! -f "$package_cache_dir/release.json" ]]; then
+		mkdir -p -- "$package_cache_dir"
+		cp -al -- "$package_dir/." "$package_cache_dir/"
+	fi
+fi
 
 start_args=(
 	start
