@@ -232,8 +232,9 @@ install_test_dependencies() {
 					--disablerepo=debuginfo --disablerepo=source
 					--disablerepo=update-source --disablerepo=update
 				)
-				# openEuler 22.03 keeps fio in everything, outside OS and EPOL.
-				if [[ ${VERSION_ID%%.*} == 22 && " ${missing_packages[*]} " == *" fio "* ]]; then
+				# openEuler 22.03 and x86_64 24.03 keep fio outside OS and EPOL.
+				if [[ " ${missing_packages[*]} " == *" fio "* &&
+					(${VERSION_ID%%.*} == 22 || (${VERSION_ID%%.*} == 24 && $(uname -m) == x86_64)) ]]; then
 					package_options+=(--enablerepo=everything)
 				else
 					package_options+=(--disablerepo=everything)
