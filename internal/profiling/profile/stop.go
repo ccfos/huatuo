@@ -17,6 +17,11 @@ package profile
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +30,55 @@ var (
 	ErrStopRequested             = errors.New("collection stop requested")
 )
 
-// FinalizationTimeout bounds collector final output and publication.
+var errTerminationRequested = fmt.Errorf("profiling capture received SIGTERM: %w", context.Canceled)
+
+// RunSignals records a graceful stop separately from session cancellation.
+type RunSignals struct {
+	stopRequested context.Context
+	stopping      atomic.Bool
+}
+
+// SubscribeRunSignals subscribes to process signals until the returned cleanup
+// function is called. The runner uses the same state to mark the end of collection.
+func SubscribeRunSignals(parent context.Context, onSignal func(os.Signal)) (context.Context, *RunSignals, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	listenerCtx, stopListener := context.WithCancel(context.WithoutCancel(parent))
+	stopRequested, requestStop := context.WithCancel(listenerCtx)
+	runSignals := &RunSignals{stopRequested: stopRequested}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-listenerCtx.Done():
+				return
+			case sig := <-signals:
+				if onSignal != nil {
+					onSignal(sig)
+				}
+				switch {
+				case sig == syscall.SIGINT && runSignals.stopping.CompareAndSwap(false, true):
+					requestStop()
+				case sig == syscall.SIGTERM:
+					cancel(errTerminationRequested)
+				default:
+					cancel(context.Canceled)
+				}
+			}
+		}
+	}()
+	return ctx, runSignals, func() {
+		stopListener()
+		<-done
+		cancel(nil)
+		signal.Stop(signals)
+	}
+}
+
+// FinalizationTimeout is the cancellation budget for collector finalization and
+// output preparation. Synchronous filesystem calls may still delay return.
 const FinalizationTimeout = 30 * time.Second
 
 // IsNormalStop accepts only control causes, never an error joined with a failure.

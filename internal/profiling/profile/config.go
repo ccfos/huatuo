@@ -29,4 +29,6 @@ type RunConfig struct {
 	AggregationInterval time.Duration
 	OutputFormat        output.OutputFormat
 	OutputDestination   string
+	// Signals is the command-owned signal subscription for this capture.
+	Signals *RunSignals
 }

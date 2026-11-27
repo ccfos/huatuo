@@ -19,7 +19,7 @@ weight: 6
 make build
 ```
 
-命令输出到 `_output/bin/irqtracing`，BPF 对象输出到 `_output/bpf/irqtracing.o`；运行时需要通过 `--bpf-path` 指定该对象。
+命令输出到 `_output/bin/irqtracing`，BPF 对象输出到 `_output/bpf/irqtracing.o`；运行时通过 `--bpf-path` 指定普通文件形式的 BPF 对象。
 
 ## 运行
 

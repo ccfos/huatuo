@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"os"
 	"os/signal"
 	"slices"
 	"strings"
@@ -53,9 +54,17 @@ type Node struct {
 	Children []*Node
 }
 
+// SignalOwnership indicates whether the command already handles interrupt and termination.
+type SignalOwnership uint8
+
+const (
+	CallerManagedSignals SignalOwnership = iota
+	ViewerManagedSignals
+)
+
 // Run opens the terminal viewer and reports whether the user quit with q.
 // A nil model opens an empty viewer.
-func Run(ctx context.Context, model *Model) (bool, error) {
+func Run(ctx context.Context, model *Model, ownership SignalOwnership) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -63,26 +72,49 @@ func Run(ctx context.Context, model *Model) (bool, error) {
 		model = newModel(treeNodes{{Label: "empty"}})
 	}
 
-	// Bubble Tea needs a canceled context to restore the terminal on these signals.
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGQUIT)
-	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
 
 	if grouping := model.grouping; grouping != nil {
-		var cancel context.CancelFunc
-		grouping.ctx, cancel = context.WithCancel(ctx)
+		grouping.ctx = ctx
 		defer func() {
-			// Bubble Tea does not wait for running commands on shutdown.
-			cancel()
+			// Signal cleanup cancels the context before we join the grouping build.
 			grouping.buildMu.Lock()
 			defer grouping.buildMu.Unlock()
 		}()
 	}
 
-	result, err := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+	// Program.Send can race with capture cancellation without blocking shutdown.
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx), tea.WithoutSignalHandler())
+	defer cancel()
+	if ownership == ViewerManagedSignals {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(signals)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			select {
+			case <-ctx.Done():
+			case sig := <-signals:
+				if sig == syscall.SIGINT {
+					program.Send(tea.InterruptMsg{})
+				} else {
+					program.Quit()
+				}
+			}
+		}()
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
+
+	finished, err := program.Run()
 	if ctx.Err() != nil && errors.Is(err, ctx.Err()) && errors.Is(err, tea.ErrProgramKilled) {
 		return false, ctx.Err()
 	}
-	final, ok := result.(Model)
+	final, ok := finished.(Model)
 	return ok && final.quitWithQ, err
 }
 

@@ -19,7 +19,7 @@ The standard project build discovers `cmd/irqtracing` and compiles `bpf/irqtraci
 make build
 ```
 
-The binary is written to `_output/bin/irqtracing` and the BPF object to `_output/bpf/irqtracing.o`. Specify the object with `--bpf-path` at runtime.
+The binary is written to `_output/bin/irqtracing` and the BPF object to `_output/bpf/irqtracing.o`. Pass the BPF object as a regular file using `--bpf-path`.
 
 ## Run
 

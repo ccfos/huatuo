@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"syscall"
 	"time"
 
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -53,16 +55,46 @@ func newIRQProfiler(c *collector) *profile.ProfilerMeta {
 	}
 }
 
-func (c *collector) Start(_ context.Context) error {
-	data, err := os.ReadFile(c.bpfPath)
+func readBPFObjectFile(path string) (_ []byte, returnErr error) {
+	// Open without waiting for a writer if the path resolves to a FIFO.
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%q must be a regular file", path)
+	}
+	return io.ReadAll(file)
+}
+
+func (c *collector) Start(ctx context.Context) error {
+	if err := context.Cause(ctx); err != nil {
+		return err
+	}
+
+	data, err := readBPFObjectFile(c.bpfPath)
 	if err != nil {
 		return fmt.Errorf("read IRQ BPF object: %w", err)
+	}
+
+	if err := context.Cause(ctx); err != nil {
+		return err
 	}
 
 	object, err := bpf.LoadBPFFromBytes(fmt.Sprintf("irqtracing_%d.o", time.Now().UnixNano()), data,
 		irqTracingBPFConstants(c.cpuID, c.maxEventsPerSecondPerCPU))
 	if err != nil {
 		return fmt.Errorf("load IRQ BPF: %w", err)
+	}
+
+	if err := context.Cause(ctx); err != nil {
+		return errors.Join(err, object.Close())
 	}
 
 	if err := object.AttachWithOptions([]bpf.AttachOption{

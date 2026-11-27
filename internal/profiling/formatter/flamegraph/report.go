@@ -76,7 +76,7 @@ func Report(ctx context.Context, path string) error {
 		return fmt.Errorf("report %q has no displayable samples", path)
 	}
 
-	_, err = flamegraphtui.Run(ctx, model)
+	_, err = flamegraphtui.Run(ctx, model, flamegraphtui.ViewerManagedSignals)
 	return err
 }
 

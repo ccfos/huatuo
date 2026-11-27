@@ -15,12 +15,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -37,8 +35,9 @@ func TestSignalContextCleanup(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parent, cancelParent := context.WithCancel(t.Context())
 			defer cancelParent()
-			var logs bytes.Buffer
-			ctx, cleanup := newSignalContext(parent, &logs)
+			ctx, _, cleanup := profile.SubscribeRunSignals(parent, func(sig os.Signal) {
+				t.Errorf("unexpected signal: %v", sig)
+			})
 			defer cleanup()
 			if external {
 				cancelParent()
@@ -50,10 +49,6 @@ func TestSignalContextCleanup(t *testing.T) {
 			}
 			if !external && parent.Err() != nil {
 				t.Fatalf("cleanup canceled parent: %v", parent.Err())
-			}
-			// Reading after cleanup also checks that the listener has stopped writing.
-			if logs.Len() != 0 {
-				t.Fatalf("unexpected signal log: %s", logs.String())
 			}
 		})
 	}
@@ -79,8 +74,10 @@ func TestSignalContextHandlesTermination(t *testing.T) {
 	if childSignal == "HUP" {
 		sig = syscall.SIGHUP
 	}
-	var logs bytes.Buffer
-	ctx, cleanup := newSignalContext(t.Context(), &logs)
+	observed := make(chan os.Signal, 1)
+	ctx, _, cleanup := profile.SubscribeRunSignals(t.Context(), func(sig os.Signal) {
+		observed <- sig
+	})
 	defer cleanup()
 	if err := syscall.Kill(os.Getpid(), sig); err != nil {
 		t.Fatal(err)
@@ -97,64 +94,51 @@ func TestSignalContextHandlesTermination(t *testing.T) {
 		t.Fatalf("%v: expected cancellation without normal finalization, cause=%v", sig, context.Cause(ctx))
 	}
 
-	cleanup()
-	if !strings.Contains(logs.String(), "[signal] caught signal: "+sig.String()+", canceling context") {
-		t.Fatalf("missing signal diagnostic: %q", logs.String())
+	if got := <-observed; got != sig {
+		t.Fatalf("observed %v, want %v", got, sig)
 	}
 }
 
 func TestSignalContextHandlesUserStop(t *testing.T) {
 	const childEnv = "HUATUO_PROFILER_INTERRUPT_TEST"
-	mode := os.Getenv(childEnv)
-	if mode == "" {
-		for _, mode := range []string{"stop", "terminate"} {
-			t.Run(mode, func(t *testing.T) {
-				cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesUserStop$")
-				cmd.Env = append(os.Environ(), childEnv+"="+mode)
-				output, err := cmd.CombinedOutput()
-				if mode == "stop" {
-					if err != nil {
-						t.Fatalf("signal subprocess: %v\n%s", err, output)
-					}
-
-					return
-				}
-
-				var exitErr *exec.ExitError
-				if !errors.As(err, &exitErr) {
-					t.Fatalf("expected SIGTERM exit after SIGINT, got %v\n%s", err, output)
-				}
-
-				status, ok := exitErr.Sys().(syscall.WaitStatus)
-				if !ok || !status.Signaled() || status.Signal() != syscall.SIGTERM {
-					t.Fatalf("expected SIGTERM exit after SIGINT, got %v\n%s", err, output)
-				}
-			})
+	if os.Getenv(childEnv) != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSignalContextHandlesUserStop$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("signal subprocess: %v\n%s", err, output)
 		}
-
 		return
 	}
-	var logs bytes.Buffer
-	ctx, cleanup := newSignalContext(t.Context(), &logs)
+
+	observed := make(chan os.Signal, 2)
+	ctx, _, cleanup := profile.SubscribeRunSignals(t.Context(), func(sig os.Signal) {
+		observed <- sig
+	})
 	defer cleanup()
 	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case <-ctx.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("SIGINT did not stop collection")
-	}
-	if !profile.IsNormalStop(ctx) {
-		t.Fatalf("cause=%v", context.Cause(ctx))
-	}
-
-	if mode == "terminate" {
-		if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
-			t.Fatal(err)
+	case sig := <-observed:
+		if sig != syscall.SIGINT {
+			t.Fatalf("observed %v, want SIGINT", sig)
 		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGINT was not handled")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("SIGINT canceled publication: %v", ctx.Err())
+	}
 
-		<-time.After(5 * time.Second)
-		t.Fatal("SIGTERM remained intercepted after collection stopped")
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			t.Fatalf("SIGTERM cause = %v", context.Cause(ctx))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGTERM did not cancel finalization")
 	}
 }

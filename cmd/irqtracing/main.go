@@ -15,12 +15,9 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -28,7 +25,6 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
-	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/version"
 )
@@ -51,8 +47,11 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		return err
 	}
 
+	ctx, signals, stopSignals := profile.SubscribeRunSignals(cliCtx.Context, nil)
+	defer stopSignals()
+
 	if cliCtx.Bool(cliFlagEnablePProf) {
-		server, err := serverpprof.StartDefault(cliCtx.Context)
+		server, err := serverpprof.StartDefault(ctx)
 		if err != nil {
 			return err
 		}
@@ -68,27 +67,6 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 	}
 	defer bpf.Shutdown()
 
-	ctx, cancel := context.WithCancelCause(cliCtx.Context)
-	defer cancel(nil)
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	go func() {
-		select {
-		case <-ctx.Done():
-		case sig := <-signals:
-			if cfg.output == profileroutput.FormatTUI {
-				// Release the collection listener before handing off to the viewer.
-				signal.Stop(signals)
-			}
-			if sig == syscall.SIGINT {
-				cancel(profile.ErrStopRequested)
-			} else {
-				cancel(context.Canceled)
-			}
-		}
-	}()
-
 	duration := time.Duration(cfg.duration) * time.Second
 	task := newIRQProfiler(&collector{
 		bpfPath:                  cfg.bpfPath,
@@ -100,6 +78,7 @@ func mainAction(cliCtx *cli.Context) (returnErr error) {
 		Duration:          duration,
 		OutputFormat:      cfg.output,
 		OutputDestination: cliCtx.String(cliFlagOutputPath),
+		Signals:           signals,
 	}, task)
 }
 

@@ -166,7 +166,7 @@ func (f *tuiFormatter) View(ctx context.Context) error {
 	if f.model == nil {
 		return nil
 	}
-	quit, err := flamegraphtui.Run(ctx, f.model)
+	quit, err := flamegraphtui.Run(ctx, f.model, flamegraphtui.CallerManagedSignals)
 	if err != nil {
 		return err
 	}

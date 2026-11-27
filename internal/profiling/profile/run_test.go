@@ -282,7 +282,6 @@ func TestRunCompletion(t *testing.T) {
 		duration         time.Duration
 		cause            error
 		finalBatch       bool
-		cancelBeforeRun  bool
 		cancelDuringStop bool
 		loopErr          error
 		stopErr          error
@@ -321,15 +320,10 @@ func TestRunCompletion(t *testing.T) {
 			wantErr: failure,
 		},
 		{
-			name:            "external cancellation with clean loop",
-			cancelBeforeRun: true,
-			wantErr:         context.Canceled,
-		},
-		{
-			name:            "external cancellation with final batch",
-			cancelBeforeRun: true,
-			finalBatch:      true,
-			wantErr:         context.Canceled,
+			name:       "external cancellation with final batch",
+			cause:      context.Canceled,
+			finalBatch: true,
+			wantErr:    context.Canceled,
 		},
 		{
 			name:    "read failure",
@@ -373,9 +367,6 @@ func TestRunCompletion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(t.Context())
 			defer cancel(nil)
-			if tc.cancelBeforeRun {
-				cancel(context.Canceled)
-			}
 
 			cfg, received := newRunOutput(t)
 			finalized := false
@@ -434,7 +425,7 @@ func TestRunCompletion(t *testing.T) {
 				t.Fatalf("Run() lost cancellation from loop error: %v", err)
 			}
 
-			if tc.cause == nil && !tc.cancelBeforeRun && !tc.cancelDuringStop && ctx.Err() != nil {
+			if tc.cause == nil && !tc.cancelDuringStop && ctx.Err() != nil {
 				t.Fatalf("runner canceled caller context: %v", ctx.Err())
 			}
 
@@ -850,6 +841,29 @@ type initializingProfiler struct {
 }
 
 func (p *initializingProfiler) Start(ctx context.Context) error { return p.start(ctx) }
+
+func TestRunSkipsStartupAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(errTerminationRequested)
+	collector := &initializingProfiler{start: func(context.Context) error {
+		t.Fatal("collector started after cancellation")
+		return nil
+	}}
+	path := filepath.Join(t.TempDir(), "reports")
+	err := Run(ctx, RunConfig{
+		OutputFormat:      output.FormatJSON,
+		OutputDestination: path + string(os.PathSeparator),
+	}, &ProfilerMeta{
+		Impl:              collector,
+		AggregationConfig: testAggregationConfig(),
+	})
+	if !errors.Is(err, errTerminationRequested) {
+		t.Fatalf("got %v, want SIGTERM cancellation", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("output initialized after cancellation: %v", err)
+	}
+}
 
 func TestRunDurationStartsAfterInitialization(t *testing.T) {
 	cfg, received := newRunOutput(t)
@@ -1309,6 +1323,40 @@ type viewingFormatter struct {
 
 func (f viewingFormatter) Complete(ctx context.Context) error { return f.complete(ctx) }
 func (f viewingFormatter) View(ctx context.Context) error     { return f.view(ctx) }
+
+func (f viewingFormatter) Close() error { return nil }
+
+func TestRunViewerOutlivesFinalizationBudget(t *testing.T) {
+	const budget = 100 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	collector := &loopProfiler{
+		read: func(context.Context, func(*pipeline.SampleBatch) error) error { return nil },
+	}
+	viewed := false
+	f := viewingFormatter{
+		complete: func(context.Context) error { return nil },
+		view: func(ctx context.Context) error {
+			if !collector.stopped {
+				t.Fatal("viewer opened before the collector stopped")
+			}
+			viewed = true
+			select {
+			case <-ctx.Done():
+				return context.Cause(ctx)
+			case <-time.After(2 * budget):
+				return ctx.Err()
+			}
+		},
+	}
+	err := executeProfiling(ctx, RunConfig{ID: "tui"}, &ProfilerMeta{
+		Impl: collector, AggregationConfig: testAggregationConfig(),
+	}, budget, f)
+	if err != nil || !viewed {
+		t.Fatalf("viewed=%t error=%v", viewed, err)
+	}
+}
 
 func TestCompleteOutputKeepsPreparationTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)

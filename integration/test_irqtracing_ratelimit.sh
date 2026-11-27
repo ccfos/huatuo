@@ -40,6 +40,15 @@ tracepoint_available irq softirq_entry || skip "irq/softirq_entry is unavailable
 
 mkdir -p "${IRQ_RATE_OUTPUT_DIR}"
 
+# Invalid object input must fail without waiting for a FIFO writer.
+readonly IRQ_RATE_OBJECT_FIFO="${IRQ_RATE_OUTPUT_DIR}/object.fifo"
+mkfifo "${IRQ_RATE_OBJECT_FIFO}"
+irq_rate_fifo_status=0
+timeout -k 1 5 "${IRQ_RATE_BIN}" --bpf-path "${IRQ_RATE_OBJECT_FIFO}" --duration 1 --output-format json --output-path "${IRQ_RATE_OUTPUT_DIR}/fifo.json" > "${IRQ_RATE_OUTPUT_DIR}/fifo.log" 2>&1 || irq_rate_fifo_status=$?
+assert_eq "${irq_rate_fifo_status}" 1 "IRQ FIFO exit code" || fatal "invalid BPF input did not fail promptly: $(cat "${IRQ_RATE_OUTPUT_DIR}/fifo.log")"
+grep -Fq 'must be a regular file' "${IRQ_RATE_OUTPUT_DIR}/fifo.log" || fatal "missing BPF file type error: $(cat "${IRQ_RATE_OUTPUT_DIR}/fifo.log")"
+[[ ! -e ${IRQ_RATE_OUTPUT_DIR}/fifo.json ]] || fatal "invalid BPF input produced a report"
+
 mapfile -t irq_rate_cpu_ids < <(profiler_allowed_cpu_ids)
 [[ ${#irq_rate_cpu_ids[@]} -ge 1 ]] || fatal "no allowed cpu in /proc/self/status"
 # Prefer a non-zero cpu because cpu 0 often runs container/host housekeeping.

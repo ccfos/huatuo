@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
 
 	"github.com/urfave/cli/v2"
 
@@ -40,8 +41,11 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := newSignalContext(cliCtx.Context, signalLog)
-	defer cancel()
+	ctx, signals, stopSignals := profile.SubscribeRunSignals(cliCtx.Context, func(sig os.Signal) {
+		fmt.Fprintf(signalLog, "[signal] caught signal: %s\n", sig)
+	})
+	defer stopSignals()
+
 	if implementation == profiling.ImplementationNative {
 		cleanup, err := initBpfManager(cfg.Provider.Duration)
 		if err != nil {
@@ -72,5 +76,6 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 		AggregationInterval: cfg.Provider.AggregationInterval,
 		OutputFormat:        cfg.Output.Format,
 		OutputDestination:   cfg.Output.Destination,
+		Signals:             signals,
 	}, meta)
 }

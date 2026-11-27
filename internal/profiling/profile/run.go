@@ -53,7 +53,11 @@ func run(
 	cfg RunConfig,
 	p *ProfilerMeta,
 	finalizationTimeout time.Duration,
-) (returnErr error) {
+) error {
+	if err := context.Cause(ctx); err != nil && !IsNormalStop(ctx) {
+		return err
+	}
+
 	cfg.ID = randomid.NewIfEmpty(cfg.ID)
 
 	formatter, err := factory.NewFormatter(output.Config{
@@ -66,6 +70,16 @@ func run(
 		return fmt.Errorf("create profiling formatter: %w", err)
 	}
 
+	return executeProfiling(ctx, cfg, p, finalizationTimeout, formatter)
+}
+
+func executeProfiling(
+	ctx context.Context,
+	cfg RunConfig,
+	p *ProfilerMeta,
+	finalizationTimeout time.Duration,
+	formatter output.Formatter,
+) (returnErr error) {
 	defer func() { returnErr = errors.Join(returnErr, formatter.Close()) }()
 
 	// Collection stop must not cancel aggregation or publication.
@@ -76,18 +90,25 @@ func run(
 	var finalMu sync.Mutex
 	var finalTimer *time.Timer
 	finished := false
-	beginFinalization := func() {
+	beginFinalization := func(cause error) {
 		finalMu.Lock()
 		defer finalMu.Unlock()
-		if finalTimer == nil && !finished {
-			finalTimer = time.AfterFunc(finalizationTimeout, func() {
-				finalMu.Lock()
-				defer finalMu.Unlock()
-				if finished {
-					return
-				}
-				cancelProcess(fmt.Errorf("profiling finalization timed out: %w", context.DeadlineExceeded))
-			})
+		if finalTimer != nil || finished {
+			return
+		}
+		if cfg.Signals != nil {
+			cfg.Signals.stopping.Store(true)
+		}
+		finalTimer = time.AfterFunc(finalizationTimeout, func() {
+			finalMu.Lock()
+			defer finalMu.Unlock()
+			if finished {
+				return
+			}
+			cancelProcess(fmt.Errorf("profiling finalization timed out: %w", context.DeadlineExceeded))
+		})
+		if cause != nil {
+			cancelCollection(cause)
 		}
 	}
 	endFinalization := func() error {
@@ -100,18 +121,21 @@ func run(
 		return context.Cause(processCtx)
 	}
 	defer func() { _ = endFinalization() }()
-	propagateCancellation := func() {
+	stopCollectionOrCancelRun := func() {
 		if IsNormalStop(ctx) {
-			beginFinalization()
-			cancelCollection(context.Cause(ctx))
+			beginFinalization(context.Cause(ctx))
 		} else {
 			cancelProcess(context.Cause(ctx))
 		}
 	}
-	stopPropagation := context.AfterFunc(ctx, propagateCancellation)
+	stopPropagation := context.AfterFunc(ctx, stopCollectionOrCancelRun)
 	defer stopPropagation()
-	if ctx.Err() != nil {
-		propagateCancellation()
+
+	if cfg.Signals != nil {
+		stopPropagation := context.AfterFunc(cfg.Signals.stopRequested, func() {
+			beginFinalization(ErrStopRequested)
+		})
+		defer stopPropagation()
 	}
 
 	pipelineConfig := pipeline.PipelineConfig{
@@ -126,6 +150,13 @@ func run(
 	}
 
 	pipe := pipeline.NewPipeline(&pipelineConfig)
+	if ctx.Err() != nil {
+		stopCollectionOrCancelRun()
+	}
+	if err := context.Cause(processCtx); err != nil {
+		return err
+	}
+
 	if err := p.Impl.Start(processCtx); err != nil {
 		return fmt.Errorf("start profiler: %w", err)
 	}
@@ -144,8 +175,7 @@ func run(
 	var timer *time.Timer
 	if cfg.Duration > 0 {
 		timer = time.AfterFunc(cfg.Duration, func() {
-			beginFinalization()
-			cancelCollection(ErrCollectionDurationElapsed)
+			beginFinalization(ErrCollectionDurationElapsed)
 		})
 	}
 
@@ -169,12 +199,12 @@ func run(
 	}
 	// Observe the caller synchronously before deciding whether final delivery is allowed.
 	if ctx.Err() != nil {
-		propagateCancellation()
+		stopCollectionOrCancelRun()
 	}
 
 	var finalErr error
 	if processCtx.Err() == nil {
-		beginFinalization()
+		beginFinalization(nil)
 		finalErr = p.Impl.Finalize(processCtx, enqueue)
 		if finalErr != nil {
 			cancelProcess(finalErr)
@@ -206,18 +236,22 @@ func run(
 	return completeOutput(processCtx, formatter, endFinalization)
 }
 
-// completeOutput keeps preparation within the finalization budget; only user-paced
-// viewing may outlive it. A failed preparation must never open a viewer.
-func completeOutput(ctx context.Context, formatter output.Formatter, beginViewing func() error) error {
+// completeOutput keeps cancellation active through output preparation and stops
+// the finalization timer before viewing. Failed preparation prevents viewing.
+func completeOutput(ctx context.Context, formatter output.Formatter, endFinalization func() error) error {
 	if err := formatter.Complete(ctx); err != nil {
 		return errors.Join(context.Cause(ctx), err)
 	}
 
 	if viewer, ok := formatter.(output.Viewer); ok {
-		if err := beginViewing(); err != nil {
+		if err := endFinalization(); err != nil {
 			return err
 		}
-		return viewer.View(ctx)
+		err := viewer.View(ctx)
+		if errors.Is(err, context.Canceled) && errors.Is(context.Cause(ctx), errTerminationRequested) {
+			return nil
+		}
+		return err
 	}
 
 	return nil
