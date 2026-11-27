@@ -23,7 +23,7 @@ weight: 6
 | `--freq`, `-F` | `99` | CPU | 每秒采样次数；Java 最大为 1000 |
 | `--output-path` | TUI 可省略 | 采集 | 本地文件、目录或 `stdout`，`remote-store` 时为 Unix socket。新目录路径以 `/` 结尾。其他格式需显式指定路径 |
 | `--output-format` | 必填 | 采集 | `collapsed`、`flamegraph`、`svg`、`tui`、`json`、`speedscope`、`chrometrace` 或 `remote-store`。`chrometrace` 需要带时间单位的采集 |
-| `--tui-report FILE` | 无 | 报告回看 | 打开已保存的终端火焰图报告 |
+| `--tui-open FILE` | 无 | 报告回看 | 打开已保存的终端火焰图报告 |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
 | `--tool-path` | 无 | Java、Python | 外部采集工具统一根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
@@ -39,17 +39,18 @@ weight: 6
 
 `--output-format=tui` 在采集完成后打开终端火焰图，需要交互终端。按 `v` 在火焰图、全部帧列表和 Top Table 之间循环。按 `r` 返回当前火焰图的根节点。Top Table 默认按 `Self` 降序，按 `s` 切换到 `Total` 降序。
 
-火焰图默认直接显示调用栈。在火焰图或全部帧列表按 `g`（Group by）设置分组字段。可以从 `cpu`、`comm`、`pid` 中选择，用逗号分隔，Enter 应用。例如输入 `cpu,comm` 会先按 CPU 分组，再在各 CPU 内按任务名分组。缺少所选标签的样本归入对应的 `字段=?` 组。按 Ctrl+U 再按 Enter 可清空分组，按 Esc 可取消编辑。
+火焰图默认直接显示调用栈。在火焰图或全部帧列表按 `g`（Group by）设置分组字段。可以从 `cpu`、`comm`、`pid` 中选择，用逗号分隔，Enter 应用。例如输入 `cpu,comm` 会先按 CPU 分组，再在各 CPU 内按任务名分组。回看 IRQ 报告时还可按 `irq_context`、`irq_type` 或 `irq_vector` 分组。缺少所选标签的样本归入对应的 `字段=?` 组。按 Ctrl+U 再按 Enter 可清空分组，按 Esc 可取消编辑。
 
 Top Table 统计整次采集。`Self` 只累加栈叶的权重，`Total` 按函数在调用栈中的每次出现累加权重，包含递归调用。
+选中函数后按 Enter，在全部帧列表中定位该函数的调用路径，按 `n` 跳到下一处匹配。
 
-用 `--output-path` 指定保存位置，按 `q` 退出后写入 gob 报告。指定文件时覆盖同一目标，指定目录时自动生成 `profile_*.gob`。省略路径或使用 `stdout`、`-` 时只打开查看器。
+用 `--output-path` 指定保存位置。采集结束后先写入 gob 报告并显示保存路径，再打开查看器。指定文件时覆盖同一目标。符号链接须指向已存在的普通文件，保存时替换目标文件并保留链接。指定目录时自动生成 `profile_*.gob`。省略路径或使用 `stdout`、`-` 时只打开查看器。 如果采集没有可显示的样本，命令会提示并成功退出，查看器不会打开，已有报告会保留。
 
 ```sh
-profiler --tui-report p.gob
+profiler --tui-open p.gob
 ```
 
-在交互终端单独使用 `--tui-report p.gob`，可打开路径 `p.gob` 的报告。回看要求使用 HuaTuo gob 报告，按文件头识别，文件扩展名可任选。请只打开来自可信来源的报告。
+在交互终端单独使用 `--tui-open p.gob`，可打开路径 `p.gob` 的报告。回看要求使用 HuaTuo gob 报告，按文件头识别，文件扩展名可任选。查看器会显示已知丢样的原因和数量。旧版报告的采集完整性显示为未知。请只打开来自可信来源的报告。
 
 ## 采集参数
 

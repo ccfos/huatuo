@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/profiling/formatter/json"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/remotestore"
 	"github.com/ccfos/huatuo/internal/profiling/formatter/speedscope"
+	tuioutput "github.com/ccfos/huatuo/internal/profiling/formatter/tui"
 )
 
 // NewFormatter initializes one task's output. The caller must Close it on every exit path.
@@ -35,7 +36,7 @@ func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	case output.FormatFlameGraph, output.FormatSVG:
 		return flamegraph.NewFormatter(cfg)
 	case output.FormatTUI:
-		return flamegraph.NewTUIFormatter(cfg)
+		return tuioutput.NewFormatter(cfg)
 	case output.FormatJSON:
 		return json.NewFormatter(cfg)
 	case output.FormatSpeedscope:

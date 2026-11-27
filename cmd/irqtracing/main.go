@@ -25,6 +25,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	serverpprof "github.com/ccfos/huatuo/internal/httpserver/pprof"
 	"github.com/ccfos/huatuo/internal/log"
+	profcli "github.com/ccfos/huatuo/internal/profiling/cli"
 	profile "github.com/ccfos/huatuo/internal/profiling/profile"
 	"github.com/ccfos/huatuo/internal/version"
 )
@@ -88,13 +89,19 @@ func main() {
 	app.Usage = "collect and export irq/softirq source and victim stack profiles"
 	app.Flags = appFlags()
 
-	app.Before = func(ctx *cli.Context) error {
+	app.Action = func(ctx *cli.Context) error {
+		if ctx.IsSet(profcli.TUIOpenFlagName) {
+			return profcli.RunTUIOpen(ctx)
+		}
+		if ctx.String(cliFlagBPFPath) == "" {
+			return fmt.Errorf("--bpf-path is required for collection")
+		}
 		if err := validateFlags(ctx); err != nil {
 			return err
 		}
 		log.SetOutput(ctx.App.ErrWriter)
 		log.SetLevel("warn")
-		return nil
+		return mainAction(ctx)
 	}
 
 	version.Wire(app, version.Seed{
@@ -104,7 +111,6 @@ func main() {
 		BuildTime: AppBuildTime,
 	})
 
-	app.Action = mainAction
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, "irqtracing:", err)
 		os.Exit(1)

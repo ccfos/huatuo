@@ -151,8 +151,7 @@ func runTUI(ctx context.Context, b bpf.BPF) error {
 		return fmt.Errorf("prepare perf TUI: %w", err)
 	}
 
-	_, err = flamegraphtui.Run(ctx, model, flamegraphtui.ViewerManagedSignals)
-	return err
+	return flamegraphtui.Run(ctx, model, flamegraphtui.ViewerManagedSignals)
 }
 
 func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {

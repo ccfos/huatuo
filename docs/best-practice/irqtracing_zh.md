@@ -44,7 +44,7 @@ source;source[raiser,NET_RX];raise_softirq_[k] 12
 victim;victim[worker(123),NET_RX];work 4
 ```
 
-在交互终端使用 `--output-format tui`，可在采集结束后浏览所有采集到的调用栈。默认合并相同调用栈的权重。省略 `--output-path` 时仅在终端查看，指定本地文件或目录后按 `q` 保存 gob 报告，再用 `profiler --tui-report FILE` 回看。
+在交互终端使用 `--output-format tui`，可在采集结束后浏览所有采集到的调用栈。默认合并相同调用栈的权重。按 `g` 可按 `irq_context`、`irq_type` 或 `irq_vector` 分组。实时查看和报告回看均会提示已知的丢样原因和数量。省略 `--output-path` 时仅在终端查看，指定本地文件或目录会在打开查看器前保存 gob 报告并显示路径，可在交互终端用 `irqtracing --tui-open FILE` 或 `profiler --tui-open FILE` 回看。 如果采集没有可显示的样本，命令会提示并成功退出，查看器不会打开，已有报告会保留。
 
 使用 `--output-format flamegraph` 或 `--output-format svg` 可直接输出 SVG 火焰图：
 

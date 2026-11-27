@@ -33,6 +33,14 @@ while (($#)); do
 done
 
 if [[ ${pprof_action} == stop && -n ${pprof_output} ]]; then
+	if [[ -n ${PPROF_FIXTURE_STOP_GATE:-} ]]; then
+		printf '%s\n' "$$" > "${PPROF_FIXTURE_STOP_GATE}.ready"
+		read -r < "${PPROF_FIXTURE_STOP_GATE}"
+	fi
+	if [[ ${PPROF_FIXTURE_EMPTY:-0} == 1 ]]; then
+		: > "${pprof_output}"
+		exit
+	fi
 	cat > "${pprof_output}" << 'SAMPLES'
 shared 2
 shared_[k] 3

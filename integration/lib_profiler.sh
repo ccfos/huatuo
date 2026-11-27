@@ -208,3 +208,82 @@ profiler_allowed_cpu_ids() {
   }
  }' /proc/self/status
 }
+
+profiler_pty_pid=""
+profiler_pty_start_time=""
+profiler_pty_driver_pid=""
+profiler_pty_input_fd=""
+
+profiler_pty_cleanup() {
+	if [[ -n ${profiler_pty_pid} ]] && ! process_exited "${profiler_pty_pid}" "${profiler_pty_start_time}"; then
+		stop_by_pid "${profiler_pty_pid}" 2 || true
+	fi
+	profiler_pty_pid=""
+	profiler_pty_start_time=""
+	stop_and_wait_by_pid "${profiler_pty_driver_pid}" 2 || true
+	profiler_pty_driver_pid=""
+	[[ -z ${profiler_pty_input_fd} ]] || exec {profiler_pty_input_fd}>&-
+	profiler_pty_input_fd=""
+}
+
+# script supplies the PTY; all scenario control and cleanup remain in Shell.
+profiler_pty_start() {
+	local prefix=$1 command
+	shift
+	profiler_pty_prefix="${prefix}"
+	cat > "${profiler_pty_prefix}.sh" << 'SHELL'
+set -euo pipefail
+source "${ROOT_DIR}/integration/lib.sh"
+stty cols 120 rows 32
+stty -g > "${PROFILER_PTY_PREFIX}.before"
+flamegraph_child_pid=""
+trap 'stop_and_wait_by_pid "${flamegraph_child_pid}" 2 || true' EXIT
+(
+	child_pid=${BASHPID}
+	child_start_time=$(process_start_time "${child_pid}")
+	printf '%s %s\n' "${child_pid}" "${child_start_time}" > "${PROFILER_PTY_PREFIX}.pid"
+	exec "$@"
+) < /dev/tty &
+flamegraph_child_pid=$!
+status=0
+wait "${flamegraph_child_pid}" || status=$?
+flamegraph_child_pid=""
+stty -g > "${PROFILER_PTY_PREFIX}.after"
+exit "${status}"
+SHELL
+	printf -v command '%q ' bash "${profiler_pty_prefix}.sh" "$@"
+	mkfifo "${profiler_pty_prefix}.in"
+	exec {profiler_pty_input_fd}<> "${profiler_pty_prefix}.in"
+	(
+		exec {profiler_pty_input_fd}>&-
+		exec env TERM=xterm-256color NO_COLOR=1 SHELL=/bin/bash \
+			PROFILER_PTY_PREFIX="${profiler_pty_prefix}" \
+			script -q -e -f -c "${command}" "${profiler_pty_prefix}.raw"
+	) < "${profiler_pty_prefix}.in" > "${profiler_pty_prefix}.console" 2>&1 &
+	profiler_pty_driver_pid=$!
+	wait_until 10 0.1 test -s "${profiler_pty_prefix}.pid" \
+		|| fatal "PTY did not start: $(cat "${profiler_pty_prefix}.console")"
+	read -r profiler_pty_pid profiler_pty_start_time < "${profiler_pty_prefix}.pid"
+}
+
+profiler_pty_wait() {
+	local expected_status=${1:-0} status=0
+	wait_until 10 0.1 process_exited "${profiler_pty_driver_pid}" \
+		|| fatal "TUI did not exit: $(cat "${profiler_pty_prefix}.raw")"
+	wait "${profiler_pty_driver_pid}" || status=$?
+	profiler_pty_driver_pid=""
+	exec {profiler_pty_input_fd}>&-
+	profiler_pty_input_fd=""
+	assert_eq "${status}" "${expected_status}" "TUI exit code" \
+		|| fatal "TUI failed: $(cat "${profiler_pty_prefix}.raw" "${profiler_pty_prefix}.console")"
+	assert_eq "$(process_exited "${profiler_pty_pid}" "${profiler_pty_start_time}" && echo 1 || echo 0)" 1 "TUI process released" \
+		|| fatal "command survived PTY driver exit: ${profiler_pty_pid}"
+	profiler_pty_pid=""
+}
+
+assert_profiler_pty_restored() {
+	local prefix=$1
+	[[ -s ${prefix}.after ]] \
+		&& cmp -s "${prefix}.before" "${prefix}.after" \
+		&& grep -Fq $'\033[?1049l' "${prefix}.raw"
+}

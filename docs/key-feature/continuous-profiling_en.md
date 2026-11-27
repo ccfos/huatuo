@@ -68,7 +68,7 @@ View results in Grafana or export them locally as SVG, folded stacks, or JSON fo
 
 Use `--output-format=tui` to open an interactive terminal flame graph after collection. Press `v` to cycle through the graph, the full frame list, and Top Table. In the graph, Up selects the parent, Down selects the first child or returns from a leaf to the root of the current view, and Left/Right select adjacent frames at the same depth. The frame list includes frames narrower than one terminal column. Up and Down move one row at a time in the list and Top Table.
 
-Enter zooms in, Backspace zooms out, `r` returns to the full graph, and `/` searches. Press `g` in the graph or frame list to group stacks by sample fields, such as `cpu,comm`. With a file or directory set via `--output-path`, pressing `q` saves a gob report that you can reopen by passing its path to `--tui-report`. Omit `--output-path` or use `stdout` or `-` for terminal viewing only.
+Enter zooms in, Backspace zooms out, `r` returns to the full graph, and `/` searches. Press `g` in the graph or frame list to group stacks by sample fields, such as `cpu,comm`. With a file or directory set via `--output-path`, capture saves a gob report before opening the viewer. You can reopen the report by passing its path to `--tui-open`. Omit `--output-path` or use `stdout` or `-` for terminal viewing only. If the capture has no displayable samples, the command prints a notice and exits successfully without opening the viewer or modifying any existing report.
 
 ### Collection windows
 

@@ -12,17 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package flamegraph
+// Package tui formats profiling windows for terminal viewing and gob replay.
+package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"math"
+	"os"
 	"slices"
+	"strings"
 
 	"github.com/ccfos/huatuo/internal/profiling/aggregation"
 	flamegraphtui "github.com/ccfos/huatuo/internal/profiling/flamegraph/tui"
 	output "github.com/ccfos/huatuo/internal/profiling/formatter"
 	profilewindow "github.com/ccfos/huatuo/internal/profiling/window"
+	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -31,14 +37,14 @@ type tuiFormatter struct {
 	aggregator  *aggregation.Aggregator
 	taskID      string
 	destination *output.LocalDestination // nil for terminal-only output
-	report      tuiReport
+	profile     tuiProfile
 	model       *flamegraphtui.Model
 }
 
 var _ output.Formatter = (*tuiFormatter)(nil)
 
-// NewTUIFormatter validates the terminal before collection starts.
-func NewTUIFormatter(cfg output.Config) (output.Formatter, error) {
+// NewFormatter validates the terminal before collection starts.
+func NewFormatter(cfg output.Config) (output.Formatter, error) {
 	if err := output.ValidateTUITerminal(); err != nil {
 		return nil, err
 	}
@@ -48,7 +54,6 @@ func NewTUIFormatter(cfg output.Config) (output.Formatter, error) {
 		taskID:     cfg.TaskID,
 	}
 	if cfg.Destination != "" {
-		cfg.Format = output.FormatTUI
 		destination, err := output.NewLocalDestination(cfg)
 		if err != nil {
 			return nil, err
@@ -67,7 +72,16 @@ func (f *tuiFormatter) Add(ctx context.Context, w *types.AggregationWindow) erro
 		return err
 	}
 
-	f.report.ProfileType = w.ProfileType
+	f.profile.ProfileType = w.ProfileType
+	for reason, count := range w.DroppedSamples {
+		if f.profile.DroppedSamples == nil {
+			f.profile.DroppedSamples = make(map[string]uint64)
+		}
+		if count > math.MaxUint64-f.profile.DroppedSamples[reason] {
+			return fmt.Errorf("dropped sample count for %q exceeds uint64", reason)
+		}
+		f.profile.DroppedSamples[reason] += count
+	}
 	return f.aggregator.AddProfile(ctx, &w.Aggregated)
 }
 
@@ -78,50 +92,79 @@ func (f *tuiFormatter) Complete(ctx context.Context) error {
 
 	aggregated := f.aggregator.Drain()
 	f.aggregator = nil
-	if len(aggregated.Samples) == 0 {
-		return nil
-	}
 
 	if err := output.ClampNegativeSamples(ctx, f.taskID, &aggregated); err != nil {
 		return err
 	}
 	var unit string
-	if f.report.ProfileType != "" {
-		metadata, err := profilewindow.Metadata(f.report.ProfileType)
+	if f.profile.ProfileType != "" {
+		metadata, err := profilewindow.Metadata(f.profile.ProfileType)
 		if err != nil {
 			return err
 		}
 		unit = metadata[2]
 	}
 
-	model, err := prepareViewer(ctx, &aggregated, unit)
+	f.profile.Version = tuiGobVersion
+	f.profile.Aggregated = aggregated
+	model, err := buildViewerModel(ctx, &f.profile, unit)
 	if err != nil {
 		return err
 	}
 	f.model = model
-	if model != nil && f.destination != nil {
-		f.report.Version = tuiReportVersion
-		f.report.Aggregated = aggregated
+	if model == nil {
+		fmt.Fprintln(os.Stderr, "No displayable profiling samples. No new report was saved.")
+		return nil
+	}
+	if f.destination != nil {
+		// A canceled save may still encode the immutable samples after Close.
+		profile := f.profile
+		path, err := f.destination.SaveAtomically(ctx, ".gob", func(w io.Writer) error {
+			return writeTUIGob(ctx, w, &profile)
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Saved profiling report to %s\n", path)
 	}
 	return nil
 }
 
-func prepareViewer(ctx context.Context, aggregated *types.AggregatedProfile, unit string) (*flamegraphtui.Model, error) {
+func buildViewerModel(ctx context.Context, profile *tuiProfile, unit string) (*flamegraphtui.Model, error) {
+	aggregated := &profile.Aggregated
 	tree, err := buildProfileTree(ctx, aggregated, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	// The drained or decoded samples remain immutable while the viewer uses them.
-	return tree.BuildProfileModel(unit, "", []string{"cpu", "comm", "pid"}, func(ctx context.Context, tags []string) (*flamegraphtui.StackTree, error) {
-		return buildProfileTree(ctx, aggregated, tags)
+	labelNames := []string{"cpu", "comm", "pid"}
+	if profile.ProfileType == profiling.ProfileTypeIRQTracingSample {
+		labelNames = append(labelNames, "irq_context", "irq_type", "irq_vector")
+	}
+	var summary string
+	if profile.Version == 1 {
+		summary = " | completeness unknown"
+	} else if len(profile.DroppedSamples) > 0 {
+		var counts []string
+		for _, reason := range []string{types.DropReasonCollection, types.DropReasonAggregationQueue} {
+			if count := profile.DroppedSamples[reason]; count > 0 {
+				counts = append(counts, fmt.Sprintf("%s=%d", reason, count))
+			}
+		}
+		if len(counts) > 0 {
+			summary = " | incomplete: " + strings.Join(counts, ", ")
+		}
+	}
+	return tree.BuildProfileModel(unit, summary, labelNames, func(ctx context.Context, groupLabelNames []string) (*flamegraphtui.StackTree, error) {
+		return buildProfileTree(ctx, aggregated, groupLabelNames)
 	})
 }
 
 func buildProfileTree(
 	ctx context.Context,
 	aggregated *types.AggregatedProfile,
-	tags []string,
+	groupLabelNames []string,
 ) (*flamegraphtui.StackTree, error) {
 	tree := flamegraphtui.NewStackTree(ctx)
 	var path []string
@@ -131,8 +174,8 @@ func buildProfileTree(
 		}
 
 		stack := frames
-		if len(tags) > 0 {
-			path = append(appendGroupLabels(path[:0], labels, tags), frames...)
+		if len(groupLabelNames) > 0 {
+			path = append(appendGroupLabels(path[:0], labels, groupLabelNames), frames...)
 			stack = path
 		}
 		return tree.Add(stack, weight)
@@ -144,19 +187,19 @@ func buildProfileTree(
 	return tree, nil
 }
 
-func appendGroupLabels(path []string, labels []types.ProfileLabel, tags []string) []string {
-	for _, tag := range tags {
+func appendGroupLabels(path []string, labels []types.ProfileLabel, groupLabelNames []string) []string {
+	for _, groupLabel := range groupLabelNames {
 		index := slices.IndexFunc(labels, func(label types.ProfileLabel) bool {
-			return label.Name == tag
+			return label.Name == groupLabel
 		})
 		switch {
 		case index < 0:
-			// Keep one level per tag, even for samples without that label.
-			path = append(path, tag+"=?")
-		case tag == "cpu":
-			path = append(path, tag+labels[index].StringValue)
+			// Keep one level per groupLabel, even for samples without that label.
+			path = append(path, groupLabel+"=?")
+		case groupLabel == "cpu":
+			path = append(path, groupLabel+labels[index].StringValue)
 		default:
-			path = output.DisplayLabels(path, labels[index:index+1])
+			path = append(path, output.DisplayLabel(&labels[index], labels))
 		}
 	}
 	return path
@@ -166,24 +209,12 @@ func (f *tuiFormatter) View(ctx context.Context) error {
 	if f.model == nil {
 		return nil
 	}
-	quit, err := flamegraphtui.Run(ctx, f.model, flamegraphtui.CallerManagedSignals)
-	if err != nil {
-		return err
-	}
-	if !quit || f.destination == nil {
-		return nil
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return f.destination.WriteAndClose(func(w io.Writer) error {
-		return writeTUIReport(w, &f.report)
-	})
+	return flamegraphtui.Run(ctx, f.model, flamegraphtui.CallerManagedSignals)
 }
 
 func (f *tuiFormatter) Close() error {
 	f.aggregator = nil
 	f.model = nil
-	f.report = tuiReport{}
+	f.profile = tuiProfile{}
 	return nil
 }

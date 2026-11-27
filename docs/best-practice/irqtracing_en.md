@@ -43,7 +43,7 @@ source;source[raiser,NET_RX];raise_softirq_[k] 12
 victim;victim[worker(123),NET_RX];work 4
 ```
 
-Use `--output-format tui` in an interactive terminal to explore all collected call stacks after collection. The viewer combines weights for identical stacks by default. Omit `--output-path` for terminal-only viewing, or specify a local file or directory and press `q` to save a gob report. Replay the saved file with `profiler --tui-report FILE`.
+Use `--output-format tui` in an interactive terminal to explore all collected call stacks after collection. The viewer combines weights for identical stacks by default. Press `g` to group by `irq_context`, `irq_type`, or `irq_vector`. Live and replay views display known sample-loss counts by reason. Omit `--output-path` for terminal-only viewing, or specify a local file or directory to save a gob report and print its path before the viewer opens. Replay the saved file with `irqtracing --tui-open FILE` or `profiler --tui-open FILE` in an interactive terminal. If the capture has no displayable samples, the command prints a notice and exits successfully without opening the viewer or modifying any existing report.
 
 Use `--output-format flamegraph` or `--output-format svg` to produce an SVG flame graph directly:
 

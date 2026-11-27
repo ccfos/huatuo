@@ -15,6 +15,7 @@
 package formatter
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -46,10 +47,33 @@ func NewLocalDestination(cfg Config) (*LocalDestination, error) {
 	if d.isStdout {
 		return d, nil
 	}
-	info, err := os.Stat(d.path)
+	stat := os.Stat
+	lookupPath := d.path
+	if d.format == FormatTUI {
+		stat = os.Lstat
+		if trimmed := strings.TrimRight(lookupPath, string(os.PathSeparator)); trimmed != "" {
+			lookupPath = trimmed
+		}
+	}
+	info, err := stat(lookupPath)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		resolvedPath, err := filepath.EvalSymlinks(lookupPath)
+		if err != nil {
+			return nil, fmt.Errorf("resolve profiling output link %q: %w", d.path, err)
+		}
+		info, err = os.Lstat(resolvedPath)
+		if err != nil {
+			return nil, fmt.Errorf("inspect profiling output link target %q: %w", resolvedPath, err)
+		}
+		if !info.Mode().IsRegular() || lookupPath != d.path {
+			return nil, fmt.Errorf("profiling output link %q must point to a regular file", d.path)
+		}
+		// Publish beside the resolved target so rename preserves the link.
+		d.path = resolvedPath
+	}
 	switch {
 	case err == nil:
-		if !info.IsDir() && !info.Mode().IsRegular() {
+		if !info.IsDir() && (!info.Mode().IsRegular() || strings.HasSuffix(d.path, string(os.PathSeparator))) {
 			return nil, fmt.Errorf("profiling output %q must be a file or directory", d.path)
 		}
 		d.isDirectory = info.IsDir()
@@ -89,8 +113,6 @@ func (d *LocalDestination) Open() (io.Writer, error) {
 			prefix, extension = "profile", ".chrometrace.json"
 		case FormatJSON:
 			prefix, extension = "profile", ".json"
-		case FormatTUI:
-			prefix, extension = "profile", ".gob"
 		}
 		file, err = createOutputFile(d.path, prefix, extension)
 	} else {
@@ -173,3 +195,91 @@ func writeAndClose(file io.WriteCloser, write func(io.Writer) error) error {
 
 // IsStdout reports whether empty output may be written without creating a file.
 func (d *LocalDestination) IsStdout() bool { return d.isStdout }
+
+// SaveAtomically publishes a completed file and returns its path. Cancellation
+// stops waiting for the writer before publication. A pending writer owns its
+// input until it finishes. Temporary file creation, removal and publication
+// use synchronous filesystem calls.
+func (d *LocalDestination) SaveAtomically(ctx context.Context, extension string, write func(io.Writer) error) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if d.isStdout || d.file != nil {
+		return "", fmt.Errorf("atomic profiling output requires an unopened file destination")
+	}
+
+	path := d.path
+	dir := filepath.Dir(path)
+	if d.isDirectory {
+		dir = path
+	}
+	file, err := os.CreateTemp(dir, ".profile_*"+extension)
+	if err != nil {
+		return "", fmt.Errorf("create temporary profiling output in %q: %w", dir, err)
+	}
+	tempPath := file.Name()
+	// On Linux unlink can remove the name while a canceled write still owns
+	// the file descriptor. Only the caller can publish the temporary file.
+	defer os.Remove(tempPath)
+
+	isDirectory := d.isDirectory
+	if isDirectory {
+		path = filepath.Join(dir, strings.TrimPrefix(filepath.Base(tempPath), "."))
+	}
+	prepared := make(chan error, 1)
+	go func() {
+		prepared <- prepareAtomicFile(ctx, file, path, isDirectory, write)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case err := <-prepared:
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	// Once publication begins, wait for the filesystem's result so the caller
+	// knows whether the report was committed.
+	if isDirectory {
+		err = os.Link(tempPath, path)
+	} else {
+		err = os.Rename(tempPath, path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("publish profiling output %q: %w", path, err)
+	}
+	return path, nil
+}
+
+func prepareAtomicFile(ctx context.Context, file *os.File, path string, isDirectory bool, write func(io.Writer) error) error {
+	if err := ctx.Err(); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := writeAndClose(file, write); err != nil {
+		return fmt.Errorf("write profiling output %q: %w", path, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if isDirectory {
+		return nil
+	}
+
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil && !info.Mode().IsRegular():
+		return fmt.Errorf("profiling output %q must be a regular file", path)
+	case err == nil:
+		if err := os.Chmod(file.Name(), info.Mode().Perm()); err != nil {
+			return fmt.Errorf("preserve profiling output permissions for %q: %w", path, err)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("inspect profiling output %q: %w", path, err)
+	}
+	return nil
+}

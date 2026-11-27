@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package flamegraph renders profiling windows as SVG or terminal flamegraphs.
+// Package flamegraph renders profiling windows as SVG flamegraphs.
 package flamegraph
 
 import (

@@ -62,11 +62,10 @@ const (
 	ViewerManagedSignals
 )
 
-// Run opens the terminal viewer and reports whether the user quit with q.
-// A nil model opens an empty viewer.
-func Run(ctx context.Context, model *Model, ownership SignalOwnership) (bool, error) {
+// Run opens the terminal viewer. A nil model opens an empty viewer.
+func Run(ctx context.Context, model *Model, ownership SignalOwnership) error {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return err
 	}
 	if model == nil {
 		model = newModel(treeNodes{{Label: "empty"}})
@@ -110,12 +109,11 @@ func Run(ctx context.Context, model *Model, ownership SignalOwnership) (bool, er
 		}()
 	}
 
-	finished, err := program.Run()
+	_, err := program.Run()
 	if ctx.Err() != nil && errors.Is(err, ctx.Err()) && errors.Is(err, tea.ErrProgramKilled) {
-		return false, ctx.Err()
+		return ctx.Err()
 	}
-	final, ok := finished.(Model)
-	return ok && final.quitWithQ, err
+	return err
 }
 
 // treeNodes lists a root and its descendants in preorder.
@@ -144,7 +142,6 @@ type Model struct {
 	grouping    *groupingState
 	topTable    *topTableModel
 	summary     string
-	quitWithQ   bool
 	quitting    bool
 	exactSearch bool
 }
@@ -190,7 +187,6 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 	name := key.String()
 	switch name {
 	case "q", "ctrl+c", "esc":
-		m.quitWithQ = name == "q"
 		m.quitting = true
 		return tea.Quit
 	case "v":

@@ -16,6 +16,7 @@
 package window
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -38,17 +39,30 @@ func Validate(w *types.AggregationWindow) error {
 		return fmt.Errorf("profiling window requires a positive timestamp and nonnegative duration")
 	}
 
-	for reason := range w.DroppedSamples {
+	if err := ValidateDropReasons(w.DroppedSamples); err != nil {
+		return err
+	}
+
+	return ValidateAggregated(context.Background(), a)
+}
+
+// ValidateDropReasons checks the supported reasons in decoded profiling data.
+func ValidateDropReasons(droppedSamples map[string]uint64) error {
+	for reason := range droppedSamples {
 		if reason != types.DropReasonCollection && reason != types.DropReasonAggregationQueue {
 			return fmt.Errorf("unsupported profiling drop reason %q", reason)
 		}
 	}
 
-	return ValidateAggregated(a)
+	return nil
 }
 
 // ValidateAggregated verifies the dictionary references in a decoded profile.
-func ValidateAggregated(a *types.AggregatedProfile) error {
+func ValidateAggregated(ctx context.Context, a *types.AggregatedProfile) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	const checkInterval = 1024
 	framesOverflow := uint64(len(a.Frames)) > math.MaxUint32
 	stacksOverflow := uint64(len(a.Stacks)) > math.MaxUint32
 	labelsOverflow := uint64(len(a.LabelSets)) > math.MaxUint32
@@ -57,11 +71,21 @@ func ValidateAggregated(a *types.AggregatedProfile) error {
 	}
 
 	for i, stack := range a.Stacks {
+		if i%checkInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if len(stack) == 0 {
 			return fmt.Errorf("profiling stack %d is empty; use id zero", i+1)
 		}
 
-		for _, id := range stack {
+		for index, id := range stack {
+			if index != 0 && index%checkInterval == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			if uint64(id) >= uint64(len(a.Frames)) {
 				return fmt.Errorf("profiling stack %d references missing frame %d", i+1, id)
 			}
@@ -69,6 +93,11 @@ func ValidateAggregated(a *types.AggregatedProfile) error {
 	}
 
 	for i, labels := range a.LabelSets {
+		if i%checkInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if len(labels) == 0 {
 			return fmt.Errorf("profiling label set %d is empty; use id zero", i+1)
 		}
@@ -79,6 +108,11 @@ func ValidateAggregated(a *types.AggregatedProfile) error {
 	}
 
 	for i := range a.Samples {
+		if i%checkInterval == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		s := &a.Samples[i]
 		missingUserStack := uint64(s.UserStack) > uint64(len(a.Stacks))
 		missingKernelStack := uint64(s.KernelStack) > uint64(len(a.Stacks))
@@ -88,7 +122,7 @@ func ValidateAggregated(a *types.AggregatedProfile) error {
 		}
 	}
 
-	return nil
+	return ctx.Err()
 }
 
 func Metadata(profileType string) ([]string, error) {

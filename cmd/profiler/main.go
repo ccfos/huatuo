@@ -23,6 +23,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	profcli "github.com/ccfos/huatuo/internal/profiling/cli"
 	"github.com/ccfos/huatuo/internal/version"
 )
 
@@ -45,8 +46,8 @@ func main() {
 		Flags:         appFlags,
 		After:         closeLogging,
 		Action: func(cliCtx *cli.Context) error {
-			if cliCtx.IsSet(tuiReportFlag) {
-				return runTUIReport(cliCtx)
+			if cliCtx.IsSet(profcli.TUIOpenFlagName) {
+				return profcli.RunTUIOpen(cliCtx)
 			}
 
 			if err := runBefore(cliCtx); err != nil {

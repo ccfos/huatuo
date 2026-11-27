@@ -14,9 +14,11 @@
 
 package main
 
-import "github.com/urfave/cli/v2"
+import (
+	"github.com/urfave/cli/v2"
 
-const tuiReportFlag = "tui-report"
+	profcli "github.com/ccfos/huatuo/internal/profiling/cli"
+)
 
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
@@ -96,7 +98,7 @@ var appFlags = []cli.Flag{
 	&cli.IntFlag{
 		Name:    "duration",
 		Aliases: []string{"d"},
-		Usage:   "Profiling duration in seconds",
+		Usage:   "Collection duration in seconds",
 		Value:   10,
 	},
 	&cli.StringFlag{
@@ -105,13 +107,10 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format: collapsed|flamegraph|svg|tui|json|speedscope|chrometrace|remote-store",
+		Usage: "Output format: collapsed (folded stacks), flamegraph (SVG, alias: svg), tui, json, speedscope, chrometrace, remote-store",
 		Value: "collapsed",
 	},
-	&cli.StringFlag{
-		Name:  tuiReportFlag,
-		Usage: "Open a saved profiler report from `FILE` in the terminal",
-	},
+	profcli.TUIOpenFlag(),
 	&cli.StringFlag{
 		Name:  "log-level",
 		Usage: "Log level: trace|debug|info|warn|error",

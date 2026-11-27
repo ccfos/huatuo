@@ -21,6 +21,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	profcli "github.com/ccfos/huatuo/internal/profiling/cli"
 	profileroutput "github.com/ccfos/huatuo/internal/profiling/formatter"
 	"github.com/ccfos/huatuo/internal/utils/cpuutil"
 	"github.com/ccfos/huatuo/pkg/profiling"
@@ -54,9 +55,8 @@ type irqTracingConfig struct {
 func appFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
-			Name:     cliFlagBPFPath,
-			Usage:    "path to the irqtracing BPF object file",
-			Required: true,
+			Name:  cliFlagBPFPath,
+			Usage: "path to the irqtracing BPF object file (required for collection)",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagCPUList,
@@ -65,7 +65,7 @@ func appFlags() []cli.Flag {
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
 			Value: 3,
-			Usage: "collect duration in seconds",
+			Usage: "Collection duration in seconds",
 		},
 		&cli.Uint64Flag{
 			Name:  cliFlagMaxEventsPerSecondPerCPU,
@@ -79,8 +79,9 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagOutputFormat,
 			Value: string(profileroutput.FormatCollapsed),
-			Usage: "Output format: collapsed|flamegraph|svg|tui|json|remote-store",
+			Usage: "Output format: collapsed (folded stacks), flamegraph (SVG, alias: svg), tui, json, remote-store",
 		},
+		profcli.TUIOpenFlag(),
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
 			Usage: "Profiling task ID; required when --output-format=remote-store",

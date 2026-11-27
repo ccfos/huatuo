@@ -127,6 +127,45 @@ func TestNewFormatterFormats(t *testing.T) {
 	}
 }
 
+func TestRenderKeepsSymbolsOutOfJavaScript(t *testing.T) {
+	symbol := `');alert(1);//<script>alert(2)</script>`
+	path := filepath.Join(t.TempDir(), "profile.svg")
+	f, err := factory.NewFormatter(output.Config{Format: output.FormatSVG, Destination: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	window := &types.AggregationWindow{Aggregated: types.AggregatedProfile{
+		Frames:  []types.ProfileFrame{{Name: "root"}, {Name: symbol}},
+		Stacks:  [][]uint32{{0, 1}},
+		Samples: []types.AggregatedSample{{UserStack: 1, Value: 1}},
+	}}
+	if err := f.Add(t.Context(), window); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Complete(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if strings.Contains(content, `onmouseover="s('`) ||
+		strings.Contains(content, "<script>alert(2)</script>") {
+		t.Fatalf("SVG embeds an untrusted symbol as executable markup: %s", content)
+	}
+
+	if !strings.Contains(content, `data-title="`) ||
+		!strings.Contains(content, "&lt;script&gt;alert(2)&lt;/script&gt;") {
+		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
+	}
+}
+
 func TestSubpackageConstructors(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

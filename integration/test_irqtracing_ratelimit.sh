@@ -62,6 +62,7 @@ irq_rate_flood_pid=""
 irq_rate_tool_pid=""
 
 cleanup() {
+	profiler_pty_cleanup
 	if [[ -n ${irq_rate_flood_pid} ]]; then
 		stop_by_pid "${irq_rate_flood_pid}" 2 || true
 		wait "${irq_rate_flood_pid}" 2> /dev/null || true
@@ -103,55 +104,38 @@ readonly IRQ_RATE_TOOL_DEADLINE=$((IRQ_RATE_DURATION + 30))
 assert_irqtracing_tui_requires_terminal() {
 	if "${IRQ_RATE_BIN}" --bpf-path "${IRQ_RATE_BPF}" --output-format tui \
 		< /dev/null > "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log" 2>&1; then
-		fatal "irqtracing accepted non-terminal input and output"
+		return 1
 	fi
-	grep -Fq 'tui output requires terminal stdin and stdout' "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log" \
-		|| fatal "expected a terminal requirement: $(< "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log")"
-}
-
-assert_irqtracing_terminal_restored() {
-	local prefix=$1
-	grep -Fq 'HUATUO tui flamegraph' "${prefix}.log" \
-		&& grep -Fq $'\e[?1049l' "${prefix}.log" \
-		&& [[ -s ${prefix}.after ]] \
-		&& cmp -s "${prefix}.before" "${prefix}.after" \
-		|| fatal "TUI did not open and restore the terminal: $(tail -n 30 "${prefix}.log")"
+	grep -Fq 'tui output requires terminal stdin and stdout' "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log"
 }
 
 run_irqtracing_tui() {
-	local prefix=$1 command input_fd status=0
-	shift
-	printf -v command '%q ' bash -ec '
-		stty rows 32 cols 120
-		stty -g > "$1"
-		after=$2
-		shift 2
-		"$@"
-		stty -g > "${after}"
-	' _ "${prefix}.before" "${prefix}.after" "$@"
-	mkfifo "${prefix}.in"
-	exec {input_fd}<> "${prefix}.in"
-	(
-		exec {input_fd}>&-
-		exec env TERM=xterm-256color NO_COLOR=1 SHELL=/bin/bash \
-			timeout -k 2 "${IRQ_RATE_TOOL_DEADLINE}" script -q -e -f -c "${command}" "${prefix}.log"
-	) < "${prefix}.in" > /dev/null 2>&1 &
-	irq_rate_tool_pid=$!
-	wait_until "${IRQ_RATE_TOOL_DEADLINE}" 0.1 grep -Esq '^value: [1-9][0-9]*  self:' "${prefix}.log" \
-		|| fatal "expected a TUI with nonzero sample weight: $(tail -n 30 "${prefix}.log")"
-	printf q >&"${input_fd}"
-	wait "${irq_rate_tool_pid}" || status=$?
-	irq_rate_tool_pid=""
-	exec {input_fd}>&-
-	assert_eq "${status}" 0 "TUI exit code" || fatal "TUI failed: $(tail -n 30 "${prefix}.log")"
-	assert_irqtracing_terminal_restored "${prefix}"
+	local prefix=$1 report=$2
+	shift 2
+	profiler_pty_start "${prefix}" "$@"
+	wait_until "${IRQ_RATE_TOOL_DEADLINE}" 0.1 grep -Esq '^value: [1-9][0-9]*  self:' "${prefix}.raw" \
+		|| fatal "expected a TUI with nonzero sample weight: $(tail -n 30 "${prefix}.raw")"
+	grep -Eq 'incomplete: collection=[1-9][0-9]*' "${prefix}.raw" \
+		|| fatal "IRQ TUI did not report collection loss: $(tail -n 30 "${prefix}.raw")"
+	[[ -s ${report} ]] || fatal "IRQ TUI report missing while viewer is open: ${report}"
+	printf g >&"${profiler_pty_input_fd}"
+	wait_until 5 0.1 grep -Fq 'group by:' "${prefix}.raw" \
+		|| fatal "IRQ grouping editor did not open: $(tail -n 30 "${prefix}.raw")"
+	printf 'irq_context,irq_vector\r' >&"${profiler_pty_input_fd}"
+	wait_until 5 0.1 grep -Fq 'groups: irq_context,irq_vector' "${prefix}.raw" \
+		|| fatal "IRQ grouping did not apply: $(tail -n 30 "${prefix}.raw")"
+	printf q >&"${profiler_pty_input_fd}"
+	profiler_pty_wait
+	assert_profiler_pty_restored "${prefix}" \
+		|| fatal "TUI did not restore the terminal: $(tail -n 30 "${prefix}.raw")"
 }
 
 irqtracing_tui_weight() {
 	awk '/^value: [1-9][0-9]*  self:/ { print $2; exit }' "$1"
 }
 
-assert_irqtracing_tui_requires_terminal
+assert_irqtracing_tui_requires_terminal \
+	|| fatal "expected TUI terminal requirement: $(< "${IRQ_RATE_OUTPUT_DIR}/non-terminal.log")"
 log_info "irqtracing: flood cpu ${IRQ_RATE_CPU_ID}, expect collection loss and a profile"
 
 rm -f "${IRQ_RATE_FLOOD_READY}"
@@ -203,19 +187,25 @@ assert_irqtracing_dropped_samples() {
 assert_irqtracing_dropped_samples "${IRQ_RATE_OUTPUT_DIR}/result.json" "${IRQ_RATE_OUTPUT_DIR}/err.txt" \
 	|| fatal "IRQ loss assertions failed; inspect ${IRQ_RATE_OUTPUT_DIR}"
 
-readonly IRQTRACING_REPORT="${IRQ_RATE_OUTPUT_DIR}/profile.gob"
-run_irqtracing_tui "${IRQ_RATE_OUTPUT_DIR}/capture" "${IRQ_RATE_BIN}" \
+readonly IRQ_RATE_REPORT="${IRQ_RATE_OUTPUT_DIR}/profile.gob"
+run_irqtracing_tui "${IRQ_RATE_OUTPUT_DIR}/capture" "${IRQ_RATE_REPORT}" "${IRQ_RATE_BIN}" \
 	--bpf-path "${IRQ_RATE_BPF}" --cpu-list "${IRQ_RATE_CPU_ID}" --duration "${IRQ_RATE_DURATION}" \
 	--max-events-per-second-per-cpu "${IRQ_RATE_MAX_EVENTS_PER_SECOND_PER_CPU}" \
-	--output-format tui --output-path "${IRQTRACING_REPORT}"
+	--output-format tui --output-path "${IRQ_RATE_REPORT}"
 kill "${irq_rate_flood_pid}" 2> /dev/null || true
 wait "${irq_rate_flood_pid}" || true
 irq_rate_flood_pid=""
 
-assert_eq "$(test -s "${IRQTRACING_REPORT}" && echo 1 || echo 0)" 1 "TUI report saved by q" \
-	|| fatal "irqtracing did not save ${IRQTRACING_REPORT}"
-run_irqtracing_tui "${IRQ_RATE_OUTPUT_DIR}/replay" "${IRQ_RATE_PROFILER_BIN}" --tui-report "${IRQTRACING_REPORT}"
-assert_eq "$(irqtracing_tui_weight "${IRQ_RATE_OUTPUT_DIR}/replay.log")" \
-	"$(irqtracing_tui_weight "${IRQ_RATE_OUTPUT_DIR}/capture.log")" "replayed IRQ sample weight" \
-	|| fatal "profiler did not replay the expected IRQ profile"
+assert_eq "$(test -s "${IRQ_RATE_REPORT}" && echo 1 || echo 0)" 1 "TUI report saved before viewing" \
+	|| fatal "irqtracing did not save ${IRQ_RATE_REPORT}"
+for irq_rate_replay_bin in "${IRQ_RATE_BIN}" "${IRQ_RATE_PROFILER_BIN}"; do
+	irq_rate_replay="${IRQ_RATE_OUTPUT_DIR}/replay-${irq_rate_replay_bin##*/}"
+	run_irqtracing_tui "${irq_rate_replay}" "${IRQ_RATE_REPORT}" "${irq_rate_replay_bin}" --tui-open "${IRQ_RATE_REPORT}"
+	assert_eq "$(irqtracing_tui_weight "${irq_rate_replay}.raw")" \
+		"$(irqtracing_tui_weight "${IRQ_RATE_OUTPUT_DIR}/capture.raw")" "replayed IRQ sample weight" \
+		|| fatal "${irq_rate_replay_bin} did not replay the expected IRQ profile"
+	assert_eq "$(grep -om1 -E 'collection=[0-9]+' "${irq_rate_replay}.raw")" \
+		"$(grep -om1 -E 'collection=[0-9]+' "${IRQ_RATE_OUTPUT_DIR}/capture.raw")" "replayed IRQ collection loss" \
+		|| fatal "${irq_rate_replay_bin} did not replay the expected IRQ loss"
+done
 log_info "PASS"

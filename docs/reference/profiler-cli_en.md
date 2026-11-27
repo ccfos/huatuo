@@ -23,7 +23,7 @@ Specify `--output-format` explicitly when collecting samples. You can omit `--ou
 | `--freq`, `-F` | `99` | CPU | Samples per second; Java maximum: 1000 |
 | `--output-path` | Optional for TUI | Collection | Local file, directory, or `stdout`. Use a Unix socket for `remote-store`. End new directory paths with `/`. Specify a path explicitly for other formats |
 | `--output-format` | Required | Collection | `collapsed`, `flamegraph`, `svg`, `tui`, `json`, `speedscope`, `chrometrace` or `remote-store`. `chrometrace` requires a time-based profile |
-| `--tui-report FILE` | None | Report replay | Open a saved terminal flame graph report |
+| `--tui-open FILE` | None | Report replay | Open a saved terminal flame graph report |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collection child processes; `0` is unlimited |
 | `--tool-path` | None | Java, Python | Shared root directory for external tools; required |
 | `--binary-match-path` | None | Java, Python | Match target container processes by executable path |
@@ -39,17 +39,18 @@ These pprof endpoints describe the profiler process's own Go runtime, not the `-
 
 `--output-format=tui` opens the flame graph in an interactive terminal after collection. Press `v` to cycle through the flame graph, the full frame list, and Top Table. Press `r` to return to the root of the current flame graph. Top Table sorts by descending `Self` by default. Press `s` to switch to descending `Total`.
 
-The flame graph starts with call stacks alone. Press `g` (Group by) in the graph or frame list to enter a comma-separated list of `cpu`, `comm`, and `pid` fields, then press Enter to apply it. For example, `cpu,comm` groups by CPU, then by task name within each CPU. A missing label appears as `field=?`. Press Ctrl+U then Enter to clear the grouping, or Esc to cancel editing.
+The flame graph starts with call stacks alone. Press `g` (Group by) in the graph or frame list to enter a comma-separated list of `cpu`, `comm`, and `pid` fields, then press Enter to apply it. For example, `cpu,comm` groups by CPU, then by task name within each CPU. When replaying an IRQ report, you can also group by `irq_context`, `irq_type`, or `irq_vector`. A missing label appears as `field=?`. Press Ctrl+U then Enter to clear the grouping, or Esc to cancel editing.
 
 Top Table covers the entire collection. `Self` counts weight at the stack leaf. `Total` counts weight for every occurrence of the function in a stack, including recursive calls.
+Select a function and press Enter to find its call paths in the full frame list. Press `n` to jump to the next match.
 
-Use `--output-path` to save a gob report when you exit with `q`. A file path replaces the existing result at that path. A directory gets an automatically named `profile_*.gob` file. Omit the path or use `stdout` or `-` for terminal viewing only.
+With `--output-path` set to a file or directory, the profiler saves the gob report and prints its path before opening the viewer. A file path replaces the existing result. A symbolic link must point to an existing regular file, which is replaced while preserving the link. A directory gets an automatically named `profile_*.gob` file. Omit the path or use `stdout` or `-` for terminal viewing only. If the capture has no displayable samples, the command prints a notice and exits successfully without opening the viewer or modifying any existing report.
 
 ```sh
-profiler --tui-report p.gob
+profiler --tui-open p.gob
 ```
 
-`--tui-report p.gob` opens the report at `p.gob` in an interactive terminal. Use this option on its own. Replay requires a HuaTuo gob report and identifies it by its file header, regardless of the filename extension. Open reports only from trusted sources.
+`--tui-open p.gob` opens the report at `p.gob` in an interactive terminal. Use this option on its own. Replay requires a HuaTuo gob report and identifies it by its file header, regardless of the filename extension. The viewer displays known sample-loss counts by reason. Older reports show unknown completeness. Open reports only from trusted sources.
 
 ## Collection
 

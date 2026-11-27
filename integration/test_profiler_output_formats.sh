@@ -19,29 +19,21 @@
 # are outside this output-contract test.
 set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_profiler.sh"
 
 readonly OUTPUT_FORMATS_TOOL_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/tools"
 readonly OUTPUT_FORMATS_CLASSES_DIR="${HUATUO_BAMAI_TEST_TMPDIR}/classes"
 readonly OUTPUT_FORMATS_TARGET_LOG="${HUATUO_BAMAI_TEST_TMPDIR}/target.log"
 readonly OUTPUT_FORMATS_TUI_REPORT="${HUATUO_BAMAI_TEST_TMPDIR}/profile.gob"
+readonly OUTPUT_FORMATS_TUI_REPORT_LINK="${HUATUO_BAMAI_TEST_TMPDIR}/report-link.gob"
 
 require_commands java javac jq python3 timeout script stty mkfifo
 
 target_pid=""
-flamegraph_tui_pid=""
-flamegraph_tui_start_time=""
-flamegraph_tui_driver_pid=""
-flamegraph_tui_input_fd=""
+output_formats_stop_pid=""
 cleanup() {
-	if [[ -n ${flamegraph_tui_pid} ]] && ! process_exited "${flamegraph_tui_pid}" "${flamegraph_tui_start_time}"; then
-		stop_by_pid "${flamegraph_tui_pid}" 2 || true
-	fi
-	flamegraph_tui_pid=""
-	flamegraph_tui_start_time=""
-	stop_and_wait_by_pid "${flamegraph_tui_driver_pid}" 2 || true
-	flamegraph_tui_driver_pid=""
-	[[ -z ${flamegraph_tui_input_fd} ]] || exec {flamegraph_tui_input_fd}>&-
-	flamegraph_tui_input_fd=""
+	profiler_pty_cleanup
+	stop_by_pid "${output_formats_stop_pid}" 2 || true
 	[[ -n ${target_pid} ]] && stop_by_pid "${target_pid}" 5 || true
 }
 trap cleanup EXIT
@@ -112,79 +104,17 @@ assert_chrometrace_output() {
 		|| fatal "unexpected Chrome Trace output: $(cat "${output}")"
 }
 
-# script supplies the PTY; all scenario control and cleanup remain in Shell.
-start_flamegraph_tui() {
-	local scenario=$1 command
-	shift
-	flamegraph_tui_prefix="${HUATUO_BAMAI_TEST_TMPDIR}/${scenario}"
-	cat > "${flamegraph_tui_prefix}.sh" << 'SHELL'
-set -euo pipefail
-source "${ROOT_DIR}/integration/lib.sh"
-stty cols 120 rows 32
-stty -g > "${FLAMEGRAPH_TUI_PREFIX}.before"
-flamegraph_child_pid=""
-trap 'stop_and_wait_by_pid "${flamegraph_child_pid}" 2 || true' EXIT
-(
-	child_pid=${BASHPID}
-	child_start_time=$(process_start_time "${child_pid}")
-	printf '%s %s\n' "${child_pid}" "${child_start_time}" > "${FLAMEGRAPH_TUI_PREFIX}.pid"
-	exec "$@"
-) < /dev/tty &
-flamegraph_child_pid=$!
-status=0
-wait "${flamegraph_child_pid}" || status=$?
-flamegraph_child_pid=""
-stty -g > "${FLAMEGRAPH_TUI_PREFIX}.after"
-exit "${status}"
-SHELL
-	printf -v command '%q ' bash "${flamegraph_tui_prefix}.sh" "${ROOT_DIR}/_output/bin/profiler" "$@"
-	mkfifo "${flamegraph_tui_prefix}.in"
-	exec {flamegraph_tui_input_fd}<> "${flamegraph_tui_prefix}.in"
-	(
-		exec {flamegraph_tui_input_fd}>&-
-		exec env TERM=xterm-256color NO_COLOR=1 SHELL=/bin/bash \
-			FLAMEGRAPH_TUI_PREFIX="${flamegraph_tui_prefix}" \
-			script -q -e -f -c "${command}" "${flamegraph_tui_prefix}.raw"
-	) < "${flamegraph_tui_prefix}.in" > "${flamegraph_tui_prefix}.console" 2>&1 &
-	flamegraph_tui_driver_pid=$!
-	wait_until 10 0.1 test -s "${flamegraph_tui_prefix}.pid" \
-		|| fatal "profiler PTY did not start: $(cat "${flamegraph_tui_prefix}.console")"
-	read -r flamegraph_tui_pid flamegraph_tui_start_time < "${flamegraph_tui_prefix}.pid"
-}
-
-assert_flamegraph_tui_viewed_for() {
-	local started=$1 duration=$2
-	if process_exited "${flamegraph_tui_pid}" "${flamegraph_tui_start_time}"; then
-		fatal "profiler TUI exited before ${duration}s: $(cat "${flamegraph_tui_prefix}.raw")"
-	fi
-	((SECONDS - started >= duration))
-}
-
-assert_flamegraph_tui_exit() {
-	local expected_status=${1:-0} status=0
-	wait_until 10 0.1 process_exited "${flamegraph_tui_driver_pid}" \
-		|| fatal "profiler TUI did not exit: $(cat "${flamegraph_tui_prefix}.raw")"
-	wait "${flamegraph_tui_driver_pid}" || status=$?
-	flamegraph_tui_driver_pid=""
-	exec {flamegraph_tui_input_fd}>&-
-	flamegraph_tui_input_fd=""
-	assert_eq "${status}" "${expected_status}" "profiler TUI exit code" \
-		|| fatal "profiler TUI failed: $(cat "${flamegraph_tui_prefix}.raw" "${flamegraph_tui_prefix}.console")"
-	assert_eq "$(process_exited "${flamegraph_tui_pid}" "${flamegraph_tui_start_time}" && echo 1 || echo 0)" 1 "profiler TUI process released" \
-		|| fatal "profiler survived PTY driver exit: ${flamegraph_tui_pid}"
-	flamegraph_tui_pid=""
-	assert_eq "$(cat "${flamegraph_tui_prefix}.after")" "$(cat "${flamegraph_tui_prefix}.before")" "profiler TUI terminal settings restored" \
-		|| fatal "profiler TUI left the terminal in raw mode"
-	assert_eq "$(grep -Fq $'\033[?1049l' "${flamegraph_tui_prefix}.raw" && echo 1 || echo 0)" 1 "profiler TUI alternate screen restored" \
-		|| fatal "profiler TUI did not leave the alternate screen"
-	sed -E $'s/\033\\[[0-?]*[ -/]*[@-~]//g' "${flamegraph_tui_prefix}.raw" > "${flamegraph_tui_prefix}.log"
-	assert_log_has_no_failure "${flamegraph_tui_prefix}.log" "profiler TUI"
+finish_flamegraph_tui() {
+	profiler_pty_wait "$@"
+	assert_profiler_pty_restored "${profiler_pty_prefix}" \
+		|| fatal "profiler TUI did not restore the terminal: $(tail -n 30 "${profiler_pty_prefix}.raw")"
+	sed -E $'s/\033\\[[0-?]*[ -/]*[@-~]//g' "${profiler_pty_prefix}.raw" > "${profiler_pty_prefix}.log"
+	assert_log_has_no_failure "${profiler_pty_prefix}.log" "profiler TUI"
 }
 
 assert_flamegraph_tui_samples() {
-	grep -Fq 'shared' "${flamegraph_tui_prefix}.log" \
-		&& grep -Fq 'value: 100000000 ' "${flamegraph_tui_prefix}.log" \
-		|| fatal "profiler TUI lost fixture frames or sample weight: $(cat "${flamegraph_tui_prefix}.log")"
+	grep -Fq 'shared' "${profiler_pty_prefix}.log" \
+		&& grep -Fq 'value: 100000000 ' "${profiler_pty_prefix}.log"
 }
 
 mkdir -p "${OUTPUT_FORMATS_TOOL_DIR}/bin" "${OUTPUT_FORMATS_TOOL_DIR}/lib" "${OUTPUT_FORMATS_CLASSES_DIR}"
@@ -241,50 +171,90 @@ grep -Fq -- "--output-format=chrometrace needs a time-based profile" "${rejected
 [[ ! -e ${rejected_output} ]] \
 	|| fatal "rejected memory/chrometrace run created ${rejected_output}"
 
-# User-paced viewing must survive the 30-second collection finalization budget.
-tui_capture_args=(
+capture_args=(
 	--type cpu --language java --pid "${target_pid}"
 	--tool-path "${OUTPUT_FORMATS_TOOL_DIR}"
-	--freq 100 --aggr-interval 1 --log-level info --output-format tui
+	--freq 100 --aggr-interval 1 --log-level info
 )
-start_flamegraph_tui tui "${tui_capture_args[@]}" --duration 1 --output-path "${OUTPUT_FORMATS_TUI_REPORT}"
-wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${flamegraph_tui_prefix}.raw" \
-	|| fatal "profiler did not open the terminal viewer: $(cat "${flamegraph_tui_prefix}.raw")"
-printf v >&"${flamegraph_tui_input_fd}"
-wait_until 5 0.1 grep -q 'view: all frames' "${flamegraph_tui_prefix}.raw" \
+: > "${OUTPUT_FORMATS_TUI_REPORT}"
+ln -s profile.gob "${OUTPUT_FORMATS_TUI_REPORT_LINK}"
+profiler_pty_start "${HUATUO_BAMAI_TEST_TMPDIR}/tui" "${ROOT_DIR}/_output/bin/profiler" "${capture_args[@]}" --output-format tui --duration 1 --output-path "${OUTPUT_FORMATS_TUI_REPORT_LINK}"
+wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${profiler_pty_prefix}.raw" \
+	|| fatal "profiler did not open the terminal viewer: $(cat "${profiler_pty_prefix}.raw")"
+[[ -L ${OUTPUT_FORMATS_TUI_REPORT_LINK} && -s ${OUTPUT_FORMATS_TUI_REPORT} ]] \
+	|| fatal "profiler did not preserve the report link and update its target before viewing"
+grep -Fq "Saved profiling report to ${OUTPUT_FORMATS_TUI_REPORT}" "${profiler_pty_prefix}.raw" \
+	|| fatal "profiler did not print the report path"
+printf v >&"${profiler_pty_input_fd}"
+wait_until 5 0.1 grep -q 'view: all frames' "${profiler_pty_prefix}.raw" \
 	|| fatal "profiler TUI did not expose the all-frames view"
-# SECONDS has one-second resolution; 32 ticks ensure over 30 actual seconds.
-wait_until 36 1 assert_flamegraph_tui_viewed_for "${SECONDS}" 32 \
-	|| fatal "profiler TUI viewing window did not complete"
-printf q >&"${flamegraph_tui_input_fd}"
-assert_flamegraph_tui_exit
-assert_flamegraph_tui_samples
-[[ -s ${OUTPUT_FORMATS_TUI_REPORT} ]] || fatal "profiler did not save the TUI report after q"
+printf '\033' >&"${profiler_pty_input_fd}"
+finish_flamegraph_tui
+assert_flamegraph_tui_samples || fatal "profiler TUI lost fixture frames or sample weight"
+[[ -s ${OUTPUT_FORMATS_TUI_REPORT} ]] || fatal "profiler report missing after Esc"
 
-start_flamegraph_tui tui-replay --tui-report "${OUTPUT_FORMATS_TUI_REPORT}"
-wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${flamegraph_tui_prefix}.raw" \
-	|| fatal "profiler did not replay the saved TUI report: $(cat "${flamegraph_tui_prefix}.raw")"
-printf q >&"${flamegraph_tui_input_fd}"
-assert_flamegraph_tui_exit
-assert_flamegraph_tui_samples
+profiler_pty_start "${HUATUO_BAMAI_TEST_TMPDIR}/tui-replay" "${ROOT_DIR}/_output/bin/profiler" --tui-open "${OUTPUT_FORMATS_TUI_REPORT_LINK}"
+wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${profiler_pty_prefix}.raw" \
+	|| fatal "profiler did not replay the saved TUI report: $(cat "${profiler_pty_prefix}.raw")"
+printf q >&"${profiler_pty_input_fd}"
+finish_flamegraph_tui
+assert_flamegraph_tui_samples || fatal "profiler TUI lost fixture frames or sample weight"
 
 # A sampling stop must preserve final samples and later permit external TUI exit.
-for exit_signal in TERM HUP QUIT; do
-	start_flamegraph_tui "tui-exit-${exit_signal}" "${tui_capture_args[@]}" --duration 60
-	wait_until 10 0.1 grep -q 'data reading loop started' "${flamegraph_tui_prefix}.raw" \
-		|| fatal "profiler collection did not become ready: $(cat "${flamegraph_tui_prefix}.raw")"
-	kill -INT "${flamegraph_tui_pid}"
-	wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${flamegraph_tui_prefix}.raw" \
-		|| fatal "SIGINT did not publish the final TUI: $(cat "${flamegraph_tui_prefix}.raw")"
-	kill "-${exit_signal}" "${flamegraph_tui_pid}"
+for exit_signal in INT TERM HUP QUIT; do
+	profiler_pty_start "${HUATUO_BAMAI_TEST_TMPDIR}/tui-exit-${exit_signal}" "${ROOT_DIR}/_output/bin/profiler" "${capture_args[@]}" --output-format tui --duration 60
+	wait_until 10 0.1 grep -q 'data reading loop started' "${profiler_pty_prefix}.raw" \
+		|| fatal "profiler collection did not become ready: $(cat "${profiler_pty_prefix}.raw")"
+	kill -INT "${profiler_pty_pid}"
+	wait_until 10 0.1 grep -q 'HUATUO tui flamegraph' "${profiler_pty_prefix}.raw" \
+		|| fatal "SIGINT did not publish the final TUI: $(cat "${profiler_pty_prefix}.raw")"
+	kill "-${exit_signal}" "${profiler_pty_pid}"
 	if [[ ${exit_signal} == TERM ]]; then
-		assert_flamegraph_tui_exit
+		finish_flamegraph_tui
 	else
-		assert_flamegraph_tui_exit 1
-		grep -Fq 'Error: context canceled' "${flamegraph_tui_prefix}.log" \
-			|| fatal "SIG${exit_signal} did not cancel the TUI: $(cat "${flamegraph_tui_prefix}.log")"
+		finish_flamegraph_tui 1
+		grep -Fq 'Error: context canceled' "${profiler_pty_prefix}.log" \
+			|| fatal "SIG${exit_signal} did not cancel the TUI: $(cat "${profiler_pty_prefix}.log")"
 	fi
-	assert_flamegraph_tui_samples
+	assert_flamegraph_tui_samples || fatal "profiler TUI lost fixture frames or sample weight"
+done
+
+readonly OUTPUT_FORMATS_EXISTING_REPORT="${HUATUO_BAMAI_TEST_TMPDIR}/existing.gob"
+cp "${OUTPUT_FORMATS_TUI_REPORT}" "${OUTPUT_FORMATS_EXISTING_REPORT}"
+readonly OUTPUT_FORMATS_EMPTY_REPORT="${HUATUO_BAMAI_TEST_TMPDIR}/empty.gob"
+for empty_report in "${OUTPUT_FORMATS_EMPTY_REPORT}" "${OUTPUT_FORMATS_TUI_REPORT_LINK}"; do
+	PPROF_FIXTURE_EMPTY=1 profiler_pty_start "${HUATUO_BAMAI_TEST_TMPDIR}/tui-empty-${empty_report##*/}" "${ROOT_DIR}/_output/bin/profiler" "${capture_args[@]}" --output-format tui --duration 1 --output-path "${empty_report}"
+	profiler_pty_wait
+	grep -Fq 'No displayable profiling samples' "${profiler_pty_prefix}.raw" || fatal "profiler did not report empty TUI capture: $(cat "${profiler_pty_prefix}.raw")"
+	if grep -Fq 'HUATUO tui flamegraph' "${profiler_pty_prefix}.raw"; then
+		fatal "profiler opened the viewer for an empty capture"
+	fi
+	cmp -s "${profiler_pty_prefix}.before" "${profiler_pty_prefix}.after" || fatal "empty capture changed terminal settings"
+done
+[[ ! -e ${OUTPUT_FORMATS_EMPTY_REPORT} ]] || fatal "empty capture created a report"
+[[ -L ${OUTPUT_FORMATS_TUI_REPORT_LINK} ]] || fatal "empty capture replaced the report link"
+cmp -s "${OUTPUT_FORMATS_TUI_REPORT}" "${OUTPUT_FORMATS_EXISTING_REPORT}" || fatal "empty capture replaced the previous report"
+
+# A second signal must cancel the sampler's blocked finalization and release it.
+for output_format in json tui; do
+	stop_gate="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}-asprof-stop"
+	abort_output="${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}-abort-output"
+	cp "${OUTPUT_FORMATS_EXISTING_REPORT}" "${abort_output}"
+	mkfifo "${stop_gate}"
+	PPROF_FIXTURE_STOP_GATE="${stop_gate}" profiler_pty_start "${HUATUO_BAMAI_TEST_TMPDIR}/${output_format}-abort-finalization" "${ROOT_DIR}/_output/bin/profiler" "${capture_args[@]}" --output-format "${output_format}" --duration 60 --output-path "${abort_output}"
+	wait_until 10 0.1 grep -Fq 'data reading loop started' "${profiler_pty_prefix}.raw" || fatal "profiler collection did not become ready: $(cat "${profiler_pty_prefix}.raw")"
+	kill -INT "${profiler_pty_pid}"
+	wait_until 10 0.1 test -s "${stop_gate}.ready" || fatal "profiler did not start finalization after SIGINT: $(cat "${profiler_pty_prefix}.raw")"
+	read -r output_formats_stop_pid < "${stop_gate}.ready"
+	kill -TERM "${profiler_pty_pid}"
+	profiler_pty_wait 1
+	wait_until 5 0.1 process_exited "${output_formats_stop_pid}" || fatal "profiler did not release the sampler after SIGTERM"
+	output_formats_stop_pid=""
+	grep -Fq 'profiling capture received SIGTERM' "${profiler_pty_prefix}.raw" || fatal "SIGTERM did not cancel finalization: $(cat "${profiler_pty_prefix}.raw")"
+	if grep -Fq 'HUATUO tui flamegraph' "${profiler_pty_prefix}.raw"; then
+		fatal "profiler opened the viewer after finalization was canceled"
+	fi
+	cmp -s "${OUTPUT_FORMATS_EXISTING_REPORT}" "${abort_output}" || fatal "canceled finalization replaced the previous ${output_format} report"
 done
 
 # Appendix: regression fixed by https://github.com/ccfos/huatuo/pull/1457
