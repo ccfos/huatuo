@@ -207,6 +207,9 @@ iotracing_filesystem_test() {
 			($workers | map(.pid) | sort) == ([$first, $second] | sort) and
 			all($workers[];
 				(if .pid == $first then "first" else "second" end) as $prefix |
+				([.total_files[] | select(.path == "/" + $prefix + "-0") | .fs_read_bps][0]) as $full_read |
+				([.total_files[] | select(.path == "/" + $prefix + "-short") | .fs_read_bps][0]) as $short_read |
+				($short_read > 0 and $full_read > 64 * $short_read) and
 				([.total_files[] | select(.path | test("^/(first|second)-[012]$")) |
 					select(.fs_read_bps > 0 and .fs_write_bps > 0 and
 						.disk_write_bps > 0 and .is_direct == false) | .path] | sort) ==
@@ -216,7 +219,7 @@ iotracing_filesystem_test() {
 				any(.total_files[]; .path == "/" + $prefix + "-shared" and
 					.fs_write_bps > 0 and .is_direct == false))
 		' "${TOOL_WORK_DIR}/top-full.out" > /dev/null \
-			|| fatal "top-N fixture lacks attributed synchronous or shared mmap IO, Direct IO files or their expected is_direct flags"
+			|| fatal "top-N fixture lacks expected file attribution, short/EOF read accounting or Direct IO flags"
 	}
 
 	assert_iotracing_cli_order() {
@@ -287,6 +290,7 @@ iotracing_filesystem_test() {
 				.pid == $pid and .batch == $batch and .phase == "completed"
 				and .started_ns >= $requested and .finished_ns > .started_ns
 				and .read_bytes == 24576 and .sync_write_bytes == 24576
+				and .short_read_bytes == 8 and .eof_read_bytes == 0
 				and .direct_write_bytes == 4096 and .shared_write_bytes == 1
 			' "${TOOL_WORK_DIR}/${iotracing_worker_names[index]}.ready" > /dev/null; then
 				pending=1

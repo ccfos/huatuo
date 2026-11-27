@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -110,4 +111,22 @@ func TestAttachAndEventPipeReaderOwnership(t *testing.T) {
 			require.Equal(t, test.closes, b.reader.closes)
 		})
 	}
+}
+
+func TestFileIterReturnsPreservePMUAttachment(t *testing.T) {
+	options := anyfsAttachOptions()
+	wantReturns := 0
+	for _, name := range []string{"ext4", "xfs"} {
+		if hasFilesystem(name) {
+			wantReturns += 2
+		}
+	}
+	returns := 0
+	for _, option := range options {
+		if strings.HasSuffix(option.ProgramName, "_iter_return") {
+			returns++
+			require.Zero(t, option.Kprobe.RetprobeMaxActive)
+		}
+	}
+	require.Equal(t, wantReturns, returns)
 }

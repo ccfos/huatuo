@@ -70,6 +70,9 @@ def files(args):
     signal.signal(signal.SIGUSR1, request_batch)
     files = [os.open(f"{directory}/{name}-{i}", os.O_CREAT | os.O_RDWR | os.O_SYNC, 0o600)
              for i in range(3)]
+    short_fd = os.open(f"{directory}/{name}-short", os.O_CREAT | os.O_RDWR, 0o600)
+    if os.pwrite(short_fd, b"12345678", 0) != 8:
+        raise RuntimeError("short-read fixture initialization failed")
     direct_fd = os.open(f"{directory}/{name}-direct", os.O_CREAT | os.O_RDWR | os.O_DIRECT, 0o600)
     aligned = mmap.mmap(-1, 4096, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
     shared_fd = os.open(f"{directory}/{name}-shared", os.O_CREAT | os.O_RDWR, 0o600)
@@ -93,6 +96,8 @@ def files(args):
                     raise RuntimeError("short or incorrect synchronous file read")
                 read_bytes += size
                 sync_write_bytes += size
+            if os.pread(short_fd, 4096, 0) != b"12345678" or os.pread(short_fd, 4096, 8):
+                raise RuntimeError("short-read or EOF result differs from the fixture")
             if os.pwrite(direct_fd, aligned, 0) != len(aligned):
                 raise RuntimeError("short Direct IO write")
             # Each iteration needs a fresh shared write fault.
@@ -105,10 +110,12 @@ def files(args):
                 receipt.update({"phase": "completed" if batch else "ready",
                                 "finished_ns": int(time.monotonic() * 1000000000),
                                 "read_bytes": read_bytes, "sync_write_bytes": sync_write_bytes,
+                                "short_read_bytes": 8, "eof_read_bytes": 0,
                                 "direct_write_bytes": len(aligned), "shared_write_bytes": 1})
                 publish(receipt)
                 published_batch = batch
     finally:
+        os.close(short_fd)
         os.close(shared_fd)
         aligned.close()
         os.close(direct_fd)
