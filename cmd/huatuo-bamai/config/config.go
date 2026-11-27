@@ -27,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/core/events"
 	collector "github.com/ccfos/huatuo/core/metrics"
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 // LogConfig controls process logging.
@@ -88,9 +89,11 @@ type ProfilingConfig struct {
 
 // PodConfig controls Pod metadata discovery.
 type PodConfig struct {
+	KubeletHost           string
 	KubeletReadOnlyPort   uint32 `default:"10255"`
 	KubeletAuthorizedPort uint32 `default:"10250"`
 	KubeletClientCertPath string
+	KubeletCAPath         string
 	DockerAPIVersion      string `default:"1.24"`
 }
 
@@ -277,8 +280,11 @@ func (c *StorageConfig) Validate() error {
 	return nil
 }
 
-// Validate rejects invalid kubelet ports.
+// Validate rejects invalid kubelet host and ports.
 func (c PodConfig) Validate() error {
+	if err := pod.ValidateKubeletHost(c.KubeletHost); err != nil {
+		return err
+	}
 	if c.KubeletReadOnlyPort > 65535 {
 		return errors.New("kubelet read-only port must not exceed 65535")
 	}

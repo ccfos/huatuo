@@ -65,8 +65,10 @@ Address = "unused"
 [HTTPServer.Auth]
 BearerToken = "unused"
 [Pod]
+KubeletHost = "10.20.30.40"
 KubeletReadOnlyPort = 12345
 KubeletClientCertPath = "client.pem, client-key.pem"
+KubeletCAPath = "/etc/kubernetes/pki/ca.crt"
 [AutoTracing.SchedBlame]
 SliceDropPercent = 0
 ExternalAnomalyK = 0.0
@@ -74,8 +76,10 @@ HighlightContainer = "configured"
 ExternalRatioDebugFile = "configured.csv"
 `)
 	require.NoError(t, err)
+	assert.Equal(t, "10.20.30.40", config.Pod.KubeletHost)
 	assert.Equal(t, uint32(12345), config.Pod.KubeletReadOnlyPort)
 	assert.Equal(t, "client.pem, client-key.pem", config.Pod.KubeletClientCertPath)
+	assert.Equal(t, "/etc/kubernetes/pki/ca.crt", config.Pod.KubeletCAPath)
 	assert.Zero(t, config.AutoTracing.SchedBlame.SliceDropPercent)
 	assert.Zero(t, config.AutoTracing.SchedBlame.ExternalAnomalyK)
 	assert.Equal(t, "configured", config.AutoTracing.SchedBlame.HighlightContainer)
@@ -108,6 +112,7 @@ func TestStandaloneConfigRejectsInvalidSettings(t *testing.T) {
 		{"[AutoTracing.SchedBlame]\nSliceDropPercent = 100", "slice drop percent"},
 		{"[AutoTracing.SchedBlame]\nPerfEventQueueRecords = 0", "queue records"},
 		{"[AutoTracing.SchedBlame]\nPollIntervalMs = 1001", "poll interval"},
+		{"[Pod]\nKubeletHost = 'https://10.0.0.1'", "invalid kubelet host"},
 		{"[Pod]\nKubeletAuthorizedPort = 65536", "kubelet ports"},
 		{"[Log]\nLevel = 'invalid'", "invalid log level"},
 		{"[AutoTracing.SchedBlame", "decode config"},

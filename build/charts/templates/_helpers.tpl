@@ -34,3 +34,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "huatuo.configName" -}}
 {{- default (printf "%s-config" (include "huatuo.fullname" .)) .Values.config.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+
+{{- define "huatuo.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- default (include "huatuo.fullname" .) .Values.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "huatuo.rbacName" -}}
+{{- printf "%s-%s-kubelet" (include "huatuo.fullname" .) .Release.Namespace | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

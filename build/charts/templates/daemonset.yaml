@@ -21,6 +21,9 @@ spec:
 {{ toYaml . | nindent 8 }}
 {{- end }}
     spec:
+{{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "huatuo.serviceAccountName" . }}
+{{- end }}
       hostNetwork: {{ .Values.hostNetwork }}
       hostPID: {{ .Values.hostPID }}
 {{- if .Values.hostNetwork }}
@@ -48,6 +51,11 @@ spec:
         - name: huatuo
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: KUBELET_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           resources:
 {{ toYaml .Values.resources | nindent 12 }}
           securityContext:

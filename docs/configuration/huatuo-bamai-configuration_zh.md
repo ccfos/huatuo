@@ -1316,9 +1316,11 @@ SchedBlame 估算所选容器 CPU cgroup 的外部 CPU 竞争。当当前一秒�
 
 | 字段 | 说明 |
 | --- | --- |
+| `KubeletHost` | 访问 kubelet HTTPS 端口（`KubeletAuthorizedPort`）的主机名或 IP。内置默认值为 `""`（依次回退读取环境变量 `KUBELET_HOST`，最终默认 `127.0.0.1`）。使用 ServiceAccount token 认证时，建议通过 Downward API 注入 `KUBELET_HOST`（`status.hostIP` 或 `spec.nodeName`），使请求主机与 kubelet 服务端证书 SAN 一致。 |
 | `KubeletReadOnlyPort` | kubelet 只读端口，默认 `10255`，通过无认证方式获取 Pod 列表。端口范围为 `1–65535`，设为 `0` 时禁用该方式。 |
-| `KubeletAuthorizedPort` | kubelet HTTPS 端口，默认 `10250`，使用证书认证获取 Pod 信息。端口范围为 `1–65535`，设为 `0` 时禁用该方式。生产环境建议使用此方式。 |
-| `KubeletClientCertPath` | kubelet 客户端证书及私钥路径，内置默认值为 `""`。支持逗号分隔的证书、私钥两条路径，或包含两者的单个 PEM 文件。配置文件显式使用上方 `/etc/kubernetes/pki/` 下的路径，部署时需核对。非 Kubernetes 环境可将两个 kubelet 端口都设为 `0`，禁用 Pod 获取。 |
+| `KubeletAuthorizedPort` | kubelet HTTPS 端口，默认 `10250`，支持客户端证书或 Pod ServiceAccount token 认证获取 Pod 信息。端口范围为 `1–65535`，设为 `0` 时禁用该方式。生产环境建议使用此方式。 |
+| `KubeletClientCertPath` | kubelet 客户端证书及私钥路径，内置默认值为 `""`。支持逗号分隔的证书、私钥两条路径，或包含两者的单个 PEM 文件。留空时 `huatuo-bamai` 使用 `/var/run/secrets/kubernetes.io/serviceaccount/token` 认证，并使用 `KubeletCAPath`（未配置时回退至 `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`）校验 kubelet 服务端证书。非 Kubernetes 环境可将两个 kubelet 端口都设为 `0`，禁用 Pod 获取。 |
+| `KubeletCAPath` | ServiceAccount token 模式下用于校验 kubelet 服务端证书的 PEM CA 路径，默认为空（回退使用 `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`）。当集群中 kubelet 服务端证书由独立于 API Server CA 的 CA 签发时，显式指定该路径。 |
 
 ### 11. 命令行参数
 

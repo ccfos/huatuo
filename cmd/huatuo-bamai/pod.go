@@ -17,6 +17,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/internal/log"
@@ -29,10 +31,16 @@ func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 		return nil, nil
 	}
 
+	podHost := strings.TrimSpace(config.Get().Pod.KubeletHost)
+	if podHost == "" {
+		podHost = strings.TrimSpace(os.Getenv("KUBELET_HOST"))
+	}
 	mgrCtx := pod.ManagerCtx{
+		PodHost:           podHost,
 		PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
 		PodClientCertPath: config.Get().Pod.KubeletClientCertPath,
+		PodCAPath:         config.Get().Pod.KubeletCAPath,
 		DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
 	}
 
