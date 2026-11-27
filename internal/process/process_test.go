@@ -173,6 +173,66 @@ func TestCommandLine(t *testing.T) {
 	}
 }
 
+func TestCommandLineStopsAtPrefix(t *testing.T) {
+	const (
+		pid      = 100
+		argCount = 32
+		rootEnv  = "HUATUO_TEST_CMDLINE_PROC_ROOT"
+	)
+
+	if root := os.Getenv(rootEnv); root != "" {
+		procfs.RootPrefix(root)
+		got, err := CommandLine(pid)
+		want := strings.Repeat("arg ", argCount)
+		if err != nil || got != want {
+			t.Fatalf("CommandLine(%d) = %q, %v, want %q, nil", pid, got, err, want)
+		}
+
+		return
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "proc", strconv.Itoa(pid), "cmdline")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatalf("Mkfifo(%q): %v", path, err)
+	}
+
+	// Opening both ends lets the test write the prefix before starting the reader.
+	writer, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open cmdline FIFO: %v", err)
+	}
+	defer writer.Close()
+
+	// The extra byte detects a reader that consumes more than it returns.
+	if _, err := writer.WriteString(strings.Repeat("arg\x00", argCount) + "!"); err != nil {
+		t.Fatalf("write cmdline FIFO: %v", err)
+	}
+
+	// A child lets the test keep the writer open and still terminate a blocked reader.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCommandLineStopsAtPrefix$")
+	cmd.Env = append(cmd.Environ(), rootEnv+"="+root)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("CommandLine(%d) did not finish with the FIFO writer open\n%s", pid, output)
+		}
+		t.Fatalf("run CommandLine(%d) in test child: %v\n%s", pid, err, output)
+	}
+
+	unread, err := unix.IoctlGetInt(int(writer.Fd()), unix.TIOCINQ)
+	if err != nil {
+		t.Fatalf("query unread cmdline FIFO bytes: %v", err)
+	}
+	if unread != 1 {
+		t.Fatalf("cmdline FIFO has %d unread bytes, want 1", unread)
+	}
+}
+
 const (
 	utsNamespaceModeEnv        = "HUATUO_TEST_UTS_NAMESPACE_MODE"
 	utsNamespaceTargetPIDEnv   = "HUATUO_TEST_UTS_NAMESPACE_TARGET_PID"
