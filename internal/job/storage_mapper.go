@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -55,6 +56,14 @@ type storagePayload struct {
 	NodeUnavailableDeadline time.Time  `json:"node_unavailable_deadline,omitempty"`
 	StopDeadline            time.Time  `json:"stop_deadline,omitempty"`
 	StopReason              StopReason `json:"stop_reason,omitempty"`
+}
+
+func decodeDurationSeconds(seconds int64) (time.Duration, error) {
+	maxSeconds := int64(math.MaxInt64) / int64(time.Second)
+	if seconds > maxSeconds || seconds < -maxSeconds {
+		return 0, fmt.Errorf("duration seconds %d is outside the supported range", seconds)
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
 
 func (recordMapper) ID(job *Job) string {
@@ -112,12 +121,16 @@ func (recordMapper) Decode(record driver.Record) (*Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("field revision: %w", err)
 	}
+	duration, err := decodeDurationSeconds(payload.DurationSeconds)
+	if err != nil {
+		return nil, err
+	}
 	job := &Job{
 		ID:                      payload.ID,
 		Kind:                    payload.Kind,
 		UserID:                  payload.UserID,
 		Hostname:                payload.Hostname,
-		Duration:                time.Duration(payload.DurationSeconds) * time.Second,
+		Duration:                duration,
 		Scope:                   observation.Scope(payload.Scope),
 		ContainerID:             payload.ContainerID,
 		Spec:                    payload.Spec,

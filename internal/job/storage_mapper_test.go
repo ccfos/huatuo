@@ -15,10 +15,78 @@
 package job
 
 import (
+	"encoding/json"
+	"math"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ccfos/huatuo/internal/storage/driver"
+	"github.com/ccfos/huatuo/pkg/observation"
+	"github.com/ccfos/huatuo/pkg/profiling"
 )
+
+func storedRecordWithDuration(t *testing.T, seconds int64) driver.Record {
+	t.Helper()
+	payload := storagePayload{
+		SchemaVersion:   currentStorageSchemaVersion,
+		ID:              "job-1",
+		Kind:            KindProfiling,
+		UserID:          "user-1",
+		Hostname:        "node-1",
+		DurationSeconds: seconds,
+		Scope:           string(observation.ScopeHost),
+		Spec:            Spec{Profiling: &profiling.Spec{Type: profiling.TypeCPU, Language: profiling.LanguageGo, Mode: profiling.ModeOnCPU}},
+		Status:          StatusPending,
+		CreatedAt:       time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:       time.Date(2026, 10, 24, 0, 0, 1, 0, time.UTC),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	return driver.Record{ID: payload.ID, Data: data, Fields: map[string]any{"revision": int64(1)}}
+}
+
+func TestRecordMapperDecodeValidatesDurationBounds(t *testing.T) {
+	maxSeconds := int64(math.MaxInt64) / int64(time.Second)
+	tests := []struct {
+		name    string
+		seconds int64
+		wantErr string
+	}{
+		{name: "valid minimum range", seconds: maxSeconds},
+		{name: "valid ordinary value", seconds: 60},
+		{name: "zero", seconds: 0, wantErr: "job duration"},
+		{name: "negative", seconds: -1, wantErr: "job duration"},
+		{name: "wraps to a valid duration", seconds: 36028797018964028, wantErr: "outside the supported range"},
+		{name: "positive boundary", seconds: maxSeconds + 1, wantErr: "outside the supported range"},
+		{name: "max int64", seconds: math.MaxInt64, wantErr: "outside the supported range"},
+		{name: "negative boundary", seconds: -maxSeconds - 1, wantErr: "outside the supported range"},
+		{name: "min int64", seconds: math.MinInt64, wantErr: "outside the supported range"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := (recordMapper{}).Decode(storedRecordWithDuration(t, tt.seconds))
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Decode() error = %v", err)
+				}
+				want := time.Duration(tt.seconds) * time.Second
+				if got == nil || got.Duration != want {
+					t.Fatalf("Decode() duration = %v, want %v", got.Duration, want)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Decode() error = %v, want %q", err, tt.wantErr)
+			}
+			if got != nil {
+				t.Fatalf("Decode() job = %+v, want nil", got)
+			}
+		})
+	}
+}
 
 func TestRecordMapperRejectsUnsupportedSchemaVersion(t *testing.T) {
 	tests := []struct {
