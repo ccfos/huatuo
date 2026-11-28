@@ -48,6 +48,10 @@ type image struct {
 
 type module struct {
 	hostPath string
+	// nameHint carries the mapping's own file name for version fallback.
+	// The procfs access path in hostPath may be /proc/<pid>/exe or a
+	// map_files address-range entry, neither of which encodes a version.
+	nameHint string
 	maps     []memsnapshot.ProcMap
 }
 
@@ -126,7 +130,7 @@ func discoverRuntime(ctx context.Context, procRoot string, pid int,
 			return image{}, err
 		}
 		result, imageErr := inspectModule(ctx, candidate.hostPath,
-			candidate.maps, memory)
+			candidate.nameHint, candidate.maps, memory)
 		if imageErr == nil {
 			return result, nil
 		}
@@ -196,6 +200,7 @@ func runtimeModules(procRoot string, pid int,
 	}
 	modules := []module{{
 		hostPath: executablePath,
+		nameHint: filepath.Base(executableTarget),
 	}}
 	for _, key := range order {
 		group := byKey[key]
@@ -211,7 +216,11 @@ func runtimeModules(procRoot string, pid int,
 			break
 		}
 		hostPath := runtimeModulePath(procRoot, pid, key[1], group)
-		modules = append(modules, module{hostPath: hostPath, maps: group})
+		modules = append(modules, module{
+			hostPath: hostPath,
+			nameHint: filepath.Base(key[1]),
+			maps:     group,
+		})
 	}
 	if limitReached {
 		return modules, "CPython runtime module or mapping limit reached"
@@ -241,7 +250,7 @@ func runtimeModulePath(procRoot string, pid int, path string,
 	return filepath.Join(pidRoot, "root", path)
 }
 
-func inspectModule(ctx context.Context, path string, maps []memsnapshot.ProcMap,
+func inspectModule(ctx context.Context, path, nameHint string, maps []memsnapshot.ProcMap,
 	memory memoryReader,
 ) (image, error) {
 	if err := ctx.Err(); err != nil {
@@ -317,7 +326,14 @@ func inspectModule(ctx context.Context, path string, maps []memsnapshot.ProcMap,
 			)
 		}
 	} else {
-		runtimeVersion, err = versionFromModulePath(path)
+		// Py_Version is authoritative when present. Without it the version
+		// must come from the mapping's own file name: the procfs access path
+		// is /proc/<pid>/exe or a map_files address range, and neither
+		// encodes a version.
+		runtimeVersion, err = versionFromModulePath(nameHint)
+		if err != nil && nameHint != path {
+			runtimeVersion, err = versionFromModulePath(path)
+		}
 		if err != nil {
 			return image{}, fmt.Errorf("%w: %w", errUnsupportedRuntime, err)
 		}
