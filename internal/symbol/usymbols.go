@@ -108,6 +108,11 @@ func (r *UsymResolver) UsymStackStrsReversed(pid uint32, ustack []uint64, ustack
 }
 
 func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize int, out outType, reversed bool) stackFrames {
+	// Non-positive depths return no frames without resolving user symbols.
+	if stackSize <= 0 {
+		return stackFrames{}
+	}
+
 	limit := min(stackSize, len(stack))
 	valid := limit
 	for index, addr := range stack[:limit] {
