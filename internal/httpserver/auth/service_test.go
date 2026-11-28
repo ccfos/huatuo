@@ -22,6 +22,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseBearerToken(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		header  string
+		want    string
+		wantErr error
+	}{
+		{name: "valid", header: "Bearer abc", want: "abc"},
+		{name: "case insensitive scheme", header: "bearer abc", want: "abc"},
+		{name: "surrounding spaces", header: "  Bearer   abc  ", want: "abc"},
+		{name: "internal space", header: "Bearer secret extra", wantErr: ErrInvalidBearerToken},
+		{name: "internal tab", header: "Bearer secret\textra", wantErr: ErrInvalidBearerToken},
+		{name: "internal unicode space", header: "Bearer secret\u00a0extra", wantErr: ErrInvalidBearerToken},
+		{name: "missing", wantErr: ErrMissingBearerToken},
+		{name: "wrong scheme", header: "Basic abc", wantErr: ErrMissingBearerToken},
+		{name: "empty token", header: "Bearer ", wantErr: ErrMissingBearerToken},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			token, err := ParseBearerToken(tt.header)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.Empty(t, token)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, token)
+		})
+	}
+}
+
 func TestServiceAuthenticateBearer(t *testing.T) {
 	t.Parallel()
 
@@ -34,9 +70,12 @@ func TestServiceAuthenticateBearer(t *testing.T) {
 	}{
 		{name: "valid", header: "Bearer viewer-secret", wantID: "viewer-2026"},
 		{name: "case insensitive scheme", header: "bearer viewer-secret", wantID: "viewer-2026"},
+		{name: "surrounding spaces", header: "  Bearer   viewer-secret  ", wantID: "viewer-2026"},
 		{name: "missing", wantErr: ErrMissingBearerToken},
 		{name: "wrong scheme", header: "Basic viewer-secret", wantErr: ErrMissingBearerToken},
 		{name: "empty token", header: "Bearer ", wantErr: ErrMissingBearerToken},
+		{name: "internal space", header: "Bearer viewer secret", wantErr: ErrInvalidBearerToken},
+		{name: "internal tab", header: "Bearer viewer\tsecret", wantErr: ErrInvalidBearerToken},
 		{name: "invalid", header: "Bearer unknown", wantErr: ErrInvalidBearerToken},
 	}
 
@@ -65,9 +104,12 @@ func TestTokenAuthenticatorAuthenticateBearer(t *testing.T) {
 	}{
 		{name: "valid", header: "Bearer node-secret"},
 		{name: "case insensitive scheme", header: "bearer node-secret"},
+		{name: "surrounding spaces", header: "  Bearer   node-secret  "},
 		{name: "missing", wantErr: ErrMissingBearerToken},
 		{name: "wrong scheme", header: "Basic node-secret", wantErr: ErrMissingBearerToken},
 		{name: "empty token", header: "Bearer ", wantErr: ErrMissingBearerToken},
+		{name: "internal space", header: "Bearer node secret", wantErr: ErrInvalidBearerToken},
+		{name: "internal tab", header: "Bearer node\tsecret", wantErr: ErrInvalidBearerToken},
 		{name: "invalid", header: "Bearer other-secret", wantErr: ErrInvalidBearerToken},
 	}
 
