@@ -1079,3 +1079,22 @@ func TestExtractNativeEvent(t *testing.T) {
 		}
 	}
 }
+
+func TestVirtualAllocSharesEntryStacksAcrossRingSwap(t *testing.T) {
+	obj := &frozenRingBPFStub{values: map[uint32]uint64{}}
+	first, second := &frozenRingReaderStub{}, &frozenRingReaderStub{}
+	r := &ringBufferContext{
+		bpf: obj, mode: profiling.ModeVirtualAlloc,
+		readerA: first, readerB: second,
+		stackMapAID: 2, stackMapBID: 3, transferStateMapID: 1,
+	}
+	for parity, wantReader := range []bpf.PerfEventReader{first, second} {
+		ring, err := r.advanceSwapParity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ring.stackMapID != 2 || ring.reader != wantReader || ring.sampleCountIdx != uint32(parity)+bpfmap.SampleCountAIdx {
+			t.Fatalf("parity=%d ring=%+v", parity, ring)
+		}
+	}
+}

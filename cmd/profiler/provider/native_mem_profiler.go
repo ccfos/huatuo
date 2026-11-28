@@ -204,6 +204,7 @@ func newNativeMemoryBPFLoadConfig(
 			ObjectFile: "native_virtual_alloc.o",
 			Constants:  constants,
 			AttachOpts: []bpf.AttachOption{
+				{ProgramName: "trace_mmap_return", Symbol: "do_mmap"},
 				{
 					ProgramName: "trace_mmap",
 					Symbol:      "do_mmap",

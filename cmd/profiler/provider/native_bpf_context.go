@@ -192,6 +192,11 @@ func (r *ringBufferContext) advanceSwapParity() (nativeRingBuffer, error) {
 		}
 	}
 
+	// mmap entry stacks must survive until return, even across a ring swap.
+	if r.mode == profiling.ModeVirtualAlloc {
+		ring.stackMapID = r.stackMapAID
+	}
+
 	if err := bpfmap.WriteUint64(
 		r.bpf,
 		r.transferStateMapID,
