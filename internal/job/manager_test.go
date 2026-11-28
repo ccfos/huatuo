@@ -185,7 +185,7 @@ func testManager(store Store, client NodeClient) *Manager {
 }
 
 func testRuntime(manager *Manager, job *Job) *runtime {
-	return newRuntime(job, false, func() {}, &manager.runtimeDeps)
+	return newRuntime(job, false, &manager.runtimeDeps)
 }
 
 func setManagerNow(manager *Manager, now func() time.Time) {
@@ -429,15 +429,22 @@ func TestManagerStopRejectsActiveJobWithoutRuntime(t *testing.T) {
 
 type recoveringStore struct {
 	*memoryStore
-	pages int
+	pages     int
+	listHook  func(context.Context, int) error
+	closeHook func()
 }
 
 func (s *recoveringStore) List(ctx context.Context, query *Query) ([]*Job, error) {
+	s.pages++
+	if s.listHook != nil {
+		if err := s.listHook(ctx, s.pages); err != nil {
+			return nil, err
+		}
+	}
 	jobs, err := s.memoryStore.List(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	s.pages++
 	// Completed Jobs disappear from the next query while recovery is in progress.
 	s.mu.Lock()
 	for _, job := range jobs {
@@ -447,6 +454,13 @@ func (s *recoveringStore) List(ctx context.Context, query *Query) ([]*Job, error
 	return jobs, nil
 }
 
+func (s *recoveringStore) Close() error {
+	if s.closeHook != nil {
+		s.closeHook()
+	}
+	return s.memoryStore.Close()
+}
+
 func TestManagerRecoversAllBatchesWhileStatusesChange(t *testing.T) {
 	const count = 2001
 	jobs := make([]*Job, 0, count)
@@ -454,7 +468,17 @@ func TestManagerRecoversAllBatchesWhileStatusesChange(t *testing.T) {
 		jobs = append(jobs, testJob(fmt.Sprintf("job-%05d", i), StatusRunning, time.Now()))
 	}
 	store := &recoveringStore{memoryStore: newMemoryStore(jobs...)}
-	manager := testManager(store, &stubNodeClient{})
+	started := make(chan context.Context, 1)
+	client := &stubNodeClient{getOperation: func(ctx context.Context, _, _ string) (*nodeapi.Operation, error) {
+		select {
+		case started <- ctx:
+		default:
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	manager := testManager(store, client)
+	manager.runtimeDeps.policy.statusPollInterval = time.Millisecond
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -462,14 +486,25 @@ func TestManagerRecoversAllBatchesWhileStatusesChange(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := manager.recover(context.Background()); err != nil {
+	startupCtx, cancelStartup := context.WithCancel(t.Context())
+	defer cancelStartup()
+	if err := manager.start(startupCtx); err != nil {
 		t.Fatal(err)
 	}
+	cancelStartup()
 	if got := manager.recoveredJobs.Load(); got != count {
 		t.Fatalf("recovered=%d, want %d", got, count)
 	}
 	if store.pages != 3 {
 		t.Fatalf("read %d batches, want 3", store.pages)
+	}
+	select {
+	case ctx := <-started:
+		if err := ctx.Err(); err != nil {
+			t.Errorf("recovered supervisor canceled with startup context: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("no recovered supervisor started a Node request")
 	}
 }
 
@@ -479,5 +514,68 @@ func TestManagerListPageZeroDoesNotReadProbe(t *testing.T) {
 	page, err := manager.ListPage(t.Context(), &Query{Limit: 0})
 	if !errors.Is(err, ErrInvalidQuery) || page != nil || store.pages != 0 {
 		t.Fatalf("page=%+v error=%v reads=%d", page, err, store.pages)
+	}
+}
+
+func TestManagerRecoveryFailureDrainsSupervisorsBeforeClosingStore(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	jobs := make([]*Job, jobBatchSize)
+	for i := range jobs {
+		jobs[i] = testJob(fmt.Sprintf("job-%05d", i), StatusRunning, time.Now())
+	}
+	started := make(chan struct{})
+	var startOnce sync.Once
+	client := &stubNodeClient{getOperation: func(ctx context.Context, _, _ string) (*nodeapi.Operation, error) {
+		startOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	listErr := errors.New("second recovery batch failed")
+	store := &recoveringStore{
+		memoryStore: newMemoryStore(jobs...),
+		listHook: func(ctx context.Context, page int) error {
+			if page != 2 {
+				return nil
+			}
+			// Fail with a Node request in flight and no usable startup context for rollback.
+			select {
+			case <-started:
+				cancel()
+				return listErr
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}
+	manager := testManager(store, client)
+	manager.runtimeDeps.policy.statusPollInterval = time.Millisecond
+	activeAtClose := make(chan int, 2)
+	store.closeHook = func() {
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
+		activeAtClose <- len(manager.active)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := manager.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if err := manager.start(ctx); !errors.Is(err, listErr) || store.pages != 2 {
+		t.Fatalf("start() error = %v after %d batches, want %v after 2 batches", err, store.pages, listErr)
+	}
+	select {
+	case active := <-activeAtClose:
+		if active != 0 {
+			t.Errorf("store closed with %d active supervisors, want 0", active)
+		}
+	default:
+		t.Error("start() returned before closing the store")
+	}
+	if active := manager.Stats().Active; len(active) != 0 {
+		t.Errorf("active jobs after recovery failure = %v, want none", active)
 	}
 }
