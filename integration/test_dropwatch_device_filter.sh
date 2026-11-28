@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify CLI device filters through two real ingress devices and software drops.
-# Storage delivery and hardware drop sources belong to their existing tests.
+# Verify CLI device filters and compound filter expressions through two real
+# ingress devices, with TCP and UDP software drops. Storage delivery and
+# hardware drop sources belong to their existing tests.
 
 set -euo pipefail
 
@@ -38,6 +39,13 @@ require_commands bash ip iptables jq timeout ss nsenter awk
 require_readable /sys/kernel/btf/vmlinux
 tracepoint_available skb kfree_skb || skip "skb/kfree_skb tracepoint is unavailable"
 device_filter_port=$(allocate_available_port) || fatal "cannot allocate device filter destination port"
+device_filter_port_b=$(allocate_available_port) || fatal "cannot allocate second device filter destination port"
+device_filter_port_c=$(allocate_available_port) || fatal "cannot allocate third device filter destination port"
+[[ ${device_filter_port_b} != "${device_filter_port}" ]] \
+	|| fatal "device filter ports must differ: ${device_filter_port}"
+[[ ${device_filter_port_c} != "${device_filter_port}" &&
+	${device_filter_port_c} != "${device_filter_port_b}" ]] \
+	|| fatal "device filter ports must be distinct"
 
 device_filter_capture_pid=""
 device_filter_sender_pids=()
@@ -74,22 +82,32 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # Callers start this function in the background; its traps belong to that worker.
-device_filter_send_syn() {
-	local destination=$1 stop_file=$2 connection_pid="" status
+device_filter_send_traffic() {
+	local destination=$1 stop_file=$2 protocol=$3 port=$4 connection_pid="" status
 	trap 'stop_and_wait_by_pid "${connection_pid}" 2 || true' EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
 	while [[ ! -e "${stop_file}" ]]; do
-		# Each dropped connect waits 0.5 seconds, bounding the per-path packet rate.
-		timeout --kill-after=1s 0.5s \
+		case "${protocol}" in
+		tcp)
+			# Each dropped connect waits 0.5 seconds, bounding the packet rate.
+			timeout --kill-after=1s 0.5s \
+				nsenter --net="/run/netns/${NETNS_CLIENT}" bash -c \
+				'exec 3<>/dev/tcp/"$1"/"$2"' device-filter "${destination}" "${port}" &
+			connection_pid=$!
+			status=0
+			wait "${connection_pid}" || status=$?
+			connection_pid=""
+			assert_eq "${status}" 124 "TCP connect to ${destination}:${port}" \
+				|| fatal "expected a dropped connect to time out; actual status=${status}"
+			;;
+		udp)
 			nsenter --net="/run/netns/${NETNS_CLIENT}" bash -c \
-			'exec 3<>/dev/tcp/"$1"/"$2"' device-filter "${destination}" "${device_filter_port}" &
-		connection_pid=$!
-		status=0
-		wait "${connection_pid}" || status=$?
-		connection_pid=""
-		assert_eq "${status}" 124 "SYN connect to ${destination}:${device_filter_port}" \
-			|| fatal "expected a dropped connect to time out; actual status=${status}"
+				'exec 3<>/dev/udp/"$1"/"$2"; printf x >&3' device-filter "${destination}" "${port}"
+			sleep 0.1
+			;;
+		*) fatal "unknown traffic protocol: ${protocol}" ;;
+		esac
 	done
 }
 
@@ -110,42 +128,53 @@ assert_device_filter_drops() {
 }
 
 assert_device_filter_events() {
-	local case_dir=$1 source=$2 destination=$3 device=$4 ifindex=$5 expected=$6
-	local events_file="${case_dir}/${device}.json" count
+	local case_dir=$1 source=$2 destination=$3 device=$4 ifindex=$5 protocol=$6 port=$7 expected=$8
+	local wire_protocol events_file count
+	case "${protocol}" in
+	tcp) wire_protocol=TCP ;;
+	udp) wire_protocol=UDP ;;
+	*) fatal "unknown event protocol: ${protocol}" ;;
+	esac
+	events_file="${case_dir}/${device}-${protocol}-${port}.json"
 	# Identify traffic before examining devices, so a wrong device field cannot
 	# hide an event that should have been excluded.
 	jq -cs --arg source "${source}" --arg destination "${destination}" \
-		--argjson port "${device_filter_port}" '
+		--arg protocol "${wire_protocol}" --argjson port "${port}" '
 		[.[] | select(.layers.ipv4.saddr == $source
 			and .layers.ipv4.daddr == $destination
-			and .layers.ipv4.protocol == "TCP" and .layers.tcp.dport == $port)]
+			and .layers.ipv4.protocol == $protocol
+			and (if $protocol == "TCP" then .layers.tcp.dport == $port
+				else .layers.udp.dport == $port end))]
 	' "${case_dir}/events.json" > "${events_file}" \
 		|| fatal "${case_dir##*/}: invalid dropwatch JSON"
 	count=$(jq 'length' "${events_file}")
-	log_info "${case_dir##*/}: ${device} events=${count}, expected=${expected}"
+	log_info "${case_dir##*/}: ${device} ${protocol}/${port} events=${count}, expected=${expected}"
 	case "${expected}" in
 	absent)
-		assert_eq "${count}" 0 "${case_dir##*/}: excluded ${device} events" \
+		assert_eq "${count}" 0 "${case_dir##*/}: excluded ${device} ${protocol}/${port} events" \
 			|| fatal "${case_dir##*/}: excluded flow produced ${count} events; see ${events_file}"
 		;;
 	present)
-		((count > 0)) || fatal "${case_dir##*/}: expected ${device} events, actual=0"
+		((count > 0)) || fatal "${case_dir##*/}: expected ${device} ${protocol}/${port} events, actual=0"
 		# Kernel defaults may add ECN negotiation flags to an initial SYN.
-		jq -e --arg device "${device}" --argjson ifindex "${ifindex}" '
+		jq -e --arg device "${device}" --argjson ifindex "${ifindex}" \
+			--arg protocol "${wire_protocol}" '
 			all(.[]; .drop_source == "software" and .netdev_name == $device
 				and .netdev_ifindex == $ifindex
-				and (.layers.tcp.flags | split("|") | index("SYN") != null))
+				and (if $protocol == "TCP"
+					then (.layers.tcp.flags | split("|") | index("SYN") != null)
+					else true end))
 		' "${events_file}" > /dev/null \
-			|| fatal "${case_dir##*/}: expected software SYN drops on ${device}/${ifindex}; see ${events_file}"
+			|| fatal "${case_dir##*/}: expected software ${wire_protocol} drops on ${device}/${ifindex}; see ${events_file}"
 		;;
 	*) fatal "unknown device filter expectation: ${expected}" ;;
 	esac
 }
 
 device_filter_run_case() {
-	local name=$1 expected_a=$2 expected_b=$3
-	shift 3
-	local case_dir="${TOOL_WORK_DIR}/${name}" capture_status=0 sender_status index pid destination
+	local name=$1 filter=$2 expected_a=$3 expected_b=$4 protocol_b=$5 port_b=$6
+	shift 6
+	local case_dir="${TOOL_WORK_DIR}/${name}" capture_status=0 sender_status index pid
 	mkdir "${case_dir}"
 	namespace_iptables "${NETNS_SERVER}" iptables -nvxL INPUT > "${case_dir}/drops-before.txt"
 
@@ -154,18 +183,19 @@ device_filter_run_case() {
 	timeout --kill-after=5s "${DEVICE_FILTER_TIMEOUT}s" \
 		nsenter --net="/run/netns/${NETNS_SERVER}" \
 		"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
-		--filter "tcp and dst port ${device_filter_port}" \
+		--filter "${filter}" \
 		--max-events-per-second 0 --duration "${DEVICE_FILTER_DURATION}" --output json "$@" \
 		> "${case_dir}/events.json" 2> "${case_dir}/stderr.log" &
 	device_filter_capture_pid=$!
 
 	# Fresh traffic spans startup and the whole capture; no startup sleep or
 	# early success can shorten the negative observation window.
-	for destination in "${DEVICE_FILTER_SERVER_A}" "${DEVICE_FILTER_SERVER_B}"; do
-		device_filter_send_syn "${destination}" "${case_dir}/stop" \
-			> "${case_dir}/sender-${destination}.log" 2>&1 &
-		device_filter_sender_pids+=("$!")
-	done
+	device_filter_send_traffic "${DEVICE_FILTER_SERVER_A}" "${case_dir}/stop" tcp "${device_filter_port}" \
+		> "${case_dir}/sender-a-tcp-${device_filter_port}.log" 2>&1 &
+	device_filter_sender_pids+=("$!")
+	device_filter_send_traffic "${DEVICE_FILTER_SERVER_B}" "${case_dir}/stop" "${protocol_b}" "${port_b}" \
+		> "${case_dir}/sender-b-${protocol_b}-${port_b}.log" 2>&1 &
+	device_filter_sender_pids+=("$!")
 	wait "${device_filter_capture_pid}" || capture_status=$?
 	device_filter_capture_pid=""
 	# Let each bounded connect finish normally, so only timeout=124 is accepted.
@@ -176,7 +206,7 @@ device_filter_run_case() {
 		wait "${pid}" || sender_status=$?
 		unset 'device_filter_sender_pids[index]'
 		assert_eq "${sender_status}" 0 "${name}: sender exit status" \
-			|| fatal "${name}: SYN sender failed; see ${case_dir}/sender-*.log"
+			|| fatal "${name}: sender failed; see ${case_dir}/sender-*.log"
 	done
 	device_filter_sender_pids=()
 	namespace_iptables "${NETNS_SERVER}" iptables -nvxL INPUT > "${case_dir}/drops-after.txt"
@@ -186,9 +216,9 @@ device_filter_run_case() {
 	assert_device_filter_drops "${case_dir}" "${DEVICE_FILTER_DEVICE_A}"
 	assert_device_filter_drops "${case_dir}" "${DEVICE_FILTER_DEVICE_B}"
 	assert_device_filter_events "${case_dir}" "${DEVICE_FILTER_CLIENT_A}" "${DEVICE_FILTER_SERVER_A}" \
-		"${DEVICE_FILTER_DEVICE_A}" "${device_filter_ifindex_a}" "${expected_a}"
+		"${DEVICE_FILTER_DEVICE_A}" "${device_filter_ifindex_a}" tcp "${device_filter_port}" "${expected_a}"
 	assert_device_filter_events "${case_dir}" "${DEVICE_FILTER_CLIENT_B}" "${DEVICE_FILTER_SERVER_B}" \
-		"${DEVICE_FILTER_DEVICE_B}" "${device_filter_ifindex_b}" "${expected_b}"
+		"${DEVICE_FILTER_DEVICE_B}" "${device_filter_ifindex_b}" "${protocol_b}" "${port_b}" "${expected_b}"
 	assert_kernel_observation_timestamps "${case_dir}/events.json"
 	assert_log_has_no_failure "${case_dir}/stderr.log" "${name}: dropwatch"
 }
@@ -226,7 +256,26 @@ namespace_iptables "${NETNS_SERVER}" iptables -A INPUT -i "${DEVICE_FILTER_DEVIC
 namespace_iptables "${NETNS_SERVER}" iptables -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
 	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
 	-p tcp --dport "${device_filter_port}" -j DROP
+ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
+	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
+	-p tcp --dport "${device_filter_port_b}" -j DROP
+ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
+	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
+	-p tcp --dport "${device_filter_port_c}" -j DROP
+ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
+	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
+	-p udp --dport "${device_filter_port}" -j DROP
 
-device_filter_run_case baseline present present
-device_filter_run_case allow_a present absent --device "${DEVICE_FILTER_DEVICE_A}"
-device_filter_run_case exclude_a absent present --device-excluded "${DEVICE_FILTER_DEVICE_A}"
+device_filter_run_case baseline "tcp and dst port ${device_filter_port}" present present tcp "${device_filter_port}"
+device_filter_run_case allow_a "tcp and dst port ${device_filter_port}" present absent tcp "${device_filter_port}" --device "${DEVICE_FILTER_DEVICE_A}"
+device_filter_run_case exclude_a "tcp and dst port ${device_filter_port}" absent present tcp "${device_filter_port}" --device-excluded "${DEVICE_FILTER_DEVICE_A}"
+device_filter_run_case or_group \
+	"tcp and (dst port ${device_filter_port} or dst port ${device_filter_port_c})" \
+	present present tcp "${device_filter_port_c}"
+device_filter_run_case not_group_left \
+	"tcp and not (dst port ${device_filter_port_b} or dst port ${device_filter_port_c})" \
+	present absent tcp "${device_filter_port_b}"
+device_filter_run_case not_group_right \
+	"tcp and not (dst port ${device_filter_port_b} or dst port ${device_filter_port_c})" \
+	present absent tcp "${device_filter_port_c}"
+device_filter_run_case or_protocol "tcp or udp" present present udp "${device_filter_port}"
