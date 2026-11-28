@@ -281,43 +281,52 @@ func calcuXlogFreeBytes(logPath string, maxSize float64) (float64, error) {
 		return -1, err
 	}
 
-	tailBytes := tBlocks * 512
-	if tCycle == rhCycle && rhBytes >= tailBytes {
-		return maxSize - (rhBytes - tailBytes), nil
+	tailBytes := uint64(tBlocks) * 512
+	headBytes := uint64(rhBytes)
+	cycleDelta := uint32(rhCycle) - uint32(tCycle)
+	switch cycleDelta {
+	case 0:
+		if headBytes >= tailBytes {
+			return maxSize - float64(headBytes-tailBytes), nil
+		}
+		return maxSize, nil
+	case 1:
+		if tailBytes >= headBytes {
+			return float64(tailBytes - headBytes), nil
+		}
+		return -float64(headBytes - tailBytes), nil
+	default:
+		if cycleDelta < 1<<31 {
+			return 0, nil
+		}
+		return maxSize, nil
 	}
-	if tCycle+1 < rhCycle {
-		return 0, nil
-	}
-	if tCycle < rhCycle {
-		return tailBytes - rhBytes, nil
-	}
-	return maxSize, nil
 }
 
-func readCycleValue(filePath string) (float64, float64, error) {
+func readCycleValue(filePath string) (int32, uint32, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		log.Errorf("read file failed, err: %v", err)
-		return -1, -1, err
+		return 0, 0, err
 	}
 
 	line := strings.TrimSpace(string(data))
 	parts := strings.Split(line, ":")
 	if len(parts) != 2 {
-		return -1, -1, fmt.Errorf("invalid format")
+		return 0, 0, fmt.Errorf("invalid format")
 	}
 
-	cycle, err := strconv.ParseFloat(parts[0], 64)
+	cycle, err := strconv.ParseInt(parts[0], 10, 32)
 	if err != nil {
 		log.Infof("invalid cycle value, err: %v", err)
-		return -1, -1, err
+		return 0, 0, err
 	}
 
-	value, err := strconv.ParseFloat(parts[1], 64)
+	value, err := strconv.ParseUint(parts[1], 10, 31)
 	if err != nil {
 		log.Infof("invalid numeric value, err: %v", err)
-		return -1, -1, err
+		return 0, 0, err
 	}
 
-	return cycle, value, nil
+	return int32(cycle), uint32(value), nil
 }
