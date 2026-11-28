@@ -30,6 +30,9 @@ package pcapfilter
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+	"unicode"
 
 	"github.com/cilium/ebpf/asm"
 	"github.com/cloudflare/cbpfc"
@@ -245,6 +248,64 @@ func patchPacketLoads(insts asm.Instructions, resultLabel string) (asm.Instructi
 	return insts, nil
 }
 
+// unimplementedProtocolPrimitives are the protocol keywords go-pcap's parser
+// recognizes (filter/constants.go subProtocols) but its compiler turns into
+// an always-true term: the protocol constraint silently disappears from
+// conjunctions ("host 10.0.0.1 and icmp" compiles to the program of
+// "host 10.0.0.1", instruction for instruction) and disjunctions degenerate
+// to a match-all filter. Only ip, ip6, arp, rarp, tcp, udp and stp are
+// implemented by the compiler. Until go-pcap implements the rest, reject
+// expressions that use them instead of installing a filter that captures
+// more than the expression requests.
+var unimplementedProtocolPrimitives = map[string]struct{}{
+	"icmp": {}, "icmp6": {}, "igmp": {}, "igrp": {}, "esp": {}, "ah": {},
+	"pim": {}, "vrrp": {}, "atalk": {}, "aarp": {}, "decnet": {}, "sca": {},
+	"lat": {}, "modpl": {}, "morpc": {}, "iso": {}, "ipx": {}, "netbeui": {},
+}
+
+// filterTokens splits an expression the way tcpdump's lexer does: on
+// whitespace, parentheses and the "!" operator, each kept as its own token.
+// tcpdump accepts "!!icmp" (chained negation) and "and!icmp" (adjacent
+// operator), and its man page quotes protocol names after proto with a
+// leading backslash ("proto \icmp"); all of those still name the primitive.
+func filterTokens(expr string) []string {
+	return strings.FieldsFunc(expr, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '(' || r == ')' || r == '!'
+	})
+}
+
+// safeFilterToken matches the character set of the supported filter
+// vocabulary: primitives, host and service names, numbers, IPv4/IPv6/CIDR
+// and MAC literals, and port ranges. Anything else - operator symbols glued
+// to a word ("icmp&&ip"), extra backslashes, or other characters the
+// compiler interprets unreliably - is rejected with the expression.
+var safeFilterToken = regexp.MustCompile(`^[A-Za-z0-9_.:/-]+$`)
+
+func rejectUnimplementedPrimitives(expr string) error {
+	for _, token := range filterTokens(expr) {
+		token = strings.TrimPrefix(token, "\\")
+		if token == "" || !safeFilterToken.MatchString(token) {
+			return fmt.Errorf(
+				"%w: %q contains %q outside the supported filter vocabulary",
+				ErrInvalidFilter, expr, token,
+			)
+		}
+		if _, broken := unimplementedProtocolPrimitives[token]; !broken {
+			continue
+		}
+		// No name-position exemption: go-pcap does not resolve a protocol
+		// keyword as a host or service name ("host icmp" fails with "blank
+		// host"), and expressions like "ip (icmp)" or "port (icmp)" are
+		// syntax errors in tcpdump, so the token is always a protocol
+		// condition that the compiler would silently ignore.
+		return fmt.Errorf(
+			"%w: %q uses the %q protocol primitive, which the packet filter compiler does not implement",
+			ErrInvalidFilter, expr, token,
+		)
+	}
+	return nil
+}
+
 // compileGoPcap compiles expr with go-pcap's parser and compiler. The upstream
 // compiler dereferences a nil network for a malformed net operand inside a
 // composite expression, so recover and report that input as an invalid filter.
@@ -255,6 +316,10 @@ func compileGoPcap(expr string) (insns []cbpf.Instruction, err error) {
 			err = fmt.Errorf("%w: %q: %v", ErrInvalidFilter, expr, r)
 		}
 	}()
+
+	if err := rejectUnimplementedPrimitives(expr); err != nil {
+		return nil, err
+	}
 
 	e := filter.NewExpression(expr)
 	if e == nil {
