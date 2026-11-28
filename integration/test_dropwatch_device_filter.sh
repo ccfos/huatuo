@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify CLI device filters through two real ingress devices and software drops.
-# Storage delivery and hardware drop sources belong to their existing tests.
+# Verify CLI device filters and compound filter expressions through two real
+# ingress devices and software drops. Storage delivery and hardware drop
+# sources belong to their existing tests.
 
 set -euo pipefail
 
@@ -38,6 +39,13 @@ require_commands bash ip iptables jq timeout ss nsenter awk
 require_readable /sys/kernel/btf/vmlinux
 tracepoint_available skb kfree_skb || skip "skb/kfree_skb tracepoint is unavailable"
 device_filter_port=$(allocate_available_port) || fatal "cannot allocate device filter destination port"
+device_filter_port_b=$(allocate_available_port) || fatal "cannot allocate second device filter destination port"
+device_filter_unmatched_port=$(allocate_available_port) || fatal "cannot allocate unmatched filter port"
+[[ ${device_filter_port_b} != "${device_filter_port}" ]] \
+	|| fatal "device filter ports must differ: ${device_filter_port}"
+[[ ${device_filter_unmatched_port} != "${device_filter_port}" &&
+	${device_filter_unmatched_port} != "${device_filter_port_b}" ]] \
+	|| fatal "unmatched filter port must differ from traffic ports"
 
 device_filter_capture_pid=""
 device_filter_sender_pids=()
@@ -75,7 +83,7 @@ trap 'exit 143' TERM
 
 # Callers start this function in the background; its traps belong to that worker.
 device_filter_send_syn() {
-	local destination=$1 stop_file=$2 connection_pid="" status
+	local destination=$1 stop_file=$2 port=$3 connection_pid="" status
 	trap 'stop_and_wait_by_pid "${connection_pid}" 2 || true' EXIT
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
@@ -83,7 +91,7 @@ device_filter_send_syn() {
 		# Each dropped connect waits 0.5 seconds, bounding the per-path packet rate.
 		timeout --kill-after=1s 0.5s \
 			nsenter --net="/run/netns/${NETNS_CLIENT}" bash -c \
-			'exec 3<>/dev/tcp/"$1"/"$2"' device-filter "${destination}" "${device_filter_port}" &
+			'exec 3<>/dev/tcp/"$1"/"$2"' device-filter "${destination}" "${port}" &
 		connection_pid=$!
 		status=0
 		wait "${connection_pid}" || status=$?
@@ -110,12 +118,12 @@ assert_device_filter_drops() {
 }
 
 assert_device_filter_events() {
-	local case_dir=$1 source=$2 destination=$3 device=$4 ifindex=$5 expected=$6
+	local case_dir=$1 source=$2 destination=$3 device=$4 ifindex=$5 port=$6 expected=$7
 	local events_file="${case_dir}/${device}.json" count
 	# Identify traffic before examining devices, so a wrong device field cannot
 	# hide an event that should have been excluded.
 	jq -cs --arg source "${source}" --arg destination "${destination}" \
-		--argjson port "${device_filter_port}" '
+		--argjson port "${port}" '
 		[.[] | select(.layers.ipv4.saddr == $source
 			and .layers.ipv4.daddr == $destination
 			and .layers.ipv4.protocol == "TCP" and .layers.tcp.dport == $port)]
@@ -143,9 +151,9 @@ assert_device_filter_events() {
 }
 
 device_filter_run_case() {
-	local name=$1 expected_a=$2 expected_b=$3
-	shift 3
-	local case_dir="${TOOL_WORK_DIR}/${name}" capture_status=0 sender_status index pid destination
+	local name=$1 filter=$2 expected_a=$3 expected_b=$4 port_b=$5
+	shift 5
+	local case_dir="${TOOL_WORK_DIR}/${name}" capture_status=0 sender_status index pid
 	mkdir "${case_dir}"
 	ip netns exec "${NETNS_SERVER}" iptables -w 5 -nvxL INPUT > "${case_dir}/drops-before.txt"
 
@@ -154,18 +162,19 @@ device_filter_run_case() {
 	timeout --kill-after=5s "${DEVICE_FILTER_TIMEOUT}s" \
 		nsenter --net="/run/netns/${NETNS_SERVER}" \
 		"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
-		--filter "tcp and dst port ${device_filter_port}" \
+		--filter "${filter}" \
 		--max-events-per-second 0 --duration "${DEVICE_FILTER_DURATION}" --output json "$@" \
 		> "${case_dir}/events.json" 2> "${case_dir}/stderr.log" &
 	device_filter_capture_pid=$!
 
 	# Fresh traffic spans startup and the whole capture; no startup sleep or
 	# early success can shorten the negative observation window.
-	for destination in "${DEVICE_FILTER_SERVER_A}" "${DEVICE_FILTER_SERVER_B}"; do
-		device_filter_send_syn "${destination}" "${case_dir}/stop" \
-			> "${case_dir}/sender-${destination}.log" 2>&1 &
-		device_filter_sender_pids+=("$!")
-	done
+	device_filter_send_syn "${DEVICE_FILTER_SERVER_A}" "${case_dir}/stop" "${device_filter_port}" \
+		> "${case_dir}/sender-${DEVICE_FILTER_SERVER_A}.log" 2>&1 &
+	device_filter_sender_pids+=("$!")
+	device_filter_send_syn "${DEVICE_FILTER_SERVER_B}" "${case_dir}/stop" "${port_b}" \
+		> "${case_dir}/sender-${DEVICE_FILTER_SERVER_B}.log" 2>&1 &
+	device_filter_sender_pids+=("$!")
 	wait "${device_filter_capture_pid}" || capture_status=$?
 	device_filter_capture_pid=""
 	# Let each bounded connect finish normally, so only timeout=124 is accepted.
@@ -186,9 +195,9 @@ device_filter_run_case() {
 	assert_device_filter_drops "${case_dir}" "${DEVICE_FILTER_DEVICE_A}"
 	assert_device_filter_drops "${case_dir}" "${DEVICE_FILTER_DEVICE_B}"
 	assert_device_filter_events "${case_dir}" "${DEVICE_FILTER_CLIENT_A}" "${DEVICE_FILTER_SERVER_A}" \
-		"${DEVICE_FILTER_DEVICE_A}" "${device_filter_ifindex_a}" "${expected_a}"
+		"${DEVICE_FILTER_DEVICE_A}" "${device_filter_ifindex_a}" "${device_filter_port}" "${expected_a}"
 	assert_device_filter_events "${case_dir}" "${DEVICE_FILTER_CLIENT_B}" "${DEVICE_FILTER_SERVER_B}" \
-		"${DEVICE_FILTER_DEVICE_B}" "${device_filter_ifindex_b}" "${expected_b}"
+		"${DEVICE_FILTER_DEVICE_B}" "${device_filter_ifindex_b}" "${port_b}" "${expected_b}"
 	assert_kernel_observation_timestamps "${case_dir}/events.json"
 	assert_log_has_no_failure "${case_dir}/stderr.log" "${name}: dropwatch"
 }
@@ -226,7 +235,17 @@ ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVIC
 ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
 	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
 	-p tcp --dport "${device_filter_port}" -j DROP
+ip netns exec "${NETNS_SERVER}" iptables -w 5 -A INPUT -i "${DEVICE_FILTER_DEVICE_B}" \
+	-s "${DEVICE_FILTER_CLIENT_B}" -d "${DEVICE_FILTER_SERVER_B}" \
+	-p tcp --dport "${device_filter_port_b}" -j DROP
 
-device_filter_run_case baseline present present
-device_filter_run_case allow_a present absent --device "${DEVICE_FILTER_DEVICE_A}"
-device_filter_run_case exclude_a absent present --device-excluded "${DEVICE_FILTER_DEVICE_A}"
+device_filter_run_case baseline "tcp and dst port ${device_filter_port}" present present "${device_filter_port}"
+device_filter_run_case allow_a "tcp and dst port ${device_filter_port}" present absent "${device_filter_port}" --device "${DEVICE_FILTER_DEVICE_A}"
+device_filter_run_case exclude_a "tcp and dst port ${device_filter_port}" absent present "${device_filter_port}" --device-excluded "${DEVICE_FILTER_DEVICE_A}"
+device_filter_run_case or_group \
+	"tcp and (dst port ${device_filter_port} or dst port ${device_filter_unmatched_port})" \
+	present absent "${device_filter_port_b}"
+device_filter_run_case not_group \
+	"tcp and not (dst port ${device_filter_port_b} or dst port ${device_filter_unmatched_port})" \
+	present absent "${device_filter_port_b}"
+device_filter_run_case or_protocol "tcp or udp" present present "${device_filter_port}"
