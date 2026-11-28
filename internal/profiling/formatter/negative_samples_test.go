@@ -81,6 +81,55 @@ func TestClampNegativeSamplesBoundsDiagnostics(t *testing.T) {
 	}
 }
 
+func TestFormatNegativeSampleSkipsInvalidReferences(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		profile types.AggregatedProfile
+		sample  types.AggregatedSample
+		want    string
+	}{
+		{
+			name: "invalid stack and label references",
+			profile: types.AggregatedProfile{
+				Frames:    []types.ProfileFrame{{Name: "valid"}},
+				Stacks:    [][]uint32{{0, 99}},
+				LabelSets: [][]types.ProfileLabel{{types.ProfileStringLabel("key", "value")}},
+			},
+			sample: types.AggregatedSample{
+				UserStack:   1,
+				KernelStack: 99,
+				LabelSet:    99,
+				Value:       -1,
+			},
+			want: "value=-1 frame=valid",
+		},
+		{
+			name: "frame ID at dictionary length",
+			profile: types.AggregatedProfile{
+				Frames: []types.ProfileFrame{{Name: "valid"}},
+				Stacks: [][]uint32{{1}},
+			},
+			sample: types.AggregatedSample{UserStack: 1, Value: -1},
+			want:   "value=-1",
+		},
+		{
+			name: "empty dictionaries",
+			profile: types.AggregatedProfile{
+				Stacks:    [][]uint32{{0}},
+				LabelSets: [][]types.ProfileLabel{{}},
+			},
+			sample: types.AggregatedSample{UserStack: 1, LabelSet: 1, Value: -1},
+			want:   "value=-1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatNegativeSample(&tc.profile, &tc.sample); got != tc.want {
+				t.Fatalf("formatNegativeSample() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestClampNegativeSamplesRejectsCanceledContext(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
