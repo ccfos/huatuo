@@ -145,6 +145,9 @@ hostPaths:
 
 ### 2.4 检查 Helm Chart
 
+`config.mountPath` 是配置文件在容器内的完整路径，Chart 会将其目录和文件名传给
+采集器。`config.fileName` 是 ConfigMap 中的键名，可以与挂载后的文件名不同。
+
 ```bash
 helm lint ./build/charts \
   -f ./values-production.yaml \
