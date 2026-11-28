@@ -138,6 +138,9 @@ func decodeFoldedLine(line string) ([]string, string, error) {
 			frames = append(frames, frame)
 		}
 	}
+	if len(frames) == 0 {
+		return nil, "", fmt.Errorf("folded sample has no frames")
+	}
 
 	return frames, line[index+1:], nil
 }
