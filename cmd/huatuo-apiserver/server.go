@@ -48,7 +48,8 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 
 	d.apiServer = runningServer
 
-	return runningServer.Shutdown, nil
+	// The daemon is exiting and cannot leave timed-out connections draining.
+	return runningServer.ShutdownOrClose, nil
 }
 
 func authUsers(users []config.UserConfig) []httpserver.UserConfig {

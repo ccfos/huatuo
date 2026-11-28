@@ -156,8 +156,20 @@ func (s *Server) Start(addr string) error {
 	return nil
 }
 
-// Shutdown stops accepting requests and waits for the serving goroutine.
+// Shutdown stops accepting requests and waits for active connections to drain
+// and the serving goroutine to exit. If ctx ends during draining, shutdown
+// continues in the background unless Close interrupts the active connections.
 func (s *Server) Shutdown(ctx context.Context) error {
+	return s.shutdown(ctx, false)
+}
+
+// ShutdownOrClose drains active connections, but force-closes them if ctx ends
+// before the drain completes. It reports the drain error even if closing succeeds.
+func (s *Server) ShutdownOrClose(ctx context.Context) error {
+	return s.shutdown(ctx, true)
+}
+
+func (s *Server) shutdown(ctx context.Context, forceClose bool) error {
 	s.mu.Lock()
 	switch s.state {
 	case serverStateStopped:
@@ -172,8 +184,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 
 	shutdownErr := execution.shutdown(ctx)
+	drainInterrupted := shutdownErr != nil && ctx.Err() != nil
+	if drainInterrupted && forceClose {
+		// Close the execution that failed to drain, not a concurrent restart.
+		return errors.Join(shutdownErr, s.closeExecution(execution))
+	}
 	serveResult := execution.wait(ctx)
-	if shutdownErr != nil && ctx.Err() != nil {
+	if drainInterrupted {
+		// Serve can exit before active connections drain. Keep the execution
+		// available to Close until the background drain finishes.
+		go func() {
+			_ = execution.shutdown(context.Background())
+			<-execution.done
+			s.finishExecution(execution)
+		}()
 		return errors.Join(shutdownErr, serveResult)
 	}
 
@@ -192,6 +216,10 @@ func (s *Server) Close() error {
 	s.state = serverStateStopping
 	s.mu.Unlock()
 
+	return s.closeExecution(execution)
+}
+
+func (s *Server) closeExecution(execution *serveExecution) error {
 	closeErr := execution.httpServer.Close()
 	<-execution.done
 	s.finishExecution(execution)
