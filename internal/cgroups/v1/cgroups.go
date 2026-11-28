@@ -167,6 +167,10 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		return nil, err
 	}
 
+	if quota < -1 {
+		return nil, fmt.Errorf("invalid cpu quota %d", quota)
+	}
+
 	effectiveCPUCount, err := readEffectiveCPUCount(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -179,7 +183,6 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 			EffectiveCPUCount: effectiveCPUCount,
 		}, nil
 	}
-
 	return &stats.CpuQuota{
 		Quota:             uint64(quota),
 		Period:            period,
