@@ -11,7 +11,7 @@ services:
       - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
       - ./elasticsearch-jvm.options:/usr/share/elasticsearch/config/jvm.options:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -u elastic:$${ELASTIC_PASSWORD} http://localhost:9200/ >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS -u \"elastic:$${ELASTIC_PASSWORD}\" http://localhost:9200/ >/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 36
