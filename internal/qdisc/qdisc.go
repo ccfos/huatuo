@@ -247,13 +247,18 @@ func decodeLegacyStats(data []byte) (counters, error) {
 		)
 	}
 
+	// struct gnet_stats is a gnet_stats_basic (u64 bytes + u32 packets, padded
+	// to 16 bytes by the u64 alignment) followed by struct gnet_stats_queue,
+	// so the queue counters start at data[16] and share the layout of
+	// TCA_STATS2's TCA_STATS_QUEUE attribute.
 	return counters{
 		bytes:        nlenc.Uint64(data[0:8]),
 		packets:      uint64(nlenc.Uint32(data[8:12])),
-		drops:        nlenc.Uint32(data[12:16]),
-		overlimits:   nlenc.Uint32(data[16:20]),
-		queueLength:  nlenc.Uint32(data[28:32]),
-		backlogBytes: nlenc.Uint32(data[32:36]),
+		queueLength:  nlenc.Uint32(data[16:20]),
+		backlogBytes: nlenc.Uint32(data[20:24]),
+		drops:        nlenc.Uint32(data[24:28]),
+		requeues:     nlenc.Uint32(data[28:32]),
+		overlimits:   nlenc.Uint32(data[32:36]),
 	}, nil
 }
 
