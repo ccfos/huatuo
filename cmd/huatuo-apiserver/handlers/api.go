@@ -335,8 +335,8 @@ func (h *APIHandler) GetRawProfiles(
 	return serverapi.GetRawProfiles200JSONResponse(serverapi.RawProfilePageResponse{
 		Data: serverapi.RawProfilePage{
 			Items:   items,
-			Limit:   page.Limit,
-			Offset:  page.Offset,
+			Limit:   limit,
+			Offset:  offset,
 			HasMore: page.HasMore,
 		},
 	}), nil
