@@ -279,6 +279,10 @@ func keys(m map[string]bool) []string {
 func TestUpdateRuntimeEmptySpecNoDbusCall(t *testing.T) {
 	c := &CgroupV2{name: "unified", unitName: "does-not-matter.slice"}
 
+	if err := c.UpdateRuntime(nil); err != nil {
+		t.Fatalf("UpdateRuntime(nil): got %v, want nil (must short-circuit before D-Bus)", err)
+	}
+
 	if err := c.UpdateRuntime(&specs.LinuxResources{}); err != nil {
 		t.Fatalf("UpdateRuntime(empty): got %v, want nil (must short-circuit before D-Bus)", err)
 	}
