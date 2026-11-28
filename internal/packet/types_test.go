@@ -164,6 +164,31 @@ func TestPacketJSONRoundTripPreservesTCPFlags(t *testing.T) {
 	}
 }
 
+func TestPacketStringDerivesMissingLabel(t *testing.T) {
+	pkt := &Packet{
+		IPv4: &IPv4{
+			Saddr: net.IPv4(10, 0, 0, 1),
+			Daddr: net.IPv4(10, 0, 0, 2),
+		},
+		TCP: &TCP{
+			Sport: 1234,
+			Dport: 80,
+		},
+	}
+
+	if got := pkt.String(); !strings.HasPrefix(got, "IPv4/TCP ") {
+		t.Fatalf("Packet.String() = %q, want IPv4/TCP prefix", got)
+	}
+	if pkt.Label != "" {
+		t.Fatalf("Packet.String() mutated missing label to %q", pkt.Label)
+	}
+
+	pkt.Label = "custom"
+	if got := pkt.String(); !strings.HasPrefix(got, "custom ") {
+		t.Fatalf("Packet.String() = %q, want custom prefix", got)
+	}
+}
+
 // TestPacketJSONMACWireFormat pins MAC fields to the canonical
 // "aa:bb:cc:dd:ee:ff" literal on the JSON wire. Regression guard: if the
 // field types ever revert to net.HardwareAddr (or any []byte alias without
