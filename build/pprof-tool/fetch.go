@@ -108,13 +108,13 @@ func fetch(ctx context.Context, client *http.Client, address string, dst io.Writ
 	}
 	defer func() { returnErr = errors.Join(returnErr, response.Body.Close()) }()
 
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP status %s", response.Status)
+	}
+
 	n, err := io.Copy(dst, io.LimitReader(response.Body, maxBytes+1))
 	if err != nil {
 		return err
-	}
-
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP status %s", response.Status)
 	}
 
 	if n > maxBytes {
