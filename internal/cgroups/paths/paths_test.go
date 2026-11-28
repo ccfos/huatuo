@@ -15,7 +15,6 @@
 package paths
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -33,23 +32,23 @@ func TestPath(t *testing.T) {
 		{
 			name:     "single-segment-huatuo-dev",
 			segments: []string{"huatuo-dev"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-dev"),
+			want:     "/sys/fs/cgroup/huatuo-dev",
 		},
 		{
 			name:     "two-segments-huatuo-region-memory",
 			segments: []string{"huatuo-region", "memory"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-region", "memory"),
+			want:     "/sys/fs/cgroup/huatuo-region/memory",
 		},
 		{
 			name:     "nested-path-huatuo-dev-cpu-stat",
 			segments: []string{"huatuo-dev", "cpu", "cpu.stat"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-dev", "cpu", "cpu.stat"),
+			want:     "/sys/fs/cgroup/huatuo-dev/cpu/cpu.stat",
 		},
 		{
-			// filepath.Join cleans ".." — the result must not escape rootfs root.
+			// Join cleans ".." — the result must not escape rootfs root.
 			name:     "dotdot-segment-is-cleaned",
 			segments: []string{"huatuo-dev", "..", "huatuo-region"},
-			want:     filepath.Join(RootfsDefaultPath, "huatuo-dev", "..", "huatuo-region"),
+			want:     "/sys/fs/cgroup/huatuo-region",
 		},
 	}
 
@@ -57,6 +56,37 @@ func TestPath(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Path(tc.segments...); got != tc.want {
 				t.Errorf("Path(%v): got %q, want %q", tc.segments, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPathUsesSlashOnEveryPlatform pins the separator independently of the
+// host GOOS: the previous filepath.Join returned "\sys\fs\cgroup..." off
+// Linux, which is not a valid cgroupfs location.
+func TestPathUsesSlashOnEveryPlatform(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		segments []string
+		want     string
+	}{
+		{name: "empty", want: "/sys/fs/cgroup"},
+		{name: "single", segments: []string{"huatuo-dev"}, want: "/sys/fs/cgroup/huatuo-dev"},
+		{
+			name:     "nested-file",
+			segments: []string{"huatuo-dev", "cpu", "cpu.stat"},
+			want:     "/sys/fs/cgroup/huatuo-dev/cpu/cpu.stat",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Path(tc.segments...)
+			for index, r := range got {
+				if r == '\\' {
+					t.Fatalf("Path(%v) = %q contains a backslash at %d", tc.segments, got, index)
+				}
+			}
+			if got != tc.want {
+				t.Errorf("Path(%v) = %q, want %q", tc.segments, got, tc.want)
 			}
 		})
 	}
