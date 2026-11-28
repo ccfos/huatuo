@@ -76,6 +76,10 @@ var decoderPool = sync.Pool{
 // Layer values are deep-copied out of the parser pool, so the returned
 // *Packet is safe to retain after this call.
 func Parse(pkt *Hdr) (*Packet, error) {
+	if pkt != nil && pkt.HasEthHdr > 1 {
+		return nil, fmt.Errorf("packet: invalid ethernet header flag %d", pkt.HasEthHdr)
+	}
+
 	dec := decoderPool.Get().(*decoder)
 	defer decoderPool.Put(dec)
 
